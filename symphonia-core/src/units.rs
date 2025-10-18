@@ -7,7 +7,7 @@
 
 //! The `units` module provides definitions for common units.
 
-use std::fmt;
+use core::{fmt, ops};
 
 use core::num::NonZero;
 
@@ -213,7 +213,7 @@ impl From<i64> for Timestamp {
 }
 
 impl TryFrom<u64> for Timestamp {
-    type Error = std::num::TryFromIntError;
+    type Error = core::num::TryFromIntError;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         let ts: i64 = value.try_into()?;
@@ -399,7 +399,7 @@ impl From<u64> for Duration {
 }
 
 impl TryFrom<i64> for Duration {
-    type Error = std::num::TryFromIntError;
+    type Error = core::num::TryFromIntError;
 
     fn try_from(value: i64) -> Result<Self, Self::Error> {
         let dur: u64 = value.try_into()?;
@@ -414,7 +414,7 @@ impl From<u32> for Duration {
 }
 
 impl TryFrom<i32> for Duration {
-    type Error = std::num::TryFromIntError;
+    type Error = core::num::TryFromIntError;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         let dur: u64 = value.try_into()?;
@@ -429,7 +429,7 @@ impl From<u16> for Duration {
 }
 
 impl TryFrom<i16> for Duration {
-    type Error = std::num::TryFromIntError;
+    type Error = core::num::TryFromIntError;
 
     fn try_from(value: i16) -> Result<Self, Self::Error> {
         let dur: u64 = value.try_into()?;
@@ -444,7 +444,7 @@ impl From<u8> for Duration {
 }
 
 impl TryFrom<i8> for Duration {
-    type Error = std::num::TryFromIntError;
+    type Error = core::num::TryFromIntError;
 
     fn try_from(value: i8) -> Result<Self, Self::Error> {
         let dur: u64 = value.try_into()?;
@@ -1118,8 +1118,6 @@ impl fmt::Display for TimeBase {
 
 #[cfg(test)]
 mod tests {
-    use std::i64;
-
     use super::{Duration, Time, TimeBase, Timestamp};
 
     #[test]
