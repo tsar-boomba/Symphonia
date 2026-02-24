@@ -163,13 +163,13 @@ fn find_sb_info(header: &FrameHeader) -> &'static SbInfo {
 
 /// Dequantize a sample, `raw`, of length `bits` bits.
 #[inline]
-fn dequantize(bs: &mut BitReaderLtr<'_>, class: &QuantClass) -> Result<[f32; 3]> {
+async fn dequantize(bs: &mut BitReaderLtr<'_>, class: &QuantClass) -> Result<[f32; 3]> {
     let mut raw = [0; 3];
 
     let bits = if class.grouping {
         // Read a packed (grouped) codeword from the bitstream, and unpack the codeword into 3
         // raw samples.
-        let mut c = bs.read_bits_leq32(u32::from(class.bits))?;
+        let mut c = bs.read_bits_leq32(u32::from(class.bits)).await?;
 
         let nlevels = u32::from(class.nlevels);
 
@@ -187,7 +187,7 @@ fn dequantize(bs: &mut BitReaderLtr<'_>, class: &QuantClass) -> Result<[f32; 3]>
         let bits = u32::from(class.bits);
 
         for item in &mut raw {
-            *item = bs.read_bits_leq32(bits)?;
+            *item = bs.read_bits_leq32(bits).await?;
         }
 
         bits
@@ -228,14 +228,14 @@ impl Layer2 {
 
 impl Layer for Layer2 {
     #[allow(clippy::needless_range_loop)]
-    fn decode(
+    async fn decode(
         &mut self,
         reader: &mut BufReader<'_>,
         header: &FrameHeader,
         out: &mut AudioBuffer<f32>,
     ) -> Result<()> {
         // Ignore the CRC.
-        let _crc = if header.has_crc { Some(reader.read_be_u16()?) } else { None };
+        let _crc = if header.has_crc { Some(reader.read_be_u16().await?) } else { None };
 
         let mut bs = BitReaderLtr::new(reader.read_buf_bytes_available_ref());
 
@@ -264,7 +264,7 @@ impl Layer for Layer2 {
             let nbal = find_sb_quant_info(sb_info, sb).nbal;
 
             for chan in &mut alloc[..num_channels] {
-                chan[sb] = bs.read_bits_leq32(u32::from(nbal))? as u8;
+                chan[sb] = bs.read_bits_leq32(u32::from(nbal)).await? as u8;
             }
         }
 
@@ -273,7 +273,7 @@ impl Layer for Layer2 {
         for sb in bound..sb_info.sblimit {
             let nbal = find_sb_quant_info(sb_info, sb).nbal;
 
-            let value = bs.read_bits_leq32(u32::from(nbal))? as u8;
+            let value = bs.read_bits_leq32(u32::from(nbal)).await? as u8;
 
             alloc[0][sb] = value;
             alloc[1][sb] = value;
@@ -283,7 +283,7 @@ impl Layer for Layer2 {
         for sb in 0..sb_info.sblimit {
             for ch in 0..num_channels {
                 if alloc[ch][sb] != 0 {
-                    scfsi[ch][sb] = bs.read_bits_leq32(2)? as u8;
+                    scfsi[ch][sb] = bs.read_bits_leq32(2).await? as u8;
                 }
             }
         }
@@ -292,19 +292,19 @@ impl Layer for Layer2 {
         for sb in 0..sb_info.sblimit {
             for ch in 0..num_channels {
                 if alloc[ch][sb] != 0 {
-                    let mut indicies = [bs.read_bits_leq32(6)? as u8; 3];
+                    let mut indicies = [bs.read_bits_leq32(6).await? as u8; 3];
 
                     match scfsi[ch][sb] {
                         0 => {
-                            indicies[1] = bs.read_bits_leq32(6)? as u8;
-                            indicies[2] = bs.read_bits_leq32(6)? as u8;
+                            indicies[1] = bs.read_bits_leq32(6).await? as u8;
+                            indicies[2] = bs.read_bits_leq32(6).await? as u8;
                         }
                         1 => {
-                            indicies[2] = bs.read_bits_leq32(6)? as u8;
+                            indicies[2] = bs.read_bits_leq32(6).await? as u8;
                         }
                         2 => (),
                         3 => {
-                            indicies[1] = bs.read_bits_leq32(6)? as u8;
+                            indicies[1] = bs.read_bits_leq32(6).await? as u8;
                             indicies[2] = indicies[1];
                         }
                         _ => unreachable!(),
@@ -333,7 +333,7 @@ impl Layer for Layer2 {
 
                         // Samples within a sub-band are decoded in-order. Dequantize the next group
                         // of three samples for the sub-band.
-                        let triplet = dequantize(&mut bs, quant_class)?;
+                        let triplet = dequantize(&mut bs, quant_class).await?;
 
                         // A sub-band is divided into three partitions of 12 samples each. Each
                         // partition has its own scalefactor. Therefore, the partition index can be
@@ -357,7 +357,7 @@ impl Layer for Layer2 {
                 if class_idx != 0 {
                     let quant_class = find_quant_class(find_sb_quant_info(sb_info, sb), class_idx);
 
-                    let triplet = dequantize(&mut bs, quant_class)?;
+                    let triplet = dequantize(&mut bs, quant_class).await?;
 
                     for ch in 0..num_channels {
                         let scalefac = LAYER12_SCALEFACTORS[usize::from(scalefacs[ch][gr / 4][sb])];

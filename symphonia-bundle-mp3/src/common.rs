@@ -213,7 +213,7 @@ impl FrameHeader {
 }
 
 pub trait Layer {
-    fn decode(
+    async fn decode(
         &mut self,
         reader: &mut BufReader<'_>,
         header: &FrameHeader,
