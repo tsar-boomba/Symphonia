@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use core::pin::Pin;
+
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 
@@ -17,12 +19,12 @@ use symphonia_core::errors::{Result, SeekErrorKind};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_AIFF;
-use symphonia_core::io::*;
 use symphonia_core::meta::well_known::METADATA_ID_AIFF;
 use symphonia_core::meta::{
     Metadata, MetadataBuilder, MetadataInfo, MetadataLog, StandardTag, Tag,
 };
 use symphonia_core::support_format;
+use symphonia_core::{async_trait, io::*};
 
 use log::debug;
 
@@ -66,26 +68,26 @@ pub struct AiffReader<'s> {
 }
 
 impl<'s> AiffReader<'s> {
-    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+    pub async fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         // An AIFF file is one large RIFF chunk, with the actual meta and audio data contained in
         // nested chunks. Therefore, the file starts with a RIFF chunk header (chunk ID & size).
 
         // The top-level chunk has the FORM chunk ID. This is also the file marker.
-        let marker = mss.read_quad_bytes()?;
+        let marker = mss.read_quad_bytes().await?;
 
         if marker != AIFF_STREAM_MARKER {
             return unsupported_error("aiff: missing aiff riff stream marker");
         }
 
         // The length of the top-level FORM chunk. Must be atleast 4 bytes.
-        let riff_len = mss.read_be_u32()?;
+        let riff_len = mss.read_be_u32().await?;
 
         if riff_len < 4 {
             return decode_error("aiff: invalid riff length");
         }
 
         // The form type. Only AIFF and AIFC forms are supported.
-        let riff_form = mss.read_quad_bytes()?;
+        let riff_form = mss.read_quad_bytes().await?;
 
         if riff_form != AIFF_RIFF_FORM && riff_form != AIFC_RIFF_FORM {
             return unsupported_error("aiff: riff form is not aiff or aifc");
@@ -107,7 +109,7 @@ impl<'s> AiffReader<'s> {
         let mut builder = MetadataBuilder::new(AIFF_METADATA_INFO);
 
         // Scan over all chunks.
-        while let Some(chunk) = riff_chunks.next(&mut mss)? {
+        while let Some(chunk) = riff_chunks.next(&mut mss).await? {
             match chunk {
                 RiffAiffChunks::Common(chunk) => {
                     // Only one common chunk is allowed.
@@ -116,8 +118,8 @@ impl<'s> AiffReader<'s> {
                     }
 
                     comm = match riff_form {
-                        AIFF_RIFF_FORM => Some(chunk.parse_aiff(&mut mss)?),
-                        AIFC_RIFF_FORM => Some(chunk.parse_aifc(&mut mss)?),
+                        AIFF_RIFF_FORM => Some(chunk.parse_aiff(&mut mss).await?),
+                        AIFC_RIFF_FORM => Some(chunk.parse_aifc(&mut mss).await?),
                         _ => unreachable!(),
                     };
                 }
@@ -127,7 +129,7 @@ impl<'s> AiffReader<'s> {
                         return decode_error("aiff: multiple sound data chunks");
                     }
 
-                    data = Some(chunk.parse(&mut mss)?);
+                    data = Some(chunk.parse(&mut mss).await?);
 
                     // If the media source is not seekable, then it is not possible to scan for
                     // chunks past the sound data chunk.
@@ -137,9 +139,8 @@ impl<'s> AiffReader<'s> {
 
                     // The length of the sound data chunk must also be known.
                     if let Some(len) = data.as_ref().unwrap().len {
-                        mss.ignore_bytes(u64::from(len))?;
-                    }
-                    else {
+                        mss.ignore_bytes(u64::from(len)).await?;
+                    } else {
                         break;
                     }
                 }
@@ -150,7 +151,7 @@ impl<'s> AiffReader<'s> {
                     }
 
                     // Saver makers chunk for post-processing.
-                    mark = Some(chunk.parse(&mut mss)?)
+                    mark = Some(chunk.parse(&mut mss).await?)
                 }
                 RiffAiffChunks::Comments(chunk) => {
                     // Only one comments chunk is allowed.
@@ -159,11 +160,11 @@ impl<'s> AiffReader<'s> {
                     }
 
                     // Save comments chunk for post-processing.
-                    comt = Some(chunk.parse(&mut mss)?);
+                    comt = Some(chunk.parse(&mut mss).await?);
                 }
                 RiffAiffChunks::AppSpecific(chunk) => {
                     // Add application-specific data.
-                    let appl = chunk.parse(&mut mss)?;
+                    let appl = chunk.parse(&mut mss).await?;
 
                     attachments.push(Attachment::VendorData(VendorDataAttachment {
                         ident: appl.application,
@@ -172,10 +173,10 @@ impl<'s> AiffReader<'s> {
                 }
                 RiffAiffChunks::Text(chunk) => {
                     // Add tag.
-                    let text = chunk.parse(&mut mss)?;
+                    let text = chunk.parse(&mut mss).await?;
                     builder.add_tag(text.tag);
                 }
-                RiffAiffChunks::Id3(chunk) => id3 = Some(chunk.parse(&mut mss)?),
+                RiffAiffChunks::Id3(chunk) => id3 = Some(chunk.parse(&mut mss).await?),
             }
         }
 
@@ -186,7 +187,7 @@ impl<'s> AiffReader<'s> {
 
         // Seek to the sound data.
         if is_seekable {
-            mss.seek(SeekFrom::Start(data.data_start_pos))?;
+            mss.seek(SeekFrom::Start(data.data_start_pos)).await?;
         }
 
         // Metadata processing.
@@ -285,8 +286,7 @@ fn process_markers(
             if comment.marker_id == 0 {
                 // Invalid/unset marker ID, this is a general comment.
                 builder.add_tag(tag);
-            }
-            else if comment.marker_id > 0 {
+            } else if comment.marker_id > 0 {
                 // Marker ID is set, this comment belongs to a marker/chapter. Try to get the
                 // index of the chapter associated with this marker ID.
                 if let Some(idx) = marker_index.get(&comment.marker_id) {
@@ -303,38 +303,42 @@ fn process_markers(
             tags: vec![],
             visuals: vec![],
         })
-    }
-    else {
+    } else {
         None
     }
 }
 
 impl Scoreable for AiffReader<'_> {
-    fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-        // Perform simple scoring by testing that the RIFF stream marker and RIFF form are both
-        // valid for AIFF.
-        let riff_marker = src.read_quad_bytes()?;
-        src.ignore_bytes(4)?;
-        let riff_form = src.read_quad_bytes()?;
+    fn score<'a, 'b>(
+        mut src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
+        Box::pin(async move {
+            // Perform simple scoring by testing that the RIFF stream marker and RIFF form are both
+            // valid for AIFF.
+            let riff_marker = src.read_quad_bytes().await?;
+            src.ignore_bytes(4).await?;
+            let riff_form = src.read_quad_bytes().await?;
 
-        if riff_marker != AIFF_STREAM_MARKER {
-            return Ok(Score::Unsupported);
-        }
+            if riff_marker != AIFF_STREAM_MARKER {
+                return Ok(Score::Unsupported);
+            }
 
-        if riff_form != AIFF_RIFF_FORM && riff_form != AIFC_RIFF_FORM {
-            return Ok(Score::Unsupported);
-        }
+            if riff_form != AIFF_RIFF_FORM && riff_form != AIFC_RIFF_FORM {
+                return Ok(Score::Unsupported);
+            }
 
-        Ok(Score::Supported(255))
+            Ok(Score::Supported(255))
+        })
     }
 }
 
-impl ProbeableFormat<'_> for AiffReader<'_> {
-    fn try_probe_new(
-        mss: MediaSourceStream<'_>,
+#[async_trait]
+impl<'s> ProbeableFormat<'s> for AiffReader<'s> {
+    async fn try_probe_new(
+        mss: MediaSourceStream<'s>,
         opts: FormatOptions,
-    ) -> Result<Box<dyn FormatReader + '_>> {
-        Ok(Box::new(AiffReader::try_new(mss, opts)?))
+    ) -> Result<Box<dyn FormatReader + 's>> {
+        Ok(Box::new(AiffReader::try_new(mss, opts).await?))
     }
 
     fn probe_data() -> &'static [ProbeFormatData] {
@@ -350,12 +354,13 @@ impl ProbeableFormat<'_> for AiffReader<'_> {
     }
 }
 
+#[async_trait]
 impl FormatReader for AiffReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &AIFF_FORMAT_INFO
     }
 
-    fn next_packet(&mut self) -> Result<Option<Packet>> {
+    async fn next_packet(&mut self) -> Result<Option<Packet>> {
         next_packet(
             &mut self.reader,
             &self.packet_info,
@@ -363,6 +368,7 @@ impl FormatReader for AiffReader<'_> {
             self.data_start_pos,
             self.data_end_pos.unwrap_or(u64::MAX),
         )
+        .await
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -381,7 +387,7 @@ impl FormatReader for AiffReader<'_> {
         &self.tracks
     }
 
-    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
+    async fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
         if self.tracks.is_empty() {
             return seek_error(SeekErrorKind::Unseekable);
         }
@@ -431,16 +437,15 @@ impl FormatReader for AiffReader<'_> {
         // If the reader supports seeking we can seek directly to the frame's offset wherever it may
         // be.
         if self.reader.is_seekable() {
-            self.reader.seek(SeekFrom::Start(seek_pos))?;
+            self.reader.seek(SeekFrom::Start(seek_pos)).await?;
         }
         // If the reader does not support seeking, we can only emulate forward seeks by consuming
         // bytes. If the reader has to seek backwards, return an error.
         else {
             let current_pos = self.reader.pos();
             if seek_pos >= current_pos {
-                self.reader.ignore_bytes(seek_pos - current_pos)?;
-            }
-            else {
+                self.reader.ignore_bytes(seek_pos - current_pos).await?;
+            } else {
                 return seek_error(SeekErrorKind::ForwardOnly);
             }
         }

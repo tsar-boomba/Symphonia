@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use core::pin::Pin;
+
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -15,7 +17,7 @@ use symphonia_core::errors::{decode_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_WAVE;
-use symphonia_core::io::*;
+use symphonia_core::{async_trait, io::*};
 use symphonia_core::meta::well_known::METADATA_ID_WAVE;
 use symphonia_core::meta::{Metadata, MetadataInfo, MetadataLog};
 use symphonia_core::support_format;
@@ -59,26 +61,26 @@ pub struct WavReader<'s> {
 }
 
 impl<'s> WavReader<'s> {
-    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+    pub async fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         // A Wave file is one large RIFF chunk, with the actual meta and audio data contained in
         // nested chunks. Therefore, the file starts with a RIFF chunk header (chunk ID & size).
 
         // The top-level chunk has the RIFF chunk ID. This is also the file marker.
-        let marker = mss.read_quad_bytes()?;
+        let marker = mss.read_quad_bytes().await?;
 
         if marker != WAVE_STREAM_MARKER {
             return unsupported_error("wav: missing wave riff stream marker");
         }
 
         // The length of the top-level RIFF chunk. Must be atleast 4 bytes.
-        let riff_len = mss.read_u32()?;
+        let riff_len = mss.read_u32().await?;
 
         if riff_len < 4 {
             return decode_error("wav: invalid riff length");
         }
 
         // The form type. Only the WAVE form is supported.
-        let riff_form = mss.read_quad_bytes()?;
+        let riff_form = mss.read_quad_bytes().await?;
 
         if riff_form != WAVE_RIFF_FORM {
             error!("riff form is not wave ({})", String::from_utf8_lossy(&riff_form));
@@ -99,7 +101,7 @@ impl<'s> WavReader<'s> {
         let mut fact = None;
 
         loop {
-            let chunk = riff_chunks.next(&mut mss)?;
+            let chunk = riff_chunks.next(&mut mss).await?;
 
             // The last chunk should always be a data chunk, if it is not, then the stream is
             // unsupported.
@@ -109,7 +111,7 @@ impl<'s> WavReader<'s> {
 
             match chunk.unwrap() {
                 RiffWaveChunks::Format(fmt) => {
-                    let format = fmt.parse(&mut mss)?;
+                    let format = fmt.parse(&mut mss).await?;
 
                     // The Format chunk contains the block_align field and possible additional
                     // information to handle packetization and seeking.
@@ -124,20 +126,20 @@ impl<'s> WavReader<'s> {
                     packet_info = Some(info);
                 }
                 RiffWaveChunks::Fact(fct) => {
-                    fact = Some(fct.parse(&mut mss)?);
+                    fact = Some(fct.parse(&mut mss).await?);
                 }
                 RiffWaveChunks::List(lst) => {
-                    let list = lst.parse(&mut mss)?;
+                    let list = lst.parse(&mut mss).await?;
 
                     // Riff Lists can have many different forms, but WavReader only supports Info
                     // lists.
                     match &list.form {
-                        b"INFO" => metadata.push(read_info_chunk(&mut mss, list.len)?),
-                        _ => list.skip(&mut mss)?,
+                        b"INFO" => metadata.push(read_info_chunk(&mut mss, list.len).await?),
+                        _ => list.skip(&mut mss).await?,
                     }
                 }
                 RiffWaveChunks::Data(dat) => {
-                    let data = dat.parse(&mut mss)?;
+                    let data = dat.parse(&mut mss).await?;
 
                     // Record the bounds of the data chunk.
                     let data_start_pos = mss.pos();
@@ -148,8 +150,7 @@ impl<'s> WavReader<'s> {
 
                     track.with_codec_params(CodecParameters::Audio(codec_params));
 
-                    let Some(packet_info) = packet_info
-                    else {
+                    let Some(packet_info) = packet_info else {
                         return decode_error("wav: missing format chunk");
                     };
 
@@ -180,27 +181,32 @@ impl<'s> WavReader<'s> {
 }
 
 impl Scoreable for WavReader<'_> {
-    fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-        // Perform simple scoring by testing that the RIFF stream marker and RIFF form are both
-        // valid for WAVE.
-        let riff_marker = src.read_quad_bytes()?;
-        src.ignore_bytes(4)?;
-        let riff_form = src.read_quad_bytes()?;
+    fn score<'a, 'b>(
+        mut src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
+        Box::pin(async move {
+            // Perform simple scoring by testing that the RIFF stream marker and RIFF form are both
+            // valid for WAVE.
+            let riff_marker = src.read_quad_bytes().await?;
+            src.ignore_bytes(4).await?;
+            let riff_form = src.read_quad_bytes().await?;
 
-        if riff_marker != WAVE_STREAM_MARKER || riff_form != WAVE_RIFF_FORM {
-            return Ok(Score::Unsupported);
-        }
+            if riff_marker != WAVE_STREAM_MARKER || riff_form != WAVE_RIFF_FORM {
+                return Ok(Score::Unsupported);
+            }
 
-        Ok(Score::Supported(255))
+            Ok(Score::Supported(255))
+        })
     }
 }
 
-impl ProbeableFormat<'_> for WavReader<'_> {
-    fn try_probe_new(
-        mss: MediaSourceStream<'_>,
+#[async_trait]
+impl<'s> ProbeableFormat<'s> for WavReader<'s> {
+    async fn try_probe_new(
+        mss: MediaSourceStream<'s>,
         opts: FormatOptions,
-    ) -> Result<Box<dyn FormatReader + '_>> {
-        Ok(Box::new(WavReader::try_new(mss, opts)?))
+    ) -> Result<Box<dyn FormatReader + 's>> {
+        Ok(Box::new(WavReader::try_new(mss, opts).await?))
     }
 
     fn probe_data() -> &'static [ProbeFormatData] {
@@ -216,19 +222,20 @@ impl ProbeableFormat<'_> for WavReader<'_> {
     }
 }
 
+#[async_trait]
 impl FormatReader for WavReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &WAVE_FORMAT_INFO
     }
 
-    fn next_packet(&mut self) -> Result<Option<Packet>> {
+    async fn next_packet(&mut self) -> Result<Option<Packet>> {
         next_packet(
             &mut self.reader,
             &self.packet_info,
             &self.tracks,
             self.data_start_pos,
             self.data_end_pos.unwrap_or(u64::MAX),
-        )
+        ).await
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -243,7 +250,7 @@ impl FormatReader for WavReader<'_> {
         &self.tracks
     }
 
-    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
+    async fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
         if self.tracks.is_empty() {
             return seek_error(SeekErrorKind::Unseekable);
         }
@@ -293,16 +300,15 @@ impl FormatReader for WavReader<'_> {
         // If the reader supports seeking we can seek directly to the frame's offset wherever it may
         // be.
         if self.reader.is_seekable() {
-            self.reader.seek(SeekFrom::Start(seek_pos))?;
+            self.reader.seek(SeekFrom::Start(seek_pos)).await?;
         }
         // If the reader does not support seeking, we can only emulate forward seeks by consuming
         // bytes. If the reader has to seek backwards, return an error.
         else {
             let current_pos = self.reader.pos();
             if seek_pos >= current_pos {
-                self.reader.ignore_bytes(seek_pos - current_pos)?;
-            }
-            else {
+                self.reader.ignore_bytes(seek_pos - current_pos).await?;
+            } else {
                 return seek_error(SeekErrorKind::ForwardOnly);
             }
         }
