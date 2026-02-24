@@ -34,12 +34,6 @@ use crate::utils::std_tag::*;
 
 use crate::utils::images::try_get_image_info;
 
-/// Function pointer to an ID3v2 frame reader.
-pub type FrameReader = fn(BufReader<'_>, &FrameInfo<'_>) -> Result<FrameResult>;
-
-/// Map of 4 character ID3v2 frame IDs to a frame reader and optional raw tag parser pair.
-pub type FrameReaderMap = HashMap<&'static [u8; 4], (FrameReader, Option<RawTagParser>)>;
-
 /// Useful information about a frame for a frame reader.
 pub struct FrameInfo<'a> {
     /// The original ID of the frame as written in the frame.
@@ -136,10 +130,10 @@ fn decode_id3v2_iso8859_1(buf: &[u8]) -> impl Iterator<Item = char> + '_ {
 //------------------------------------------------------------
 
 /// Read and validate a date.
-fn read_date(reader: &mut BufReader<'_>) -> Result<String> {
+async fn read_date(reader: &mut BufReader<'_>) -> Result<String> {
     // Read an 8 character unterminated date string in the format "YYYYMMDD".
     let mut date = [0; 8];
-    reader.read_buf_exact(&mut date)?;
+    reader.read_buf_exact(&mut date).await?;
 
     // All characters must be digits.
     if date.iter().any(|c| !c.is_ascii_digit()) {
@@ -151,8 +145,8 @@ fn read_date(reader: &mut BufReader<'_>) -> Result<String> {
 }
 
 /// Read and validate an encoding indicator.
-fn read_encoding(reader: &mut BufReader<'_>) -> Result<Encoding> {
-    match Encoding::parse(reader.read_byte()?) {
+async fn read_encoding(reader: &mut BufReader<'_>) -> Result<Encoding> {
+    match Encoding::parse(reader.read_byte().await?) {
         Some(encoding) => Ok(encoding),
         _ => decode_error("invalid text encoding"),
     }
@@ -163,8 +157,8 @@ fn read_encoding(reader: &mut BufReader<'_>) -> Result<Encoding> {
 /// Language codes must conform to the ISO-639-2 standard. All codes should be composed of 3
 /// alphabetic characters. ID3v2 further specifies a language code of "XXX" indicates an unknown or
 /// unspecified language.
-fn read_lang_code(reader: &mut BufReader<'_>) -> Result<Option<String>> {
-    let code = reader.read_triple_bytes()?;
+async fn read_lang_code(reader: &mut BufReader<'_>) -> Result<Option<String>> {
+    let code = reader.read_triple_bytes().await?;
 
     if code.iter().any(|&c| !c.is_ascii_alphabetic()) {
         return decode_error("invalid language code");
@@ -182,7 +176,7 @@ fn read_lang_code(reader: &mut BufReader<'_>) -> Result<Option<String>> {
 }
 
 /// Read and validate the remainder of the buffer as a variably sized play counter.
-fn read_play_counter(reader: &mut BufReader<'_>) -> Result<Option<u64>> {
+async fn read_play_counter(reader: &mut BufReader<'_>) -> Result<Option<u64>> {
     let len = reader.bytes_available() as usize;
 
     // A length of 0 indicates no play counter.
@@ -205,7 +199,7 @@ fn read_play_counter(reader: &mut BufReader<'_>) -> Result<Option<u64>> {
     // The play counter is stored as an N-byte big-endian integer. Read N bytes into an 8-byte
     // buffer, making sure the missing bytes are zeroed, and then reinterpret as a 64-bit integer.
     let mut buf = [0u8; 8];
-    reader.read_buf_exact(&mut buf[8 - len..])?;
+    reader.read_buf_exact(&mut buf[8 - len..]).await?;
 
     Ok(Some(u64::from_be_bytes(buf)))
 }
@@ -274,13 +268,16 @@ fn read_string_list(reader: &mut BufReader<'_>, encoding: Encoding) -> Result<Ra
 //--------------------------------------------------
 
 /// Reads an `AENC` (audio encryption) frame.
-pub fn read_aenc_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_aenc_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The owner identifier string.
     let owner = read_string(&mut reader, Encoding::Iso8859_1)?;
     // Unencypted, "preview", audio start position in frames.
-    let preview_start = reader.read_be_u16()?;
+    let preview_start = reader.read_be_u16().await?;
     // Unencrypted, "preview", audio length in frames.
-    let preview_length = reader.read_be_u16()?;
+    let preview_length = reader.read_be_u16().await?;
     // The remainder of the frame is the binary encryption information.
     let encrypt_info = reader.read_buf_bytes_available_ref();
 
@@ -297,14 +294,17 @@ pub fn read_aenc_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads an `APIC` (attached picture) frame.
-pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_apic_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the text description.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
 
     // Image format/media type
     let media_type = if frame.id == "PIC" {
         // Legacy PIC frames use a 3 character identifier. Only JPG and PNG are well-defined.
-        match &reader.read_triple_bytes()? {
+        match &reader.read_triple_bytes().await? {
             b"JPG" => Some("image/jpeg"),
             b"PNG" => Some("image/png"),
             b"BMP" => Some("image/bmp"),
@@ -318,7 +318,7 @@ pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
     };
 
     // Image usage.
-    let usage = get_visual_key_from_picture_type(u32::from(reader.read_u8()?));
+    let usage = get_visual_key_from_picture_type(u32::from(reader.read_u8().await?));
 
     let mut tags = vec![];
 
@@ -332,7 +332,7 @@ pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
     let data = Box::from(reader.read_buf_bytes_available_ref());
 
     // Try to get information about the image.
-    let image_info = try_get_image_info(&data);
+    let image_info = try_get_image_info(&data).await;
 
     let visual = Visual {
         media_type: image_info.as_ref().map(|info| info.media_type.clone()).or(media_type),
@@ -347,13 +347,16 @@ pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads an `ATXT` (audio encryption) frame.
-pub fn read_atxt_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_atxt_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The encoding.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
     // The audio data mime-type.
     let mime_type = read_string(&mut reader, Encoding::Iso8859_1)?;
     // Single flag indicating if the audio data is scrambled.
-    let is_scrambled = reader.read_u8()? & 1 != 0;
+    let is_scrambled = reader.read_u8().await? & 1 != 0;
     // Text equivalent to what is spoken in the audio data.
     let equivalent_text = read_string(&mut reader, encoding)?;
     // The audio clip.
@@ -381,7 +384,10 @@ pub fn read_atxt_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `CHAP` (chapter) frame.
-pub fn read_chap_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_chap_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     use crate::id3v2::frames::{
         min_frame_size, read_id3v2p2_frame, read_id3v2p3_frame, read_id3v2p4_frame,
     };
@@ -390,16 +396,16 @@ pub fn read_chap_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
     let id = read_string(&mut reader, Encoding::Iso8859_1)?;
 
     // Start time in ms.
-    let start_ms = reader.read_be_u32()?;
+    let start_ms = reader.read_be_u32().await?;
     // End time in ms.
-    let end_ms = reader.read_be_u32()?;
+    let end_ms = reader.read_be_u32().await?;
     // Optional start position in bytes.
-    let start_byte = match reader.read_be_u32()? {
+    let start_byte = match reader.read_be_u32().await? {
         u32::MAX => None,
         start_byte => Some(u64::from(start_byte)),
     };
     // Optional end position in bytes.
-    let end_byte = match reader.read_be_u32()? {
+    let end_byte = match reader.read_be_u32().await? {
         u32::MAX => None,
         end_byte => Some(u64::from(end_byte)),
     };
@@ -410,9 +416,9 @@ pub fn read_chap_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 
     while reader.bytes_available() >= min_frame_size(frame.major_version) {
         let frame = match frame.major_version {
-            2 => read_id3v2p2_frame(&mut reader),
-            3 => read_id3v2p3_frame(&mut reader),
-            4 => read_id3v2p4_frame(&mut reader),
+            2 => read_id3v2p2_frame(&mut reader).await,
+            3 => read_id3v2p3_frame(&mut reader).await,
+            4 => read_id3v2p4_frame(&mut reader).await,
             _ => break,
         }?;
 
@@ -451,14 +457,17 @@ pub fn read_chap_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `COMM` (comment) frame.
-pub fn read_comm_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_comm_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the description.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
 
     let mut sub_fields = Vec::new();
 
     // The next three bytes are the language.
-    if let Some(lang) = read_lang_code(&mut reader)? {
+    if let Some(lang) = read_lang_code(&mut reader).await? {
         sub_fields.push(RawTagSubField::new(COMM_LANGUAGE, lang));
     }
 
@@ -478,16 +487,19 @@ pub fn read_comm_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `COMR` (commercial) frame.
-pub fn read_comr_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_comr_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the terms of use text.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
 
     // The price in the format: "<CURRENCY CODE 1><PRICE 1>[[/<CURRENCY CODE 2><PRICE 2>] ...]"
     let price = read_string(&mut reader, Encoding::Iso8859_1)?;
 
     let mut sub_fields = vec![
         // Price valid through this date.
-        RawTagSubField::new(COMR_VALID_UNTIL, read_date(&mut reader)?),
+        RawTagSubField::new(COMR_VALID_UNTIL, read_date(&mut reader).await?),
         // Seller contact information (email address, URL, etc.)
         RawTagSubField::new(COMR_CONTACT_URL, read_string(&mut reader, Encoding::Iso8859_1)?),
         // How the audio was delivered. Takes one of the following values:
@@ -500,7 +512,7 @@ pub fn read_comr_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
         // - 0x6  As note sheets in a book with other sheets
         // - 0x7  Music on other media
         // - 0x8  Non-musical merchandise
-        RawTagSubField::new(COMR_RECEIVED_AS, reader.read_u8()?),
+        RawTagSubField::new(COMR_RECEIVED_AS, reader.read_u8().await?),
         // The seller name.
         RawTagSubField::new(COMR_SELLER_NAME, read_string(&mut reader, encoding)?),
         // The description of the product.
@@ -528,7 +540,10 @@ pub fn read_comr_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `CRM` (encrypted meta) frame.
-pub fn read_crm_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_crm_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     let owner = match read_string_ignore_empty(&mut reader, Encoding::Iso8859_1)? {
         Some(owner) => owner,
         None => {
@@ -553,7 +568,10 @@ pub fn read_crm_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resul
 }
 
 /// Reads a `CTOC` (table of contents) frame.
-pub fn read_ctoc_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_ctoc_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     use crate::id3v2::frames::{
         min_frame_size, read_id3v2p2_frame, read_id3v2p3_frame, read_id3v2p4_frame,
     };
@@ -565,9 +583,9 @@ pub fn read_ctoc_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
     // - Bit 0 is the "ordered" bit. Indicates if the items should be played in order, or
     //   individually.
     // - Bit 1 is the "top-level" bit. Indicates if this table of contents is the root.
-    let flags = reader.read_u8()?;
+    let flags = reader.read_u8().await?;
     // The number of items in this table of contents
-    let entry_count = reader.read_u8()?;
+    let entry_count = reader.read_u8().await?;
 
     // Read child item element IDs.
     let mut items = Vec::with_capacity(usize::from(entry_count));
@@ -583,9 +601,9 @@ pub fn read_ctoc_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 
     while reader.bytes_available() >= min_frame_size(frame.major_version) {
         let frame = match frame.major_version {
-            2 => read_id3v2p2_frame(&mut reader),
-            3 => read_id3v2p3_frame(&mut reader),
-            4 => read_id3v2p4_frame(&mut reader),
+            2 => read_id3v2p2_frame(&mut reader).await,
+            3 => read_id3v2p3_frame(&mut reader).await,
+            4 => read_id3v2p4_frame(&mut reader).await,
             _ => break,
         }?;
 
@@ -610,11 +628,14 @@ pub fn read_ctoc_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads an ENCR (encryption method registration) frame.
-pub fn read_encr_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_encr_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The owner identifier string.
     let owner = read_string(&mut reader, Encoding::Iso8859_1)?;
     // The encryption method symbol.
-    let method = reader.read_u8()?;
+    let method = reader.read_u8().await?;
     // The remainder of the frame is encryption method data.
     let encryption_data = reader.read_buf_bytes_available_ref();
 
@@ -630,9 +651,12 @@ pub fn read_encr_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a GEOB (general encapsulated object) frame.
-pub fn read_geob_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_geob_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
     // The mime-type. This is mandatory.
     let mime_type = read_string(&mut reader, Encoding::Iso8859_1)?;
     // Optional filename.
@@ -661,11 +685,14 @@ pub fn read_geob_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a GRID (group ID) frame.
-pub fn read_grid_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_grid_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The owner identifier string.
     let owner = read_string(&mut reader, Encoding::Iso8859_1)?;
     // The group ID/symbol.
-    let group_id = reader.read_u8()?;
+    let group_id = reader.read_u8().await?;
     // The remainder of the frame is group data.
     let group_data = reader.read_buf_bytes_available_ref();
 
@@ -681,7 +708,10 @@ pub fn read_grid_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `MCDI` (music CD identifier) frame.
-pub fn read_mcdi_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_mcdi_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The entire frame is a binary dump of a CD-DA TOC.
     let buf = reader.read_buf_bytes_ref(reader.byte_len() as usize)?;
 
@@ -694,15 +724,18 @@ pub fn read_mcdi_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `OWNE` (terms of use) frame.
-pub fn read_owne_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_owne_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the terms of use text.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
     // The price paid in the format: "<CURRENCY CODE><PRICE>".
     let price_paid = read_string(&mut reader, Encoding::Iso8859_1)?;
 
     let sub_fields = vec![
         // The date of purchase.
-        RawTagSubField::new(OWNE_PURCHASE_DATE, read_date(&mut reader)?),
+        RawTagSubField::new(OWNE_PURCHASE_DATE, read_date(&mut reader).await?),
         // The name of the seller.
         RawTagSubField::new(OWNE_SELLER_NAME, read_string(&mut reader, encoding)?),
     ];
@@ -714,9 +747,12 @@ pub fn read_owne_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `PCNT` (total file play count) frame.
-pub fn read_pcnt_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_pcnt_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // Read the mandatory play counter.
-    let play_count = match read_play_counter(&mut reader)? {
+    let play_count = match read_play_counter(&mut reader).await? {
         Some(count) => count,
         _ => return decode_error("pcnt: invalid play counter"),
     };
@@ -728,17 +764,20 @@ pub fn read_pcnt_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `POPM` (popularimeter) frame.
-pub fn read_popm_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_popm_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     let mut sub_fields = vec![
         // The email of the user this frame belongs to.
         RawTagSubField::new(POPM_EMAIL, read_string(&mut reader, Encoding::Iso8859_1)?),
     ];
 
     // Read the rating.
-    let rating = reader.read_u8()?;
+    let rating = reader.read_u8().await?;
 
     // Read the optional play counter. Add it to the sub-fields of the tag.
-    if let Some(play_counter) = read_play_counter(&mut reader)? {
+    if let Some(play_counter) = read_play_counter(&mut reader).await? {
         sub_fields.push(RawTagSubField::new(POPM_PLAY_COUNTER, play_counter));
     }
 
@@ -753,11 +792,14 @@ pub fn read_popm_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `POSS` (position synchronisation) frame.
-pub fn read_poss_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_poss_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The units used for the position.
-    let units = reader.read_u8()?;
+    let units = reader.read_u8().await?;
     // The position.
-    let position = reader.read_be_u32()?;
+    let position = reader.read_be_u32().await?;
 
     let sub_fields = vec![RawTagSubField::new(POSS_POSITION_UNITS, units)];
 
@@ -768,7 +810,10 @@ pub fn read_poss_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `PRIV` (private) frame.
-pub fn read_priv_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_priv_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     let sub_fields = vec![
         // Read the owner identifier.
         RawTagSubField::new(PRIV_OWNER, read_string(&mut reader, Encoding::Iso8859_1)?),
@@ -790,9 +835,12 @@ pub fn read_raw_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resul
 }
 
 /// Reads a `SIGN` (signature) frame.
-pub fn read_sign_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_sign_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The group ID this signature belongs to.
-    let group_id = reader.read_u8()?;
+    let group_id = reader.read_u8().await?;
     // The remainder of the frame is the signature data.
     let signature = reader.read_buf_bytes_available_ref();
 
@@ -805,9 +853,12 @@ pub fn read_sign_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads all text frames frame except for `TXXX`.
-pub fn read_text_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_text_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
     // Read 1 or more strings.
     let text = read_string_list(&mut reader, encoding)?;
 
@@ -815,9 +866,12 @@ pub fn read_text_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `TIPL` (involved people frame).
-pub fn read_tipl_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_tipl_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
     // Read 1 or more strings.
     let text = read_string_list(&mut reader, encoding)?;
 
@@ -873,9 +927,12 @@ pub fn read_tipl_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `TXXX` (user defined) text frame.
-pub fn read_txxx_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_txxx_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The first byte of the frame is the encoding.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
     // A description of the contents of the frame.
     let desc = read_string(&mut reader, encoding)?;
     // Read 1 or more strings.
@@ -893,7 +950,10 @@ pub fn read_txxx_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Readers an `UFID` (unique file identifier) frame.
-pub fn read_ufid_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_ufid_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The owner identifier.
     let owner = read_string(&mut reader, Encoding::Iso8859_1)?;
     // An up-to 64-byte identifier fills the rest of the frame.
@@ -922,14 +982,17 @@ pub fn read_url_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resul
 }
 
 /// Reads a USER (terms of use) frame.
-pub fn read_user_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_user_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the terms of use text.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
 
     let mut sub_fields = Vec::new();
 
     // The next three bytes are an ISO-639-2 language code.
-    if let Some(lang) = read_lang_code(&mut reader)? {
+    if let Some(lang) = read_lang_code(&mut reader).await? {
         sub_fields.push(RawTagSubField::new(USER_LANGUAGE, lang));
     }
 
@@ -943,14 +1006,17 @@ pub fn read_user_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `USLT` (unsynchronized comment) frame.
-pub fn read_uslt_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_uslt_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the description.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
 
     let mut sub_fields = Vec::new();
 
     // The language code.
-    if let Some(lang) = read_lang_code(&mut reader)? {
+    if let Some(lang) = read_lang_code(&mut reader).await? {
         sub_fields.push(RawTagSubField::new(USLT_LANGUAGE, lang));
     }
 
@@ -969,9 +1035,12 @@ pub fn read_uslt_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 }
 
 /// Reads a `WXXX` (user defined) URL frame.
-pub fn read_wxxx_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Result<FrameResult> {
+pub async fn read_wxxx_frame(
+    mut reader: BufReader<'_>,
+    frame: &FrameInfo<'_>,
+) -> Result<FrameResult> {
     // The first byte of the WXXX frame is the encoding of the description.
-    let encoding = read_encoding(&mut reader)?;
+    let encoding = read_encoding(&mut reader).await?;
 
     let sub_fields = vec![
         // Read the description string.
@@ -1075,6 +1144,242 @@ static TIPL_FUNC_PARSERS: Lazy<RawTagParserMap> = Lazy::new(|| {
     m
 });
 
+fn get_parser(id: &[u8]) -> Option<RawTagParser> {
+    match id {
+        b"AENC" => None,
+        b"APIC" => None,
+        b"ASPI" => None, // TODO: SeekIndex side-data?
+        b"ATXT" => None,
+        b"CHAP" => None,
+        b"COMM" => None,
+        b"COMR" => None,
+        b"CRM_" => None, // Pseudo-frame to support ID3v2.2 frame.
+        b"CTOC" => None,
+        b"ENCR" => None,
+        b"EQU2" => None,
+        b"EQUA" => None,
+        b"ETCO" => None,
+        b"GEOB" => None,
+        b"GRID" => None,
+        b"IPLS" => None,
+        b"LINK" => None,
+        b"MCDI" => None,
+        b"MLLT" => None, // TODO: SeekIndex side-data?
+        b"OWNE" => None,
+        b"PCNT" => None,
+        b"POPM" => None,
+        b"POSS" => None,
+        b"PRIV" => None,
+        b"RBUF" => None,
+        b"RVA2" => None,
+        b"RVAD" => None,
+        b"RVRB" => None,
+        b"SEEK" => None,
+        b"SIGN" => None,
+        b"SYLT" => None,
+        b"SYTC" => None,
+        b"TALB" => Some(parse_album),
+        b"TBPM" => Some(parse_bpm),
+        b"TCMP" => Some(parse_compilation),
+        b"TCOM" => Some(parse_composer),
+        b"TCON" => Some(parse_id3v2_genre),
+        b"TCOP" => Some(parse_copyright),
+        b"TDAT" => Some(parse_recording_date),
+        b"TDEN" => Some(parse_encoding_date),
+        b"TDLY" => None,
+        b"TDOR" => Some(parse_original_release_date),
+        b"TDRC" => Some(parse_recording_date),
+        b"TDRL" => Some(parse_release_time),
+        b"TDTG" => Some(parse_tagging_date),
+        b"TENC" => Some(parse_encoded_by),
+        b"TEXT" => Some(parse_lyricist),
+        b"TFLT" => None,
+        b"TIME" => Some(parse_recording_time),
+        b"TIPL" => None,
+        b"TIT1" => Some(parse_grouping),
+        b"TIT2" => Some(parse_track_title),
+        b"TIT3" => Some(parse_track_subtitle),
+        b"TKEY" => Some(parse_initial_key),
+        b"TLAN" => Some(parse_language),
+        b"TLEN" => None,
+        b"TMCL" => None,
+        b"TMED" => Some(parse_media_format),
+        b"TMOO" => Some(parse_mood),
+        b"TOAL" => Some(parse_original_album),
+        b"TOFN" => Some(parse_original_file),
+        b"TOLY" => Some(parse_original_lyricist),
+        b"TOPE" => Some(parse_original_artist),
+        b"TORY" => Some(parse_original_release_year),
+        b"TOWN" => Some(parse_owner),
+        b"TPE1" => Some(parse_artist),
+        b"TPE2" => Some(parse_album_artist),
+        b"TPE3" => Some(parse_conductor),
+        b"TPE4" => Some(parse_remixer),
+        b"TPOS" => Some(parse_disc_number),
+        b"TPRO" => Some(parse_production_copyright),
+        b"TPUB" => Some(parse_label),
+        b"TRCK" => Some(parse_track_number),
+        b"TRDA" => Some(parse_recording_date), // TODO: Dates
+        b"TRSN" => Some(parse_internet_radio_name),
+        b"TRSO" => Some(parse_internet_radio_owner),
+        b"TSIZ" => None,
+        b"TSOA" => Some(parse_sort_album),
+        b"TSOP" => Some(parse_sort_artist),
+        b"TSOT" => Some(parse_sort_track_title),
+        b"TSRC" => Some(parse_ident_isrc),
+        b"TSSE" => Some(parse_encoder),
+        b"TSST" => Some(parse_disc_subtitle),
+        b"TXXX" => None,
+        b"TYER" => Some(parse_recording_year),
+        b"UFID" => None,
+        b"USER" => None,
+        b"USLT" => None,
+        b"WCOM" => Some(parse_url_purchase),
+        b"WCOP" => Some(parse_url_copyright),
+        b"WOAF" => Some(parse_url_official),
+        b"WOAR" => Some(parse_url_artist),
+        b"WOAS" => Some(parse_url_source),
+        b"WORS" => Some(parse_url_internet_radio),
+        b"WPAY" => Some(parse_url_payment),
+        b"WPUB" => Some(parse_url_label),
+        b"WXXX" => Some(parse_url),
+        // Apple iTunes frames
+        b"PCST" => Some(parse_podcast_flag),
+        b"GRP1" => Some(parse_grouping),
+        b"MVIN" => Some(parse_movement_number),
+        b"MVNM" => Some(parse_movement_name),
+        b"TCAT" => Some(parse_podcast_category),
+        b"TDES" => Some(parse_podcast_description),
+        b"TGID" => Some(parse_ident_podcast),
+        b"TKWD" => Some(parse_podcast_keywords),
+        b"TSO2" => Some(parse_sort_album_artist),
+        b"TSOC" => Some(parse_sort_composer),
+        b"WFED" => Some(parse_url_podcast),
+        _ => None,
+    }
+}
+
+pub async fn read_frame(reader: BufReader<'_>, id: &[u8], major_version: u8) -> Result<FrameResult> {
+    let raw_tag_parser = get_parser(id);
+    let frame = &FrameInfo::new(id, major_version, raw_tag_parser);
+
+    // Standardize the ID for matching
+    match frame.id.as_bytes() {
+        b"AENC" => read_aenc_frame(reader, frame).await,
+        b"APIC" => read_apic_frame(reader, frame).await,
+        b"ASPI" => read_raw_frame(reader, frame), // TODO: SeekIndex side-data?
+        b"ATXT" => read_atxt_frame(reader, frame).await,
+        b"CHAP" => read_chap_frame(reader, frame).await,
+        b"COMM" => read_comm_frame(reader, frame).await,
+        b"COMR" => read_comr_frame(reader, frame).await,
+        b"CRM_" => read_crm_frame(reader, frame).await, // Pseudo-frame to support ID3v2.2 frame
+        b"CTOC" => read_ctoc_frame(reader, frame).await,
+        b"ENCR" => read_encr_frame(reader, frame).await,
+        b"EQU2" => read_raw_frame(reader, frame),
+        b"EQUA" => read_raw_frame(reader, frame),
+        b"ETCO" => read_raw_frame(reader, frame),
+        b"GEOB" => read_geob_frame(reader, frame).await,
+        b"GRID" => read_grid_frame(reader, frame).await,
+        b"IPLS" => read_tipl_frame(reader, frame).await,
+        b"LINK" => skip_frame(reader, frame),
+        b"MCDI" => read_mcdi_frame(reader, frame).await,
+        b"MLLT" => read_raw_frame(reader, frame), // TODO: SeekIndex side-data
+        b"OWNE" => read_owne_frame(reader, frame).await,
+        b"PCNT" => read_pcnt_frame(reader, frame).await,
+        b"POPM" => read_popm_frame(reader, frame).await,
+        b"POSS" => read_poss_frame(reader, frame).await,
+        b"PRIV" => read_priv_frame(reader, frame).await,
+        b"RBUF" => read_raw_frame(reader, frame),
+        b"RVA2" => read_raw_frame(reader, frame),
+        b"RVAD" => read_raw_frame(reader, frame),
+        b"RVRB" => read_raw_frame(reader, frame),
+        b"SEEK" => skip_frame(reader, frame),
+        b"SIGN" => read_sign_frame(reader, frame).await,
+        b"SYLT" => read_raw_frame(reader, frame),
+        b"SYTC" => read_raw_frame(reader, frame),
+        b"TALB" => read_text_frame(reader, frame).await,
+        b"TBPM" => read_text_frame(reader, frame).await,
+        b"TCMP" => read_text_frame(reader, frame).await,
+        b"TCOM" => read_text_frame(reader, frame).await,
+        b"TCON" => read_text_frame(reader, frame).await,
+        b"TCOP" => read_text_frame(reader, frame).await,
+        b"TDAT" => read_text_frame(reader, frame).await,
+        b"TDEN" => read_text_frame(reader, frame).await,
+        b"TDLY" => read_text_frame(reader, frame).await,
+        b"TDOR" => read_text_frame(reader, frame).await,
+        b"TDRC" => read_text_frame(reader, frame).await,
+        b"TDRL" => read_text_frame(reader, frame).await,
+        b"TDTG" => read_text_frame(reader, frame).await,
+        b"TENC" => read_text_frame(reader, frame).await,
+        b"TEXT" => read_text_frame(reader, frame).await,
+        b"TFLT" => read_text_frame(reader, frame).await,
+        b"TIME" => read_text_frame(reader, frame).await,
+        b"TIPL" => read_tipl_frame(reader, frame).await,
+        b"TIT1" => read_text_frame(reader, frame).await,
+        b"TIT2" => read_text_frame(reader, frame).await,
+        b"TIT3" => read_text_frame(reader, frame).await,
+        b"TKEY" => read_text_frame(reader, frame).await,
+        b"TLAN" => read_text_frame(reader, frame).await,
+        b"TLEN" => read_text_frame(reader, frame).await,
+        b"TMCL" => read_text_frame(reader, frame).await,
+        b"TMED" => read_text_frame(reader, frame).await,
+        b"TMOO" => read_text_frame(reader, frame).await,
+        b"TOAL" => read_text_frame(reader, frame).await,
+        b"TOFN" => read_text_frame(reader, frame).await,
+        b"TOLY" => read_text_frame(reader, frame).await,
+        b"TOPE" => read_text_frame(reader, frame).await,
+        b"TORY" => read_text_frame(reader, frame).await,
+        b"TOWN" => read_text_frame(reader, frame).await,
+        b"TPE1" => read_text_frame(reader, frame).await,
+        b"TPE2" => read_text_frame(reader, frame).await,
+        b"TPE3" => read_text_frame(reader, frame).await,
+        b"TPE4" => read_text_frame(reader, frame).await,
+        b"TPOS" => read_text_frame(reader, frame).await,
+        b"TPRO" => read_text_frame(reader, frame).await,
+        b"TPUB" => read_text_frame(reader, frame).await,
+        b"TRCK" => read_text_frame(reader, frame).await,
+        b"TRDA" => read_text_frame(reader, frame).await, // TODO Dates
+        b"TRSN" => read_text_frame(reader, frame).await,
+        b"TRSO" => read_text_frame(reader, frame).await,
+        b"TSIZ" => read_text_frame(reader, frame).await,
+        b"TSOA" => read_text_frame(reader, frame).await,
+        b"TSOP" => read_text_frame(reader, frame).await,
+        b"TSOT" => read_text_frame(reader, frame).await,
+        b"TSRC" => read_text_frame(reader, frame).await,
+        b"TSSE" => read_text_frame(reader, frame).await,
+        b"TSST" => read_text_frame(reader, frame).await,
+        b"TXXX" => read_txxx_frame(reader, frame).await,
+        b"TYER" => read_text_frame(reader, frame).await,
+        b"UFID" => read_ufid_frame(reader, frame).await,
+        b"USER" => read_user_frame(reader, frame).await,
+        b"USLT" => read_uslt_frame(reader, frame).await,
+        b"WCOM" => read_url_frame(reader, frame),
+        b"WCOP" => read_url_frame(reader, frame),
+        b"WOAF" => read_url_frame(reader, frame),
+        b"WOAR" => read_url_frame(reader, frame),
+        b"WOAS" => read_url_frame(reader, frame),
+        b"WORS" => read_url_frame(reader, frame),
+        b"WPAY" => read_url_frame(reader, frame),
+        b"WPUB" => read_url_frame(reader, frame),
+        b"WXXX" => read_wxxx_frame(reader, frame).await,
+        // Apple iTunes frames
+        b"PCST" => read_text_frame(reader, frame).await,
+        b"GRP1" => read_text_frame(reader, frame).await,
+        b"MVIN" => read_text_frame(reader, frame).await,
+        b"MVNM" => read_text_frame(reader, frame).await,
+        b"TCAT" => read_text_frame(reader, frame).await,
+        b"TDES" => read_text_frame(reader, frame).await,
+        b"TGID" => read_text_frame(reader, frame).await,
+        b"TKWD" => read_text_frame(reader, frame).await,
+        b"TSO2" => read_text_frame(reader, frame).await,
+        b"TSOC" => read_text_frame(reader, frame).await,
+        b"WFED" => read_text_frame(reader, frame).await,
+
+        // Fallback for unknown or generic frames
+        _ => read_raw_frame(reader, frame),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Encoding;
@@ -1082,115 +1387,137 @@ mod tests {
     use alloc::string::ToString;
     use symphonia_core::io::BufReader;
 
-    #[test]
-    fn verify_read_date() {
+    #[futures_test::test]
+    async fn verify_read_date() {
         use super::read_date;
 
         // Empty buffer.
-        assert!(read_date(&mut BufReader::new(&[])).is_err());
+        assert!(read_date(&mut BufReader::new(&[])).await.is_err());
         // Too few characters in buffer.
-        assert!(read_date(&mut BufReader::new(b"0")).is_err());
-        assert!(read_date(&mut BufReader::new(b"01")).is_err());
-        assert!(read_date(&mut BufReader::new(b"012")).is_err());
-        assert!(read_date(&mut BufReader::new(b"0123")).is_err());
-        assert!(read_date(&mut BufReader::new(b"01234")).is_err());
-        assert!(read_date(&mut BufReader::new(b"012345")).is_err());
-        assert!(read_date(&mut BufReader::new(b"0123456")).is_err());
+        assert!(read_date(&mut BufReader::new(b"0")).await.is_err());
+        assert!(read_date(&mut BufReader::new(b"01")).await.is_err());
+        assert!(read_date(&mut BufReader::new(b"012")).await.is_err());
+        assert!(read_date(&mut BufReader::new(b"0123")).await.is_err());
+        assert!(read_date(&mut BufReader::new(b"01234")).await.is_err());
+        assert!(read_date(&mut BufReader::new(b"012345")).await.is_err());
+        assert!(read_date(&mut BufReader::new(b"0123456")).await.is_err());
         // Non-digit characters.
-        assert!(read_date(&mut BufReader::new(b"0123456a")).is_err());
-        assert!(read_date(&mut BufReader::new(b"abcdefgh")).is_err());
+        assert!(read_date(&mut BufReader::new(b"0123456a")).await.is_err());
+        assert!(read_date(&mut BufReader::new(b"abcdefgh")).await.is_err());
         // Exact number of digits.
-        assert_eq!(read_date(&mut BufReader::new(b"20000101")).unwrap(), "20000101");
+        assert_eq!(read_date(&mut BufReader::new(b"20000101")).await.unwrap(), "20000101");
         // Read only 8 digits.
-        assert_eq!(read_date(&mut BufReader::new(b"0123456789abcdef")).unwrap(), "01234567");
+        assert_eq!(read_date(&mut BufReader::new(b"0123456789abcdef")).await.unwrap(), "01234567");
     }
 
-    #[test]
-    fn verify_read_encoding() {
+    #[futures_test::test]
+    async fn verify_read_encoding() {
         use super::read_encoding;
 
         // Empty buffer.
-        assert!(read_encoding(&mut BufReader::new(&[])).is_err());
+        assert!(read_encoding(&mut BufReader::new(&[])).await.is_err());
         // Various valid encodings.
-        assert_eq!(read_encoding(&mut BufReader::new(&[0])).unwrap(), Encoding::Iso8859_1);
-        assert_eq!(read_encoding(&mut BufReader::new(&[1])).unwrap(), Encoding::Utf16Bom);
-        assert_eq!(read_encoding(&mut BufReader::new(&[2])).unwrap(), Encoding::Utf16Be);
-        assert_eq!(read_encoding(&mut BufReader::new(&[3])).unwrap(), Encoding::Utf8);
+        assert_eq!(read_encoding(&mut BufReader::new(&[0])).await.unwrap(), Encoding::Iso8859_1);
+        assert_eq!(read_encoding(&mut BufReader::new(&[1])).await.unwrap(), Encoding::Utf16Bom);
+        assert_eq!(read_encoding(&mut BufReader::new(&[2])).await.unwrap(), Encoding::Utf16Be);
+        assert_eq!(read_encoding(&mut BufReader::new(&[3])).await.unwrap(), Encoding::Utf8);
         // Invalid encodings.
-        assert!(read_encoding(&mut BufReader::new(&[4])).is_err());
-        assert!(read_encoding(&mut BufReader::new(&[5])).is_err());
+        assert!(read_encoding(&mut BufReader::new(&[4])).await.is_err());
+        assert!(read_encoding(&mut BufReader::new(&[5])).await.is_err());
     }
 
-    #[test]
-    fn verify_read_lang_code() {
+    #[futures_test::test]
+    async fn verify_read_lang_code() {
         use super::read_lang_code;
 
         // Empty buffer.
-        assert!(read_lang_code(&mut BufReader::new(&[])).is_err());
+        assert!(read_lang_code(&mut BufReader::new(&[])).await.is_err());
         // Too few characters in buffer.
-        assert!(read_lang_code(&mut BufReader::new(b"")).is_err());
-        assert!(read_lang_code(&mut BufReader::new(b"e")).is_err());
-        assert!(read_lang_code(&mut BufReader::new(b"en")).is_err());
+        assert!(read_lang_code(&mut BufReader::new(b"")).await.is_err());
+        assert!(read_lang_code(&mut BufReader::new(b"e")).await.is_err());
+        assert!(read_lang_code(&mut BufReader::new(b"en")).await.is_err());
         // Non-alphabetic.
-        assert!(read_lang_code(&mut BufReader::new(b"0")).is_err());
-        assert!(read_lang_code(&mut BufReader::new(b"01")).is_err());
-        assert!(read_lang_code(&mut BufReader::new(b"012")).is_err());
-        assert!(read_lang_code(&mut BufReader::new(b"en1")).is_err());
-        assert!(read_lang_code(&mut BufReader::new(b"en!")).is_err());
-        assert!(read_lang_code(&mut BufReader::new(b"   ")).is_err());
-        assert!(read_lang_code(&mut BufReader::new(b"---")).is_err());
+        assert!(read_lang_code(&mut BufReader::new(b"0")).await.is_err());
+        assert!(read_lang_code(&mut BufReader::new(b"01")).await.is_err());
+        assert!(read_lang_code(&mut BufReader::new(b"012")).await.is_err());
+        assert!(read_lang_code(&mut BufReader::new(b"en1")).await.is_err());
+        assert!(read_lang_code(&mut BufReader::new(b"en!")).await.is_err());
+        assert!(read_lang_code(&mut BufReader::new(b"   ")).await.is_err());
+        assert!(read_lang_code(&mut BufReader::new(b"---")).await.is_err());
         // Valid language codes.
-        assert_eq!(read_lang_code(&mut BufReader::new(b"enu")).unwrap().as_deref(), Some("enu"));
-        assert_eq!(read_lang_code(&mut BufReader::new(b"jpn")).unwrap().as_deref(), Some("jpn"));
+        assert_eq!(
+            read_lang_code(&mut BufReader::new(b"enu")).await.unwrap().as_deref(),
+            Some("enu")
+        );
+        assert_eq!(
+            read_lang_code(&mut BufReader::new(b"jpn")).await.unwrap().as_deref(),
+            Some("jpn")
+        );
         // Valid language codes, mixed case.
-        assert_eq!(read_lang_code(&mut BufReader::new(b"cHi")).unwrap().as_deref(), Some("chi"));
-        assert_eq!(read_lang_code(&mut BufReader::new(b"IND")).unwrap().as_deref(), Some("ind"));
+        assert_eq!(
+            read_lang_code(&mut BufReader::new(b"cHi")).await.unwrap().as_deref(),
+            Some("chi")
+        );
+        assert_eq!(
+            read_lang_code(&mut BufReader::new(b"IND")).await.unwrap().as_deref(),
+            Some("ind")
+        );
         // Unknown language codes.
-        assert_eq!(read_lang_code(&mut BufReader::new(b"xxx")).unwrap(), None);
-        assert_eq!(read_lang_code(&mut BufReader::new(b"xxX")).unwrap(), None);
-        assert_eq!(read_lang_code(&mut BufReader::new(b"xXx")).unwrap(), None);
-        assert_eq!(read_lang_code(&mut BufReader::new(b"xXX")).unwrap(), None);
-        assert_eq!(read_lang_code(&mut BufReader::new(b"Xxx")).unwrap(), None);
-        assert_eq!(read_lang_code(&mut BufReader::new(b"XxX")).unwrap(), None);
-        assert_eq!(read_lang_code(&mut BufReader::new(b"XXx")).unwrap(), None);
-        assert_eq!(read_lang_code(&mut BufReader::new(b"XXX")).unwrap(), None);
+        assert_eq!(read_lang_code(&mut BufReader::new(b"xxx")).await.unwrap(), None);
+        assert_eq!(read_lang_code(&mut BufReader::new(b"xxX")).await.unwrap(), None);
+        assert_eq!(read_lang_code(&mut BufReader::new(b"xXx")).await.unwrap(), None);
+        assert_eq!(read_lang_code(&mut BufReader::new(b"xXX")).await.unwrap(), None);
+        assert_eq!(read_lang_code(&mut BufReader::new(b"Xxx")).await.unwrap(), None);
+        assert_eq!(read_lang_code(&mut BufReader::new(b"XxX")).await.unwrap(), None);
+        assert_eq!(read_lang_code(&mut BufReader::new(b"XXx")).await.unwrap(), None);
+        assert_eq!(read_lang_code(&mut BufReader::new(b"XXX")).await.unwrap(), None);
     }
 
-    #[test]
-    fn verify_read_play_counter() {
+    #[futures_test::test]
+    async fn verify_read_play_counter() {
         use super::read_play_counter;
 
         // None.
-        assert_eq!(read_play_counter(&mut BufReader::new(&[])).unwrap(), None);
+        assert_eq!(read_play_counter(&mut BufReader::new(&[])).await.unwrap(), None);
         // Too small buffer.
-        assert!(read_play_counter(&mut BufReader::new(&[0])).is_err());
-        assert!(read_play_counter(&mut BufReader::new(&[0, 0])).is_err());
-        assert!(read_play_counter(&mut BufReader::new(&[0, 0, 0])).is_err());
+        assert!(read_play_counter(&mut BufReader::new(&[0])).await.is_err());
+        assert!(read_play_counter(&mut BufReader::new(&[0, 0])).await.is_err());
+        assert!(read_play_counter(&mut BufReader::new(&[0, 0, 0])).await.is_err());
         // Valid.
-        assert_eq!(read_play_counter(&mut BufReader::new(&[0, 0, 0, 0])).unwrap(), Some(0));
-        assert_eq!(read_play_counter(&mut BufReader::new(&[0, 0, 0, 0, 0])).unwrap(), Some(0));
-        assert_eq!(read_play_counter(&mut BufReader::new(&[0, 0, 0, 0, 0, 0])).unwrap(), Some(0));
+        assert_eq!(read_play_counter(&mut BufReader::new(&[0, 0, 0, 0])).await.unwrap(), Some(0));
         assert_eq!(
-            read_play_counter(&mut BufReader::new(&[0, 0, 0, 0, 0, 0, 0])).unwrap(),
+            read_play_counter(&mut BufReader::new(&[0, 0, 0, 0, 0])).await.unwrap(),
             Some(0)
         );
         assert_eq!(
-            read_play_counter(&mut BufReader::new(&[0, 0, 0, 0, 0, 0, 0, 0])).unwrap(),
+            read_play_counter(&mut BufReader::new(&[0, 0, 0, 0, 0, 0])).await.unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            read_play_counter(&mut BufReader::new(&[0, 0, 0, 0, 0, 0, 0])).await.unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            read_play_counter(&mut BufReader::new(&[0, 0, 0, 0, 0, 0, 0, 0])).await.unwrap(),
             Some(0)
         );
         // Too large.
-        assert!(read_play_counter(&mut BufReader::new(&[0, 0, 0, 0, 0, 0, 0, 0, 0])).is_err());
+        assert!(
+            read_play_counter(&mut BufReader::new(&[0, 0, 0, 0, 0, 0, 0, 0, 0])).await.is_err()
+        );
         // Valid values.
         assert_eq!(
-            read_play_counter(&mut BufReader::new(&u32::MAX.to_be_bytes())).unwrap(),
+            read_play_counter(&mut BufReader::new(&u32::MAX.to_be_bytes())).await.unwrap(),
             Some(u64::from(u32::MAX))
         );
         assert_eq!(
-            read_play_counter(&mut BufReader::new(&u64::MAX.to_be_bytes())).unwrap(),
+            read_play_counter(&mut BufReader::new(&u64::MAX.to_be_bytes())).await.unwrap(),
             Some(u64::MAX)
         );
         assert_eq!(
-            read_play_counter(&mut BufReader::new(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66])).unwrap(),
+            read_play_counter(&mut BufReader::new(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]))
+                .await
+                .unwrap(),
             Some(18_838_586_676_582)
         );
     }

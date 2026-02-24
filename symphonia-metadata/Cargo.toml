@@ -34,3 +34,6 @@ log = "0.4"
 smallvec = "1.13.1"
 symphonia-core = { version = "0.6.0", path = "../symphonia-core" }
 hashbrown = { workspace = true }
+
+[dev-dependencies]
+futures-test = "0.3"

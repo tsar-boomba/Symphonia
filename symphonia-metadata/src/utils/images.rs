@@ -36,51 +36,47 @@ const fn non_zero(value: u8) -> NonZeroU8 {
 }
 
 /// Try to get basic information about an image from an image buffer.
-pub fn try_get_image_info(buf: &[u8]) -> Option<ImageInfo> {
-    struct Parser {
-        parse: for<'a> fn(BufReader<'a>) -> Result<ImageInfo>,
-        marker: &'static [u8],
-    }
-
-    const IMAGE_PARSERS: &[Parser] = &[
-        Parser { marker: &[0x42, 0x4d], parse: parse_bitmap },
-        Parser { marker: &[0xff, 0xd8], parse: parse_jpeg },
-        Parser { marker: &[0x47, 0x49, 0x46, 0x38, 0x37, 0x61], parse: parse_gif },
-        Parser { marker: &[0x47, 0x49, 0x46, 0x38, 0x39, 0x61], parse: parse_gif },
-        Parser { marker: &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], parse: parse_png },
-        // TODO: WebP
-    ];
+pub async fn try_get_image_info(buf: &[u8]) -> Option<ImageInfo> {
+    const BITMAP_MARKER: &[u8] = &[0x42, 0x4d];
+    const JPEG_MARKER: &[u8] = &[0xff, 0xd8];
+    const GIF_MARKER_1: &[u8] = &[0x47, 0x49, 0x46, 0x38, 0x37, 0x61];
+    const GIF_MARKER_2: &[u8] = &[0x47, 0x49, 0x46, 0x38, 0x37, 0x61];
+    const PNG_MARKER: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
     debug!("detecting format of image starting with: {:02x?}", &buf[..8.min(buf.len())]);
-
-    // Find the first image parser that has a marker that matches the beginning of the image
-    // buffer, and attempt to parse it for image information.
-    IMAGE_PARSERS
-        .iter()
-        .filter(|parser| buf.starts_with(parser.marker))
-        .find_map(|parser| (parser.parse)(BufReader::new(&buf[parser.marker.len()..])).ok())
+    if buf.starts_with(BITMAP_MARKER) {
+        parse_bitmap(BufReader::new(&buf[BITMAP_MARKER.len()..])).await.ok()
+    } else if buf.starts_with(JPEG_MARKER) {
+        parse_jpeg(BufReader::new(&buf[JPEG_MARKER.len()..])).await.ok()
+    } else if buf.starts_with(GIF_MARKER_1) || buf.starts_with(GIF_MARKER_2) {
+        parse_gif(BufReader::new(&buf[GIF_MARKER_1.len()..])).await.ok()
+    } else if buf.starts_with(PNG_MARKER) {
+        parse_png(BufReader::new(&buf[BITMAP_MARKER.len()..])).await.ok()
+    } else {
+        None
+    }
 }
 
 /// Parse a JPEG for image information.
-fn parse_jpeg(mut reader: BufReader<'_>) -> Result<ImageInfo> {
-    while reader.read_u8()? == 0xff {
-        let chunk_type = reader.read_u8()?;
+async fn parse_jpeg(mut reader: BufReader<'_>) -> Result<ImageInfo> {
+    while reader.read_u8().await? == 0xff {
+        let chunk_type = reader.read_u8().await?;
 
         // Skip parameter-less markers, see https://github.com/corkami/formats/blob/master/image/jpeg.md
         if chunk_type >= 0xd0 && chunk_type <= 0xd9 {
             continue;
         }
 
-        let chunk_len = reader.read_be_u16()?;
+        let chunk_len = reader.read_be_u16().await?;
         if chunk_len < 2 {
             return decode_error("meta (jpeg): invalid chunk length");
         }
 
         // Baseline, and progressive DCT.
         if chunk_type == 0xc0 || chunk_type == 0xc2 {
-            let _ = reader.read_u8()?;
-            let height = reader.read_be_u16()?;
-            let width = reader.read_be_u16()?;
+            let _ = reader.read_u8().await?;
+            let height = reader.read_be_u16().await?;
+            let width = reader.read_be_u16().await?;
 
             let color_mode = ColorMode::Direct(ColorModel::RGB(non_zero(8)));
 
@@ -94,27 +90,27 @@ fn parse_jpeg(mut reader: BufReader<'_>) -> Result<ImageInfo> {
         }
 
         // Ignore the chunk. Exclude the chunk length that has already been read.
-        reader.ignore_bytes(u64::from(chunk_len) - 2)?;
+        reader.ignore_bytes(u64::from(chunk_len) - 2).await?;
     }
 
     decode_error("meta (jpeg): invalid data")
 }
 
 /// Parse a PNG for image information.
-fn parse_png(mut reader: BufReader<'_>) -> Result<ImageInfo> {
+async fn parse_png(mut reader: BufReader<'_>) -> Result<ImageInfo> {
     // A PNG must start with an IHDR chunk.
-    reader.ignore_bytes(4)?;
-    if reader.read_quad_bytes()? != *b"IHDR" {
+    reader.ignore_bytes(4).await?;
+    if reader.read_quad_bytes().await? != *b"IHDR" {
         return decode_error("meta (png): invalid data");
     }
 
-    let width = reader.read_be_u32()?;
-    let height = reader.read_be_u32()?;
-    let bit_depth = reader.read_u8()?;
-    let color_type = reader.read_u8()?;
+    let width = reader.read_be_u32().await?;
+    let height = reader.read_be_u32().await?;
+    let bit_depth = reader.read_u8().await?;
+    let color_type = reader.read_u8().await?;
     // Ignore compression method, filter method, interlace method, and CRC to reach the end of
     // the IHDR chunk.
-    reader.ignore_bytes(7)?;
+    reader.ignore_bytes(7).await?;
 
     let bit_depth = match NonZeroU8::new(bit_depth) {
         Some(bit_depth) => bit_depth,
@@ -137,8 +133,8 @@ fn parse_png(mut reader: BufReader<'_>) -> Result<ImageInfo> {
         3 if [1, 2, 4, 8].contains(&bit_depth.get()) => {
             // Check if there is an alpha channel.
             let color_model = loop {
-                let chunk_len = reader.read_be_u32()?;
-                let chunk_type = reader.read_quad_bytes()?;
+                let chunk_len = reader.read_be_u32().await?;
+                let chunk_type = reader.read_quad_bytes().await?;
 
                 // The tRNS chunk has been found, the palette contains an alpha channel.
                 if chunk_type == *b"tRNS" {
@@ -154,7 +150,7 @@ fn parse_png(mut reader: BufReader<'_>) -> Result<ImageInfo> {
                 }
 
                 // Skip chunk data and CRC.
-                reader.ignore_bytes(u64::from(chunk_len + 4))?;
+                reader.ignore_bytes(u64::from(chunk_len + 4)).await?;
             };
 
             ColorMode::Indexed(ColorPaletteInfo {
@@ -175,12 +171,12 @@ fn parse_png(mut reader: BufReader<'_>) -> Result<ImageInfo> {
 }
 
 /// Parse a Bitmap for image information.
-fn parse_bitmap(mut reader: BufReader<'_>) -> Result<ImageInfo> {
+async fn parse_bitmap(mut reader: BufReader<'_>) -> Result<ImageInfo> {
     // Ignore the BITMAPFILEHEADER contents after the signature.
-    reader.ignore_bytes(12)?;
+    reader.ignore_bytes(12).await?;
 
     // The header size differentiates the version/type of bitmap header.
-    let size = reader.read_u32()?;
+    let size = reader.read_u32().await?;
 
     // Support the 5 versions of the Windows BITMAPINFOHEADER. Each subsequent version is an
     // incremental extension of the previous, however, we only are concerned with the fields
@@ -190,19 +186,19 @@ fn parse_bitmap(mut reader: BufReader<'_>) -> Result<ImageInfo> {
     }
 
     // Width should always be positive.
-    let width = reader.read_i32()?.unsigned_abs();
+    let width = reader.read_i32().await?.unsigned_abs();
     // Height can be negative to indicate a top-down bitmap instead of a bottom-up bitmap. This
     // makes no difference to the actual size.
-    let height = reader.read_i32()?.unsigned_abs();
+    let height = reader.read_i32().await?.unsigned_abs();
     // The number of color planes should always be 1.
-    let planes = reader.read_u16()?;
+    let planes = reader.read_u16().await?;
 
     if planes != 1 {
         return decode_error("meta (bmp): invalid number of planes");
     }
 
-    let bit_count = reader.read_u16()?;
-    let compression = reader.read_u32()?;
+    let bit_count = reader.read_u16().await?;
+    let compression = reader.read_u32().await?;
 
     // reader.ignore_bytes(4)?;
 
@@ -216,16 +212,13 @@ fn parse_bitmap(mut reader: BufReader<'_>) -> Result<ImageInfo> {
                     bits_per_pixel: non_zero(bit_count as u8),
                     color_model: ColorModel::RGB(non_zero(8)),
                 })
-            }
-            else if bit_count == 16 {
+            } else if bit_count == 16 {
                 // With 16bpp, R5G5B5 is used.
                 ColorMode::Direct(ColorModel::RGB(non_zero(5)))
-            }
-            else if bit_count == 24 || bit_count == 32 {
+            } else if bit_count == 24 || bit_count == 32 {
                 // With 24bpp or 32bpp, R8G8B8(A8) is used.
                 ColorMode::Direct(ColorModel::RGB(non_zero(8)))
-            }
-            else {
+            } else {
                 return decode_error("meta (bmp): invalid bit count");
             }
         }
@@ -266,11 +259,11 @@ fn parse_bitmap(mut reader: BufReader<'_>) -> Result<ImageInfo> {
 }
 
 /// Parse a GIF for image information.
-fn parse_gif(mut reader: BufReader<'_>) -> Result<ImageInfo> {
-    let width = reader.read_u16()?;
-    let height = reader.read_u16()?;
+async fn parse_gif(mut reader: BufReader<'_>) -> Result<ImageInfo> {
+    let width = reader.read_u16().await?;
+    let height = reader.read_u16().await?;
     // Flags specify if a global color table (GCT) is used, and its size.
-    let flags = reader.read_u8()?;
+    let flags = reader.read_u8().await?;
 
     let color_mode = if flags & 0x80 != 0 {
         // GCT is enabled. The lower flag bits indicate the bits per pixel.
@@ -280,8 +273,7 @@ fn parse_gif(mut reader: BufReader<'_>) -> Result<ImageInfo> {
             bits_per_pixel: non_zero(bpp),
             color_model: ColorModel::RGB(non_zero(8)),
         })
-    }
-    else {
+    } else {
         // No GCT.
         return unsupported_error("meta (gif): local color tables are unsupported");
     };

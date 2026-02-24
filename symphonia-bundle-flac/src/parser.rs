@@ -41,13 +41,11 @@ impl<const N: usize> MovingAverage<N> {
         if self.count >= N {
             // If greater-than N values were pushed, then all samples must be averaged.
             self.samples.iter().sum::<usize>() / N
-        }
-        else if self.count > 0 {
+        } else if self.count > 0 {
             // If less-than N values were pushed, then only the first 0..N samples need to be
             // averaged.
             self.samples.iter().take(self.count).sum::<usize>() / self.count
-        }
-        else {
+        } else {
             // No samples.
             0
         }
@@ -144,10 +142,10 @@ impl Fragment {
     }
 
     /// Parse the frame header from the fragment.
-    fn parse_header(&self) -> FrameHeader {
+    async fn parse_header(&self) -> FrameHeader {
         let mut reader = BufReader::new(&self.data);
-        let sync = reader.read_be_u16().unwrap();
-        read_frame_header(&mut reader, sync).unwrap()
+        let sync = reader.read_be_u16().await.unwrap();
+        read_frame_header(&mut reader, sync).await.unwrap()
     }
 }
 
@@ -206,19 +204,16 @@ impl PacketBuilder {
                     self.get_max_avg_frame_size()
                 );
                 true
-            }
-            else if first.state.total_len > self.get_max_avg_frame_size() {
+            } else if first.state.total_len > self.get_max_avg_frame_size() {
                 warn!(
                     "dropping fragment: packet would exeed 4x average historical size of {} bytes",
                     self.get_max_avg_frame_size()
                 );
                 true
-            }
-            else if self.frags.len() >= 4 {
+            } else if self.frags.len() >= 4 {
                 warn!("dropping fragment: packet would exceed fragment count limit");
                 true
-            }
-            else {
+            } else {
                 false
             };
 
@@ -232,12 +227,11 @@ impl PacketBuilder {
         self.frags.push(frag);
     }
 
-    fn try_build(&mut self, stream_info: &StreamInfo, frag: Fragment) -> Option<ParsedPacket> {
+    async fn try_build(&mut self, stream_info: &StreamInfo, frag: Fragment) -> Option<ParsedPacket> {
         let (header, data) = if frag.crc_match {
             // The fragment has a CRC that matches the expected CRC.
-            (frag.parse_header(), frag.data)
-        }
-        else {
+            (frag.parse_header().await, frag.data)
+        } else {
             // The fragment does not have a CRC that matches the expected CRC.
             //
             // For each existing fragment, update its running CRC with the payload of the new
@@ -262,9 +256,8 @@ impl PacketBuilder {
 
                 data.extend_from_slice(&frag.data);
 
-                (self.frags[i].parse_header(), data.into_boxed_slice())
-            }
-            else {
+                (self.frags[i].parse_header().await, data.into_boxed_slice())
+            } else {
                 // A range of fragments has not been found that forms a packet.
                 self.push_fragment(frag);
 
@@ -324,7 +317,7 @@ impl PacketParser {
     /// Tries to read a fragment upto the maximum size of a FLAC frame using the reader and returns
     /// it. If a fragment cannot be read, then the reader has lost synchronization and must be
     /// resynchronized.
-    fn try_read_fragment<B>(
+    async fn try_read_fragment<B>(
         &self,
         reader: &mut B,
         avg_frame_size: usize,
@@ -345,7 +338,7 @@ impl PacketParser {
         // Do the initial read.
         //
         // Note: This will always read atleast a single byte, or return an error (i.e., EOF).
-        let mut end = reader.read_buf(&mut buf)?;
+        let mut end = reader.read_buf(&mut buf).await?;
 
         // Invariant: The packet parser was synchronized before starting to read_fragment.
         //
@@ -370,7 +363,7 @@ impl PacketParser {
                 // frame header in its entirety.
                 if is_likely_frame_header(frame) {
                     // Parse the frame header from the frame buffer.
-                    if let Ok(header) = read_frame_header(&mut BufReader::new(&frame[2..]), sync) {
+                    if let Ok(header) = read_frame_header(&mut BufReader::new(&frame[2..]), sync).await {
                         // Get the last header to check monotonicity in the strict header check.
                         let last_header = self.builder.last_header();
 
@@ -410,7 +403,7 @@ impl PacketParser {
             pos = end.saturating_sub(FLAC_MAX_FRAME_HEADER_SIZE);
 
             // Read the new chunk.
-            end += match reader.read_buf(&mut buf[end..next_read_end]) {
+            end += match reader.read_buf(&mut buf[end..next_read_end]).await {
                 Ok(read) => read,
                 Err(_) => break 'found end,
             }
@@ -431,24 +424,24 @@ impl PacketParser {
     }
 
     /// Reads a fragment using the reader and performs resynchronization when necessary.
-    fn read_fragment<B>(&mut self, reader: &mut B, avg_frame_size: usize) -> Result<Fragment>
+    async fn read_fragment<B>(&mut self, reader: &mut B, avg_frame_size: usize) -> Result<Fragment>
     where
         B: ReadBytes + SeekBuffered,
     {
         loop {
-            if let Some(fragment) = self.try_read_fragment(reader, avg_frame_size)? {
+            if let Some(fragment) = self.try_read_fragment(reader, avg_frame_size).await? {
                 return Ok(fragment);
             }
 
             // If a fragment could not be read, synchronization was lost. Try to resync.
             warn!("synchronization lost");
-            let _ = self.resync(reader)?;
+            let _ = self.resync(reader).await?;
         }
     }
 
     /// Reads a fragment or handles end-of-stream using the reader. Performs resynchronization when
     /// necessary.
-    fn read_fragment_or_eos<B>(
+    async fn read_fragment_or_eos<B>(
         &mut self,
         reader: &mut B,
         avg_frame_size: usize,
@@ -456,7 +449,7 @@ impl PacketParser {
     where
         B: ReadBytes + SeekBuffered,
     {
-        match self.read_fragment(reader, avg_frame_size) {
+        match self.read_fragment(reader, avg_frame_size).await {
             Ok(fragment) => Ok(Some(fragment)),
             Err(Error::IoError(err)) if err.is_eof() => {
                 // If the required information is available, verify that atleast the expected number
@@ -484,7 +477,7 @@ impl PacketParser {
     }
 
     /// Parse the next packet from the stream.
-    pub fn parse<B>(&mut self, reader: &mut B) -> Result<Option<Packet>>
+    pub async fn parse<B>(&mut self, reader: &mut B) -> Result<Option<Packet>>
     where
         B: ReadBytes + SeekBuffered,
     {
@@ -495,12 +488,12 @@ impl PacketParser {
 
         // Build a packet.
         let parsed = loop {
-            let fragment = match self.read_fragment_or_eos(reader, avg_frame_size)? {
+            let fragment = match self.read_fragment_or_eos(reader, avg_frame_size).await? {
                 Some(fragment) => fragment,
                 None => return Ok(None),
             };
 
-            if let Some(packet) = self.builder.try_build(&self.info, fragment) {
+            if let Some(packet) = self.builder.try_build(&self.info, fragment).await {
                 break packet;
             }
         };
@@ -517,7 +510,7 @@ impl PacketParser {
     }
 
     /// Resync the reader to the start of the next frame.
-    pub fn resync<B>(&mut self, reader: &mut B) -> Result<ResyncInfo>
+    pub async fn resync<B>(&mut self, reader: &mut B) -> Result<ResyncInfo>
     where
         B: ReadBytes + SeekBuffered,
     {
@@ -526,11 +519,11 @@ impl PacketParser {
         let mut frame_pos;
 
         let header = loop {
-            let sync = sync_frame(reader)?;
+            let sync = sync_frame(reader).await?;
 
             frame_pos = reader.pos() - 2;
 
-            if let Ok(header) = read_frame_header(reader, sync) {
+            if let Ok(header) = read_frame_header(reader, sync).await {
                 // Do a strict frame header check with no previous header.
                 if strict_frame_header_check(&self.info, &header, None) {
                     break header;

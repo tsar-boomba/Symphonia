@@ -52,7 +52,7 @@ impl Default for MediaSourceStreamOptions {
 /// buffer cache invalidation. Note that regular a `seek()` will invalidate the buffer cache.
 pub struct MediaSourceStream<'s> {
     /// The source reader.
-    inner: Box<dyn MediaSource<Error = super::Error> + 's>,
+    inner: Box<dyn MediaSource<Error = super::Error> + Send + 's>,
     /// The ring buffer.
     ring: Box<[u8]>,
     /// The ring buffer's wrap-around mask.

@@ -56,6 +56,7 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use async_trait::async_trait;
 use core::convert::From;
 use core::fmt;
 use core::num::NonZeroU8;
@@ -874,12 +875,13 @@ pub struct MetadataBuffer {
 }
 
 /// A `MetadataReader` reads and decodes metadata and produces a revision of that decoded metadata.
-pub trait MetadataReader: Send + Sync {
+#[async_trait]
+pub trait MetadataReader: Send {
     /// Get basic information about the metadata format.
     fn metadata_info(&self) -> &MetadataInfo;
 
     /// Read all metadata and return it if successful.
-    fn read_all(&mut self) -> Result<MetadataBuffer>;
+    async fn read_all(&mut self) -> Result<MetadataBuffer>;
 
     /// Consumes the `MetadataReader` and returns the underlying media source stream
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

@@ -97,7 +97,7 @@ pub struct StreamInfo {
 
 impl StreamInfo {
     /// Read a stream information block.
-    pub fn read<B: ReadBytes>(reader: &mut B) -> Result<StreamInfo> {
+    pub async fn read<B: ReadBytes>(reader: &mut B) -> Result<StreamInfo> {
         let mut info = StreamInfo {
             block_len_min: 0,
             block_len_max: 0,
@@ -111,8 +111,8 @@ impl StreamInfo {
         };
 
         // Read the block length bounds in number of samples.
-        info.block_len_min = reader.read_be_u16()?;
-        info.block_len_max = reader.read_be_u16()?;
+        info.block_len_min = reader.read_be_u16().await?;
+        info.block_len_max = reader.read_be_u16().await?;
 
         // Validate the block length bounds are in the range [16, 65535] samples.
         if info.block_len_min < 16 || info.block_len_max < 16 {
@@ -127,8 +127,8 @@ impl StreamInfo {
         }
 
         // Read the frame byte length bounds.
-        info.frame_byte_len_min = reader.read_be_u24()?;
-        info.frame_byte_len_max = reader.read_be_u24()?;
+        info.frame_byte_len_min = reader.read_be_u24().await?;
+        info.frame_byte_len_max = reader.read_be_u24().await?;
 
         // Validate the maximum frame byte length is greater than or equal to the minimum frame byte
         // length if both are known. A value of 0 for either indicates the respective byte length is
@@ -145,14 +145,14 @@ impl StreamInfo {
         let mut br = BitStreamLtr::new(reader);
 
         // Read sample rate, valid rates are [1, 655350] Hz.
-        info.sample_rate = br.read_bits_leq32(20)?;
+        info.sample_rate = br.read_bits_leq32(20).await?;
 
         if info.sample_rate < 1 || info.sample_rate > 655_350 {
             return decode_error("flac: stream sample rate out of bounds");
         }
 
         // Read number of channels minus 1. Valid number of channels are 1-8.
-        let channels_enc = br.read_bits_leq32(3)? + 1;
+        let channels_enc = br.read_bits_leq32(3).await? + 1;
 
         if channels_enc < 1 || channels_enc > 8 {
             return decode_error("flac: stream channels are out of bounds");
@@ -161,7 +161,7 @@ impl StreamInfo {
         info.channels = flac_channels_to_channels(channels_enc);
 
         // Read bits per sample minus 1. Valid number of bits per sample are 4-32.
-        info.bits_per_sample = br.read_bits_leq32(5)? + 1;
+        info.bits_per_sample = br.read_bits_leq32(5).await? + 1;
 
         if info.bits_per_sample < 4 || info.bits_per_sample > 32 {
             return decode_error("flac: stream bits per sample are out of bounds");
@@ -169,14 +169,14 @@ impl StreamInfo {
 
         // Read the total number of samples. All values are valid. A value of 0 indiciates a stream
         // of unknown length.
-        info.n_samples = match br.read_bits_leq64(36)? {
+        info.n_samples = match br.read_bits_leq64(36).await? {
             0 => None,
             samples => Some(samples),
         };
 
         // Read the decoded audio data MD5. If the MD5 buffer is zeroed then no checksum is present.
         let mut md5 = [0; 16];
-        reader.read_buf_exact(&mut md5)?;
+        reader.read_buf_exact(&mut md5).await?;
 
         if md5 != [0; 16] {
             info.md5 = Some(md5);
@@ -201,8 +201,8 @@ pub struct MetadataBlockHeader {
 
 impl MetadataBlockHeader {
     /// Read a metadata block header.
-    pub fn read<B: ReadBytes>(reader: &mut B) -> Result<MetadataBlockHeader> {
-        let header_enc = reader.read_u8()?;
+    pub async fn read<B: ReadBytes>(reader: &mut B) -> Result<MetadataBlockHeader> {
+        let header_enc = reader.read_u8().await?;
 
         // First bit of the header indicates if this is the last metadata block.
         let is_last = (header_enc & 0x80) == 0x80;
@@ -221,7 +221,7 @@ impl MetadataBlockHeader {
             _ => MetadataBlockType::Unknown(block_type_id),
         };
 
-        let block_len = reader.read_be_u24()?;
+        let block_len = reader.read_be_u24().await?;
 
         Ok(MetadataBlockHeader { is_last, block_type, block_len })
     }

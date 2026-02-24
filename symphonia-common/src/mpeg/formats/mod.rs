@@ -6,6 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use alloc::boxed::Box;
+use symphonia_core::async_trait;
 use symphonia_core::codecs::CodecId;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{FiniteStream, ReadBytes, ScopedStream};
@@ -29,8 +30,8 @@ pub enum ClassTag {
 }
 
 /// Read an ISO/IEC 14496-1 Object Descriptor header and return the class tag and size.
-pub fn read_object_descriptor_header<B: ReadBytes>(reader: &mut B) -> Result<(ClassTag, u64)> {
-    let tag = match reader.read_u8()? {
+pub async fn read_object_descriptor_header<B: ReadBytes>(reader: &mut B) -> Result<(ClassTag, u64)> {
+    let tag = match reader.read_u8().await? {
         0x0 | 0xff => return decode_error("common (mpeg): forbidden object descriptor tag"),
         0x1 => ClassTag::ObjectDescriptor,
         0x2 => ClassTag::InitialObjectDescriptor,
@@ -45,7 +46,7 @@ pub fn read_object_descriptor_header<B: ReadBytes>(reader: &mut B) -> Result<(Cl
     let mut size = 0;
 
     for _ in 0..4 {
-        let val = reader.read_u8()?;
+        let val = reader.read_u8().await?;
         size = (size << 7) | u64::from(val & 0x7f);
         if val & 0x80 == 0 {
             break;
@@ -124,8 +125,9 @@ pub fn codec_id_from_object_type_indication(obj_type: u8) -> Option<CodecId> {
     Some(codec_id)
 }
 
+#[async_trait]
 pub trait ObjectDescriptor: Sized {
-    fn read<B: ReadBytes>(reader: &mut B, len: u64) -> Result<Self>;
+    async fn read<B: ReadBytes>(reader: &mut B, len: u64) -> Result<Self>;
 }
 
 /*
@@ -162,29 +164,30 @@ pub struct ESDescriptor {
     pub sl_config: SLConfigDescriptor,
 }
 
+#[async_trait]
 impl ObjectDescriptor for ESDescriptor {
-    fn read<B: ReadBytes>(reader: &mut B, len: u64) -> Result<Self> {
+    async fn read<B: ReadBytes>(reader: &mut B, len: u64) -> Result<Self> {
         // ES Descriptor is an expandable object descriptor. All reads must be scoped to the length
         // defined in the header.
         let mut scoped = ScopedStream::new(reader, len);
 
-        let es_id = scoped.read_be_u16()?;
-        let es_flags = scoped.read_u8()?;
+        let es_id = scoped.read_be_u16().await?;
+        let es_flags = scoped.read_u8().await?;
 
         // Stream dependence flag.
         if es_flags & 0x80 != 0 {
-            let _depends_on_es_id = scoped.read_u16()?;
+            let _depends_on_es_id = scoped.read_u16().await?;
         }
 
         // URL flag.
         if es_flags & 0x40 != 0 {
-            let url_len = scoped.read_u8()?;
-            scoped.ignore_bytes(u64::from(url_len))?;
+            let url_len = scoped.read_u8().await?;
+            scoped.ignore_bytes(u64::from(url_len)).await?;
         }
 
         // OCR stream flag.
         if es_flags & 0x20 != 0 {
-            let _ocr_es_id = scoped.read_u16()?;
+            let _ocr_es_id = scoped.read_u16().await?;
         }
 
         let mut dec_config = None;
@@ -192,24 +195,24 @@ impl ObjectDescriptor for ESDescriptor {
 
         // Multiple descriptors follow, but only the decoder configuration descriptor is useful.
         while scoped.bytes_available() > MIN_OBJECT_DESCRIPTOR_SIZE {
-            let (tag, desc_len) = read_object_descriptor_header(&mut scoped)?;
+            let (tag, desc_len) = read_object_descriptor_header(&mut scoped).await?;
 
             match tag {
                 ClassTag::DecoderConfigDescriptor => {
-                    dec_config = Some(DecoderConfigDescriptor::read(&mut scoped, desc_len)?);
+                    dec_config = Some(DecoderConfigDescriptor::read(&mut scoped, desc_len).await?);
                 }
                 ClassTag::SlConfigDescriptor => {
-                    sl_config = Some(SLConfigDescriptor::read(&mut scoped, desc_len)?);
+                    sl_config = Some(SLConfigDescriptor::read(&mut scoped, desc_len).await?);
                 }
                 other => {
                     debug!("skipping {other:?} object in es descriptor");
-                    scoped.ignore_bytes(desc_len)?;
+                    scoped.ignore_bytes(desc_len).await?;
                 }
             }
         }
 
         // Consume remaining bytes.
-        scoped.ignore()?;
+        scoped.ignore().await?;
 
         // Decoder configuration descriptor is mandatory.
         if dec_config.is_none() {
@@ -245,16 +248,17 @@ pub struct DecoderConfigDescriptor {
     pub dec_specific_info: Option<DecoderSpecificInfo>,
 }
 
+#[async_trait]
 impl ObjectDescriptor for DecoderConfigDescriptor {
-    fn read<B: ReadBytes>(reader: &mut B, len: u64) -> Result<Self> {
+    async fn read<B: ReadBytes>(reader: &mut B, len: u64) -> Result<Self> {
         // Decoder Config Descriptor is an expandable object descriptor. All reads must be scoped to
         // the length defined in the header.
         let mut scoped = ScopedStream::new(reader, len);
 
-        let object_type_indication = scoped.read_u8()?;
+        let object_type_indication = scoped.read_u8().await?;
 
         let (_stream_type, _upstream) = {
-            let val = scoped.read_u8()?;
+            let val = scoped.read_u8().await?;
 
             if val & 0x1 != 1 {
                 debug!("decoder config descriptor reserved bit is not 1");
@@ -263,29 +267,29 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
             ((val & 0xfc) >> 2, (val & 0x2) >> 1)
         };
 
-        let _buffer_size = scoped.read_be_u24()?;
-        let _max_bitrate = scoped.read_be_u32()?;
-        let _avg_bitrate = scoped.read_be_u32()?;
+        let _buffer_size = scoped.read_be_u24().await?;
+        let _max_bitrate = scoped.read_be_u32().await?;
+        let _avg_bitrate = scoped.read_be_u32().await?;
 
         let mut dec_specific_config = None;
 
         // Multiple descriptors follow, but only the decoder specific info descriptor is useful.
         while scoped.bytes_available() > MIN_OBJECT_DESCRIPTOR_SIZE {
-            let (tag, desc_len) = read_object_descriptor_header(&mut scoped)?;
+            let (tag, desc_len) = read_object_descriptor_header(&mut scoped).await?;
 
             match tag {
                 ClassTag::DecoderSpecificInfo => {
-                    dec_specific_config = Some(DecoderSpecificInfo::read(&mut scoped, desc_len)?);
+                    dec_specific_config = Some(DecoderSpecificInfo::read(&mut scoped, desc_len).await?);
                 }
                 other => {
                     debug!("skipping {other:?} object in decoder config descriptor");
-                    scoped.ignore_bytes(desc_len)?;
+                    scoped.ignore_bytes(desc_len).await?;
                 }
             }
         }
 
         // Consume remaining bytes.
-        scoped.ignore()?;
+        scoped.ignore().await?;
 
         Ok(DecoderConfigDescriptor {
             object_type_indication,
@@ -299,9 +303,10 @@ pub struct DecoderSpecificInfo {
     pub extra_data: Box<[u8]>,
 }
 
+#[async_trait]
 impl ObjectDescriptor for DecoderSpecificInfo {
-    fn read<B: ReadBytes>(reader: &mut B, len: u64) -> Result<Self> {
-        Ok(DecoderSpecificInfo { extra_data: reader.read_boxed_slice_exact(len as usize)? })
+    async fn read<B: ReadBytes>(reader: &mut B, len: u64) -> Result<Self> {
+        Ok(DecoderSpecificInfo { extra_data: reader.read_boxed_slice_exact(len as usize).await? })
     }
 }
 
@@ -343,8 +348,9 @@ class SLConfigDescriptor extends BaseDescriptor : bit(8) tag=SLConfigDescrTag {
 #[derive(Debug)]
 pub struct SLConfigDescriptor;
 
+#[async_trait]
 impl ObjectDescriptor for SLConfigDescriptor {
-    fn read<B: ReadBytes>(reader: &mut B, len: u64) -> Result<Self> {
+    async fn read<B: ReadBytes>(reader: &mut B, len: u64) -> Result<Self> {
         const PREDEFINED_CUSTOM: u8 = 0x0;
         const PREDEFINED_NULL: u8 = 0x1;
         const PREDEFINED_MP4: u8 = 0x2;
@@ -354,7 +360,7 @@ impl ObjectDescriptor for SLConfigDescriptor {
         let mut scoped = ScopedStream::new(reader, len);
 
         // Ensure the predefined field is valid.
-        match scoped.read_u8()? {
+        match scoped.read_u8().await? {
             PREDEFINED_CUSTOM | PREDEFINED_NULL | PREDEFINED_MP4 => (),
             _ => {
                 return unsupported_error("common (mpeg): invalid sl config descriptor predefined");
@@ -362,7 +368,7 @@ impl ObjectDescriptor for SLConfigDescriptor {
         };
 
         // Consume remaining bytes.
-        scoped.ignore()?;
+        scoped.ignore().await?;
 
         Ok(SLConfigDescriptor {})
     }

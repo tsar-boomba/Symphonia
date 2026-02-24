@@ -7,6 +7,8 @@
 
 //! An ID3v1 metadata reader.
 
+use core::pin::Pin;
+
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -22,21 +24,21 @@ use symphonia_core::meta::{
     MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, StandardTag,
     Tag,
 };
-use symphonia_core::support_metadata;
+use symphonia_core::{async_trait, support_metadata};
 use symphonia_core::util::text;
 
 use crate::utils::id3v1::get_genre_name;
 
-fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Result<()> {
+async fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Result<()> {
     // Read the "TAG" header.
-    let marker = reader.read_triple_bytes()?;
+    let marker = reader.read_triple_bytes().await?;
 
     if marker != *b"TAG" {
         return unsupported_error("id3v1: Not an ID3v1 tag");
     }
 
     let mut buf = [0u8; 125];
-    reader.read_buf_exact(&mut buf)?;
+    reader.read_buf_exact(&mut buf).await?;
 
     if let Some(title) = decode_iso8859_buf(&buf[0..30]) {
         let tag = Tag::new_from_parts("TITLE", title.clone(), Some(StandardTag::TrackTitle(title)));
@@ -71,8 +73,7 @@ fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Re
         builder.add_tag(Tag::new_from_parts("TRACK", track, Some(StandardTag::TrackNumber(track))));
 
         decode_iso8859_buf(&buf[94..122])
-    }
-    else {
+    } else {
         decode_iso8859_buf(&buf[94..124])
     };
 
@@ -116,16 +117,19 @@ impl<'s> Id3v1Reader<'s> {
 }
 
 impl Scoreable for Id3v1Reader<'_> {
-    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-        Ok(Score::Supported(255))
+    fn score<'a, 'b>(
+        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>>  {
+        Box::pin(async {Ok(Score::Supported(255))})
     }
 }
 
-impl ProbeableMetadata<'_> for Id3v1Reader<'_> {
-    fn try_probe_new(
-        mss: MediaSourceStream<'_>,
+#[async_trait]
+impl<'s> ProbeableMetadata<'s> for Id3v1Reader<'s> {
+    async fn try_probe_new(
+        mss: MediaSourceStream<'s>,
         opts: MetadataOptions,
-    ) -> Result<Box<dyn MetadataReader + '_>>
+    ) -> Result<Box<dyn MetadataReader + 's>>
     where
         Self: Sized,
     {
@@ -137,14 +141,15 @@ impl ProbeableMetadata<'_> for Id3v1Reader<'_> {
     }
 }
 
+#[async_trait]
 impl MetadataReader for Id3v1Reader<'_> {
     fn metadata_info(&self) -> &MetadataInfo {
         &ID3V1_METADATA_INFO
     }
 
-    fn read_all(&mut self) -> Result<MetadataBuffer> {
+    async fn read_all(&mut self) -> Result<MetadataBuffer> {
         let mut builder = MetadataBuilder::new(ID3V1_METADATA_INFO);
-        read_id3v1(&mut self.reader, &mut builder)?;
+        read_id3v1(&mut self.reader, &mut builder).await?;
         Ok(MetadataBuffer { revision: builder.build(), side_data: Vec::new() })
     }
 
