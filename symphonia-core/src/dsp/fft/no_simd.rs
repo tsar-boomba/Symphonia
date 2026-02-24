@@ -5,8 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::convert::TryInto;
-use std::f32;
+use core::convert::TryInto;
+use core::f32;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 use lazy_static::lazy_static;
 
@@ -19,7 +21,7 @@ macro_rules! fft_twiddle_table {
             static ref $name: Box<[Complex<f32>; (1 << $bi) >> 1]> = {
                 const N: usize = 1 << $bi;
                 const TABLE_SIZE: usize = N >> 1;
-                let theta = std::f64::consts::PI / TABLE_SIZE as f64;
+                let theta = core::f64::consts::PI / TABLE_SIZE as f64;
 
                 let table: Vec<Complex<f32>> = (0..TABLE_SIZE)
                     .map(|k| {

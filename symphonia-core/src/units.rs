@@ -597,8 +597,7 @@ impl Time {
             // Note: In practice, this addition will never saturate because `seconds` is less-than
             // `i64::MAX as f64 as i64` which is much smaller than `i64::MAX`.
             Time { seconds: (seconds as i64).saturating_add(1), nanos: 0 }
-        }
-        else {
+        } else {
             Time { seconds: seconds as i64, nanos: nanos as u32 }
         })
     }
@@ -703,7 +702,7 @@ impl Time {
         self.seconds.is_positive()
     }
 
-    /// Returns `true` if self is positive and `false` if the number is zero or negative.
+    /// Returns `true` if self is negative and `false` if the number is zero or positive.
     #[inline]
     pub const fn is_negative(&self) -> bool {
         self.seconds.is_negative()
@@ -765,11 +764,9 @@ impl Time {
     pub fn parts(&self) -> (i64, u32) {
         if self.seconds >= 0 {
             (self.seconds, self.nanos)
-        }
-        else if self.nanos == 0 {
+        } else if self.nanos == 0 {
             (self.seconds, 0)
-        }
-        else {
+        } else {
             (self.seconds + 1, 1_000_000_000 - self.nanos)
         }
     }
@@ -923,6 +920,54 @@ impl From<u32> for Time {
     }
 }
 
+impl From<u64> for Time {
+    fn from(seconds: u64) -> Self {
+        if seconds <= i64::MAX as u64 {
+            Time::try_new(seconds as i64, 0).unwrap()
+        } else {
+            Time::try_new(0, 0).unwrap()
+        }
+    }
+}
+
+impl From<f32> for Time {
+    fn from(seconds: f32) -> Self {
+        if seconds >= 0.0 && seconds <= i64::MAX as f32 {
+            Time::try_new(seconds.trunc() as i64, (1_000_000_000.0 * seconds.fract()) as u32).unwrap()
+        } else {
+            Time::try_new(0, 0).unwrap()
+        }
+    }
+}
+
+impl From<f64> for Time {
+    fn from(seconds: f64) -> Self {
+        if seconds >= 0.0 && seconds <= i64::MAX as f64 {
+            Time::try_new(seconds.trunc() as i64, (1_000_000_000.0 * seconds.fract()) as u32).unwrap()
+        } else {
+            Time::try_new(0, 0).unwrap()
+        }
+    }
+}
+
+impl From<core::time::Duration> for Time {
+    fn from(duration: core::time::Duration) -> Self {
+        if duration.as_secs() <= i64::MAX as u64 {
+            Time::try_new(duration.as_secs() as i64, duration.subsec_nanos()).unwrap()
+        } else {
+            Time::try_new(0, 0).unwrap()
+        }
+    }
+}
+
+impl From<Time> for core::time::Duration {
+    fn from(time: Time) -> Self {
+        // May want to remove and just clamp to 0?
+        assert!(time.seconds >= 0);
+        core::time::Duration::new(time.seconds as u64, time.nanos as u32)
+    }
+}
+
 /// A `TimeBase` is the conversion factor between time, expressed in seconds, and a `TimeStamp` or
 /// `Duration`.
 ///
@@ -984,8 +1029,7 @@ impl TimeBase {
         {
             let total_nanos = product / denom;
             Some(Time::from_nanos(total_nanos))
-        }
-        else {
+        } else {
             let product = i128::from(ts.get()) * i128::from(numer) * NS_PER_SEC_128;
             let total_nanos = product / i128::from(denom);
             Time::try_from_nanos_i128(total_nanos)
@@ -1045,8 +1089,7 @@ impl TimeBase {
         {
             // Common case: Calculation can be done entirely in an i64.
             Some(Timestamp(ts))
-        }
-        else {
+        } else {
             // Fallback case: Calculation must be done in an i128.
             let whole = i128::from(time.seconds) * i128::from(denom);
             let ts = (whole + i128::from(frac)) / i128::from(numer);

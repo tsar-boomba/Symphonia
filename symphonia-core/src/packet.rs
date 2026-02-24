@@ -118,8 +118,8 @@ impl Packet {
     }
 }
 
-impl std::fmt::Debug for Packet {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Packet {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Packet")
             .field("track_id", &self.track_id)
             .field("pts", &self.pts)
@@ -200,8 +200,8 @@ impl<'a> PacketRef<'a> {
     }
 }
 
-impl std::fmt::Debug for PacketRef<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for PacketRef<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PacketRef")
             .field("track_id", &self.track_id)
             .field("pts", &self.pts)
@@ -222,6 +222,8 @@ impl<'a> From<&'a Packet> for PacketRef<'a> {
 }
 
 mod builder {
+    use alloc::boxed::Box;
+
     use crate::packet::{Packet, PacketRef};
     use crate::units::{Duration, Timestamp};
 
@@ -408,10 +410,13 @@ mod builder {
     }
 }
 
+use alloc::boxed::Box;
 pub use builder::PacketBuilder;
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use super::PacketBuilder;
     use crate::units::{Duration, Timestamp};
 
