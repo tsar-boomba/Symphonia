@@ -176,8 +176,9 @@ impl AudioDecoder for MpaDecoder {
     }
 }
 
+#[async_trait]
 impl RegisterableAudioDecoder for MpaDecoder {
-    fn try_registry_new(
+    async fn try_registry_new(
         params: &AudioCodecParameters,
         opts: &AudioDecoderOptions,
     ) -> Result<Box<dyn AudioDecoder>>
