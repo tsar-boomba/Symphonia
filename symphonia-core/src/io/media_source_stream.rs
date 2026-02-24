@@ -6,9 +6,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use alloc::{boxed::Box, vec};
+use async_trait::async_trait;
 use core::cmp;
 use core::ops::Sub;
-use embedded_io::{self as io, Read, Seek};
+use super::{Read, Seek, SeekFrom};
 
 use super::SeekBuffered;
 use super::{MediaSource, ReadBytes};
@@ -98,7 +99,7 @@ impl<'s> MediaSourceStream<'s> {
     }
 
     /// If the ring buffer has been exhausted, fetch a new block of data to replenish the buffer.
-    fn refill_buffer(&mut self) -> super::Result<()> {
+    async fn refill_buffer(&mut self) -> super::Result<()> {
         // Only fetch when the ring buffer is empty.
         if self.is_buffer_empty() {
             // Split the vector at the write position to get slices of the two contiguous regions of
@@ -109,7 +110,7 @@ impl<'s> MediaSourceStream<'s> {
             // has sufficient space to service the entire read do a simple read into that region's
             // slice.
             let actual_read_len = if vec0.len() >= self.read_block_len {
-                self.inner.read(&mut vec0[..self.read_block_len])?
+                self.inner.read(&mut vec0[..self.read_block_len]).await?
             }
             else {
                 // Otherwise, perform a vectored read into the two contiguous region slices.
@@ -117,7 +118,7 @@ impl<'s> MediaSourceStream<'s> {
 
                 let ring_vectors = &mut [super::IoSliceMut::new(vec0), super::IoSliceMut::new(&mut vec1[..rem])];
 
-                self.inner.read_vectored(ring_vectors)?
+                self.inner.read_vectored(ring_vectors).await?
             };
 
             // Increment the write position, taking into account wrap-around.
@@ -137,8 +138,8 @@ impl<'s> MediaSourceStream<'s> {
 
     /// If the ring buffer has been exhausted, fetch a new block of data to replenish the buffer. If
     /// no more data could be fetched, return an UnexpectedEof error.
-    fn refill_buffer_or_eof(&mut self) -> super::Result<()> {
-        self.refill_buffer()?;
+    async fn refill_buffer_or_eof(&mut self) -> super::Result<()> {
+        self.refill_buffer().await?;
 
         if self.is_buffer_empty() {
             return unexpected_eof_error();
@@ -173,10 +174,10 @@ impl<'s> MediaSourceStream<'s> {
     /// the ring buffer.
     ///
     /// Panics if the ring buffer is not empty.
-    fn read_from_source<'b>(&mut self, buf: &'b mut [u8]) -> super::Result<&'b mut [u8]> {
+    async fn read_from_source<'b>(&mut self, buf: &'b mut [u8]) -> super::Result<&'b mut [u8]> {
         assert!(self.is_buffer_empty());
 
-        let read_len = self.inner.read(buf)?;
+        let read_len = self.inner.read(buf).await?;
 
         // Update the read and write positions, taking into account wrap-around. Since the ring
         // buffer was exhausted these are equal.
@@ -268,10 +269,11 @@ impl<'s> MediaSourceStream<'s> {
     }
 }
 
-impl io::ErrorType for MediaSourceStream<'_> {
+impl super::ErrorType for MediaSourceStream<'_> {
     type Error = super::Error;
 }
 
+#[async_trait]
 impl MediaSource for MediaSourceStream<'_> {
     #[inline]
     fn is_seekable(&self) -> bool {
@@ -284,8 +286,9 @@ impl MediaSource for MediaSourceStream<'_> {
     }
 }
 
-impl io::Read for MediaSourceStream<'_> {
-    fn read(&mut self, mut buf: &mut [u8]) -> super::Result<usize> {
+#[async_trait]
+impl super::Read for MediaSourceStream<'_> {
+    async fn read(&mut self, mut buf: &mut [u8]) -> super::Result<usize> {
         let read_len = buf.len();
 
         // First, read as much as possible from the ring buffer.
@@ -296,14 +299,14 @@ impl io::Read for MediaSourceStream<'_> {
         // than 0, which means the ring buffer was emptied in the first step. Therefore, it is safe
         // to call `read_from_source` which panics if ring buffer is not empty.
         if self.is_large_operation(buf.len() as u64) {
-            buf = self.read_from_source(buf)?;
+            buf = self.read_from_source(buf).await?;
         }
         else {
             // Or, continuously buffer data into the ring buffer from the source, and then read from
             // the ring buffer.
             while !buf.is_empty() {
                 // Refill the the ring buffer as required.
-                self.refill_buffer()?;
+                self.refill_buffer().await?;
 
                 // Consume bytes from the readable portion of the ring buffer and copy them into the
                 // remaining portion of the caller's buffer.
@@ -327,19 +330,20 @@ impl io::Read for MediaSourceStream<'_> {
     }
 }
 
-impl io::Seek for MediaSourceStream<'_> {
-    fn seek(&mut self, pos: io::SeekFrom) -> super::Result<u64> {
+#[async_trait]
+impl super::Seek for MediaSourceStream<'_> {
+    async fn seek(&mut self, pos: super::SeekFrom) -> super::Result<u64> {
         // The current position of the underlying reader is ahead of the current position of the
         // MediaSourceStream by how ever many bytes have not been read from the read-ahead buffer
         // yet. When seeking from the current position adjust the position delta to offset that
         // difference.
         let pos = match pos {
-            io::SeekFrom::Current(0) => return Ok(self.pos()),
-            io::SeekFrom::Current(delta_pos) => {
+            SeekFrom::Current(0) => return Ok(self.pos()),
+            SeekFrom::Current(delta_pos) => {
                 let delta = delta_pos - self.unread_buffer_len() as i64;
-                self.inner.seek(io::SeekFrom::Current(delta))
+                self.inner.seek(SeekFrom::Current(delta)).await
             }
-            _ => self.inner.seek(pos),
+            _ => self.inner.seek(pos).await,
         }?;
 
         self.reset(pos);
@@ -348,14 +352,15 @@ impl io::Seek for MediaSourceStream<'_> {
     }
 }
 
+#[async_trait]
 impl ReadBytes for MediaSourceStream<'_> {
     #[inline(always)]
-    fn read_byte(&mut self) -> super::Result<u8> {
+    async fn read_byte(&mut self) -> super::Result<u8> {
         // This function, read_byte, is inlined for performance. To reduce code bloat, place the
         // read-ahead buffer replenishment in a seperate function. Call overhead will be negligible
         // compared to the actual underlying read.
         if self.is_buffer_empty() {
-            self.refill_buffer_or_eof()?;
+            self.refill_buffer_or_eof().await?;
         }
 
         let value = self.ring[self.read_pos];
@@ -364,7 +369,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         Ok(value)
     }
 
-    fn read_double_bytes(&mut self) -> super::Result<[u8; 2]> {
+    async fn read_double_bytes(&mut self) -> super::Result<[u8; 2]> {
         let mut bytes = [0; 2];
 
         let buf = self.get_readable_slice();
@@ -375,14 +380,14 @@ impl ReadBytes for MediaSourceStream<'_> {
         }
         else {
             for byte in bytes.iter_mut() {
-                *byte = self.read_byte()?;
+                *byte = self.read_byte().await?;
             }
         };
 
         Ok(bytes)
     }
 
-    fn read_triple_bytes(&mut self) -> super::Result<[u8; 3]> {
+    async fn read_triple_bytes(&mut self) -> super::Result<[u8; 3]> {
         let mut bytes = [0; 3];
 
         let buf = self.get_readable_slice();
@@ -393,13 +398,13 @@ impl ReadBytes for MediaSourceStream<'_> {
         }
         else {
             for byte in bytes.iter_mut() {
-                *byte = self.read_byte()?;
+                *byte = self.read_byte().await?;
             }
         };
         Ok(bytes)
     }
 
-    fn read_quad_bytes(&mut self) -> super::Result<[u8; 4]> {
+    async fn read_quad_bytes(&mut self) -> super::Result<[u8; 4]> {
         let mut bytes = [0; 4];
 
         let buf = self.get_readable_slice();
@@ -410,15 +415,15 @@ impl ReadBytes for MediaSourceStream<'_> {
         }
         else {
             for byte in bytes.iter_mut() {
-                *byte = self.read_byte()?;
+                *byte = self.read_byte().await?;
             }
         };
         Ok(bytes)
     }
 
-    fn read_buf(&mut self, buf: &mut [u8]) -> super::Result<usize> {
+    async fn read_buf(&mut self, buf: &mut [u8]) -> super::Result<usize> {
         // Implemented via io::Read trait.
-        let read = self.read(buf)?;
+        let read = self.read(buf).await?;
 
         // Unlike the io::Read trait, ByteStream returns an end-of-stream error when no more data
         // can be read. If a non-zero read is requested, and 0 bytes are read, return an
@@ -426,14 +431,14 @@ impl ReadBytes for MediaSourceStream<'_> {
         if !buf.is_empty() && read == 0 { unexpected_eof_error() } else { Ok(read) }
     }
 
-    fn read_buf_exact(&mut self, mut buf: &mut [u8]) -> super::Result<()> {
+    async fn read_buf_exact(&mut self, mut buf: &mut [u8]) -> super::Result<()> {
         while !buf.is_empty() {
-            match self.read(buf) {
+            match self.read(buf).await {
                 Ok(0) => break,
                 Ok(count) => {
                     buf = &mut buf[count..];
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(ref e) if e.kind() == super::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }
         }
@@ -441,7 +446,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         if !buf.is_empty() { unexpected_eof_error() } else { Ok(()) }
     }
 
-    fn scan_bytes_aligned<'a>(
+    async fn scan_bytes_aligned<'a>(
         &mut self,
         _: &[u8],
         _: usize,
@@ -451,19 +456,19 @@ impl ReadBytes for MediaSourceStream<'_> {
         unimplemented!();
     }
 
-    fn ignore_bytes(&mut self, mut count: u64) -> super::Result<()> {
+    async fn ignore_bytes(&mut self, mut count: u64) -> super::Result<()> {
         // If the stream is seekable and the number of bytes to ignore is large, perform a seek
         // first. Note that ignored bytes are rewindable. Therefore, ensure the ring-buffer is
         // full after the seek just like if bytes were ignored by consuming them instead.
         while self.is_large_operation(count) && self.is_seekable() {
             let delta = count.min(i64::MAX as u64).sub(self.ring.len() as u64);
-            self.seek(io::SeekFrom::Current(delta as i64))?;
+            self.seek(SeekFrom::Current(delta as i64)).await?;
             count -= delta;
         }
 
         // Ignore the remaining bytes be consuming samples from the ring-buffer.
         while count > 0 {
-            self.refill_buffer_or_eof()?;
+            self.refill_buffer_or_eof().await?;
             let discard_count = cmp::min(self.unread_buffer_len() as u64, count);
             self.consume(discard_count as usize);
             count -= discard_count;
@@ -571,7 +576,7 @@ mod tests {
     use alloc::{boxed::Box, vec, vec::Vec};
 
     use super::{MediaSourceStream, ReadBytes, SeekBuffered};
-    use crate::io::{Cursor, MediaSource};
+    use crate::io::{Cursor, Read};
 
     /// Generate a random vector of bytes of the specified length using a PRNG.
     fn generate_random_bytes(len: usize) -> Box<[u8]> {
@@ -589,8 +594,8 @@ mod tests {
         bytes.into_boxed_slice()
     }
 
-    #[test]
-    fn verify_mss_read() {
+    #[futures_test::test]
+    async fn verify_mss_read() {
         let data = generate_random_bytes(5 * 96 * 1024);
 
         let ms = Cursor::new(data.clone());
@@ -603,50 +608,50 @@ mod tests {
 
         // 96k single byte reads.
         for byte in &buf[..96 * 1024] {
-            assert_eq!(*byte, mss.read_byte().unwrap());
+            assert_eq!(*byte, mss.read_byte().await.unwrap());
         }
 
-        mss.ignore_bytes(11).unwrap();
+        mss.ignore_bytes(11).await.unwrap();
 
         buf = &buf[11 + (96 * 1024)..];
 
         // 48k two byte reads.
         for bytes in buf[..2 * 48 * 1024].chunks_exact(2) {
-            assert_eq!(bytes, &mss.read_double_bytes().unwrap());
+            assert_eq!(bytes, &mss.read_double_bytes().await.unwrap());
         }
 
-        mss.ignore_bytes(33).unwrap();
+        mss.ignore_bytes(33).await.unwrap();
 
         buf = &buf[33 + (2 * 48 * 1024)..];
 
         // 32k three byte reads.
         for bytes in buf[..3 * 32 * 1024].chunks_exact(3) {
-            assert_eq!(bytes, &mss.read_triple_bytes().unwrap());
+            assert_eq!(bytes, &mss.read_triple_bytes().await.unwrap());
         }
 
-        mss.ignore_bytes(55).unwrap();
+        mss.ignore_bytes(55).await.unwrap();
 
         buf = &buf[55 + (3 * 32 * 1024)..];
 
         // 24k four byte reads.
         for bytes in buf[..4 * 24 * 1024].chunks_exact(4) {
-            assert_eq!(bytes, &mss.read_quad_bytes().unwrap());
+            assert_eq!(bytes, &mss.read_quad_bytes().await.unwrap());
         }
     }
 
-    #[test]
-    fn verify_mss_read_to_end() {
+    #[futures_test::test]
+    async fn verify_mss_read_to_end() {
         let data = generate_random_bytes(5 * 96 * 1024);
 
         let ms = Cursor::new(data.clone());
         let mut mss = MediaSourceStream::new(Box::new(ms), Default::default());
         let mut output: Vec<u8> = Vec::new();
-        assert_eq!(mss.read_to_end(&mut output).unwrap(), data.len());
+        assert_eq!(mss.read_to_end(&mut output).await.unwrap(), data.len());
         assert_eq!(output.into_boxed_slice(), data);
     }
 
-    #[test]
-    fn verify_mss_seek_buffered() {
+    #[futures_test::test]
+    async fn verify_mss_seek_buffered() {
         let data = generate_random_bytes(1024 * 1024);
 
         let ms = Cursor::new(data);
@@ -655,12 +660,12 @@ mod tests {
         assert_eq!(mss.read_buffer_len(), 0);
         assert_eq!(mss.unread_buffer_len(), 0);
 
-        mss.ignore_bytes(5122).unwrap();
+        mss.ignore_bytes(5122).await.unwrap();
 
         assert_eq!(5122, mss.pos());
         assert_eq!(mss.read_buffer_len(), 5122);
 
-        let upper = mss.read_byte().unwrap();
+        let upper = mss.read_byte().await.unwrap();
 
         // Seek backwards.
         assert_eq!(mss.seek_buffered_rel(-1000), 4123);
@@ -672,43 +677,43 @@ mod tests {
         assert_eq!(mss.pos(), 5122);
         assert_eq!(mss.read_buffer_len(), 5122);
 
-        assert_eq!(upper, mss.read_byte().unwrap());
+        assert_eq!(upper, mss.read_byte().await.unwrap());
     }
 
-    #[test]
-    fn verify_reading_be() {
+    #[futures_test::test]
+    async fn verify_reading_be() {
         let data = generate_random_bytes(1024 * 1024);
 
         let ms = Cursor::new(data);
         let mut mss = MediaSourceStream::new(Box::new(ms), Default::default());
 
         // For slightly cleaner floats
-        mss.ignore_bytes(2).unwrap();
+        mss.ignore_bytes(2).await.unwrap();
 
-        assert_eq!(mss.read_be_f32().unwrap(), -72818055000000000000000000000.0);
-        assert_eq!(mss.read_be_f64().unwrap(), -0.000000000000011582640453292664);
+        assert_eq!(mss.read_be_f32().await.unwrap(), -72818055000000000000000000000.0);
+        assert_eq!(mss.read_be_f64().await.unwrap(), -0.000000000000011582640453292664);
 
-        assert_eq!(mss.read_be_u16().unwrap(), 32624);
-        assert_eq!(mss.read_be_u24().unwrap(), 6739677);
-        assert_eq!(mss.read_be_u32().unwrap(), 1569552917);
-        assert_eq!(mss.read_be_u64().unwrap(), 6091217585348000864);
+        assert_eq!(mss.read_be_u16().await.unwrap(), 32624);
+        assert_eq!(mss.read_be_u24().await.unwrap(), 6739677);
+        assert_eq!(mss.read_be_u32().await.unwrap(), 1569552917);
+        assert_eq!(mss.read_be_u64().await.unwrap(), 6091217585348000864);
     }
 
-    #[test]
-    fn verify_reading_le() {
+    #[futures_test::test]
+    async fn verify_reading_le() {
         let data = generate_random_bytes(1024 * 1024);
 
         let ms = Cursor::new(data);
         let mut mss = MediaSourceStream::new(Box::new(ms), Default::default());
 
-        mss.ignore_bytes(1024).unwrap();
+        mss.ignore_bytes(1024).await.unwrap();
 
-        assert_eq!(mss.read_f32().unwrap(), -0.00000000000000000000000000048426285);
-        assert_eq!(mss.read_f64().unwrap(), -6444325820119113.0);
+        assert_eq!(mss.read_f32().await.unwrap(), -0.00000000000000000000000000048426285);
+        assert_eq!(mss.read_f64().await.unwrap(), -6444325820119113.0);
 
-        assert_eq!(mss.read_u16().unwrap(), 36195);
-        assert_eq!(mss.read_u24().unwrap(), 6710386);
-        assert_eq!(mss.read_u32().unwrap(), 2378776723);
-        assert_eq!(mss.read_u64().unwrap(), 5170196279331153683);
+        assert_eq!(mss.read_u16().await.unwrap(), 36195);
+        assert_eq!(mss.read_u24().await.unwrap(), 6710386);
+        assert_eq!(mss.read_u32().await.unwrap(), 2378776723);
+        assert_eq!(mss.read_u64().await.unwrap(), 5170196279331153683);
     }
 }

@@ -1,13 +1,14 @@
 //! Contains utility types and functions copied mostly from std/core
 
+use async_trait::async_trait;
+#[cfg(feature = "std")]
+pub use from_std::FromStd;
 #[cfg(not(feature = "std"))]
 pub use io_slice::IoSliceMut;
 #[cfg(feature = "std")]
 pub use std::io::IoSliceMut;
-#[cfg(feature = "std")]
-pub use from_std::FromStd;
 
-use alloc::vec::Vec;
+use alloc::{vec::Vec, boxed::Box};
 use core::{
     fmt::{Debug, Formatter},
     mem::MaybeUninit,
@@ -47,6 +48,10 @@ mod io_slice {
 
 #[cfg(feature = "std")]
 mod from_std {
+    use super::IoSliceMut;
+    use alloc::{boxed::Box, vec::Vec};
+    use async_trait::async_trait;
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct FromStd<T> {
         inner: T,
@@ -74,22 +79,37 @@ mod from_std {
         type Error = super::Error;
     }
 
-    impl<T: std::io::Read> super::Read for FromStd<T> {
-        fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+    #[async_trait]
+    impl<T: std::io::Read + Send> super::Read for FromStd<T> {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
             Ok(self.inner.read(buf)?)
         }
 
-        fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), super::ReadExactError<Self::Error>> {
+        async fn read_exact(
+            &mut self,
+            buf: &mut [u8],
+        ) -> Result<(), super::ReadExactError<Self::Error>> {
             match self.inner.read_exact(buf) {
                 Ok(n) => Ok(n),
-                Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => Err(super::ReadExactError::UnexpectedEof),
-                Err(err) => Err(super::ReadExactError::Other(err.into()))
+                Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    Err(super::ReadExactError::UnexpectedEof)
+                }
+                Err(err) => Err(super::ReadExactError::Other(err.into())),
             }
+        }
+
+        async fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize, Self::Error> {
+            self.inner.read_vectored(bufs).map_err(Into::into)
+        }
+
+        async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize, Self::Error> {
+            self.inner.read_to_end(buf).map_err(Into::into)
         }
     }
 
-    impl<T: std::io::BufRead> super::BufRead for FromStd<T> {
-        fn fill_buf(&mut self) -> Result<&[u8], Self::Error> {
+    #[async_trait]
+    impl<T: std::io::BufRead + Send> super::BufRead for FromStd<T> {
+        async fn fill_buf(&mut self) -> Result<&[u8], Self::Error> {
             Ok(self.inner.fill_buf()?)
         }
 
@@ -98,31 +118,31 @@ mod from_std {
         }
     }
 
-    impl<T: std::io::Seek> super::Seek for FromStd<T> {
-        fn seek(&mut self, pos: super::SeekFrom) -> Result<u64, Self::Error> {
+    #[async_trait]
+    impl<T: std::io::Seek + Send> super::Seek for FromStd<T> {
+        async fn seek(&mut self, pos: super::SeekFrom) -> Result<u64, Self::Error> {
             Ok(self.inner.seek(pos.into())?)
         }
 
-        fn rewind(&mut self) -> Result<(), Self::Error> {
+        async fn rewind(&mut self) -> Result<(), Self::Error> {
             Ok(self.inner.rewind()?)
         }
 
-        fn stream_position(&mut self) -> Result<u64, Self::Error> {
+        async fn stream_position(&mut self) -> Result<u64, Self::Error> {
             Ok(self.inner.stream_position()?)
-        }
-
-        fn seek_relative(&mut self, offset: i64) -> Result<(), Self::Error> {
-            Ok(self.inner.seek_relative(offset)?)
         }
     }
 }
 
-pub(crate) fn default_read_vectored<F>(read: F, bufs: &mut [IoSliceMut<'_>]) -> Result<usize>
+pub(crate) async fn default_read_vectored<R: ?Sized + Read>(
+    reader: &mut R,
+    bufs: &mut [IoSliceMut<'_>],
+) -> Result<usize>
 where
-    F: FnOnce(&mut [u8]) -> Result<usize>,
+    super::Error: core::convert::From<<R as super::ErrorType>::Error>,
 {
     let buf = bufs.iter_mut().find(|b| !b.is_empty()).map_or(&mut [][..], |b| &mut **b);
-    read(buf)
+    Ok(reader.read(buf).await?)
 }
 
 #[derive(Debug)]
@@ -188,11 +208,12 @@ impl<T> ErrorType for Cursor<T> {
     type Error = Error;
 }
 
+#[async_trait]
 impl<T> Seek for Cursor<T>
 where
-    T: AsRef<[u8]>,
+    T: AsRef<[u8]> + Send,
 {
-    fn seek(&mut self, style: SeekFrom) -> Result<u64> {
+    async fn seek(&mut self, style: SeekFrom) -> Result<u64> {
         let (base_pos, offset) = match style {
             SeekFrom::Start(n) => {
                 self.pos = n;
@@ -213,28 +234,32 @@ where
         }
     }
 
-    fn rewind(&mut self) -> Result<()> {
+    async fn rewind(&mut self) -> Result<()> {
         self.pos = 0;
         Ok(())
     }
 
-    fn stream_position(&mut self) -> Result<u64> {
+    async fn stream_position(&mut self) -> Result<u64> {
         Ok(self.pos)
     }
 }
 
+#[async_trait]
 impl<T> Read for Cursor<T>
 where
-    T: AsRef<[u8]>,
+    T: AsRef<[u8]> + Send,
 {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let Ok(n) = Read::read(&mut Cursor::split(self).1, buf).map_err(|e| match e {});
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        let Ok(n) = Read::read(&mut Cursor::split(self).1, buf).await.map_err(|e| match e {});
         self.pos += n as u64;
         Ok(n)
     }
 
-    fn read_exact(&mut self, buf: &mut [u8]) -> core::result::Result<(), ReadExactError<Error>> {
-        let result = Read::read_exact(&mut Cursor::split(self).1, buf);
+    async fn read_exact(
+        &mut self,
+        buf: &mut [u8],
+    ) -> core::result::Result<(), ReadExactError<Error>> {
+        let result = Read::read_exact(&mut Cursor::split(self).1, buf).await;
 
         match result {
             Ok(_) => self.pos += buf.len() as u64,
@@ -248,13 +273,26 @@ where
             }
         })
     }
+
+    async fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
+        let mut nread = 0;
+        for buf in bufs {
+            let n = self.read(buf).await?;
+            nread += n;
+            if n < buf.len() {
+                break;
+            }
+        }
+        Ok(nread)
+    }
 }
 
+#[async_trait]
 impl<T> BufRead for Cursor<T>
 where
-    T: AsRef<[u8]>,
+    T: AsRef<[u8]> + Send,
 {
-    fn fill_buf(&mut self) -> Result<&[u8]> {
+    async fn fill_buf(&mut self) -> Result<&[u8]> {
         Ok(Cursor::split(self).1)
     }
 
@@ -660,7 +698,7 @@ impl<'a> BorrowedCursor<'a> {
 // - and finally pass not-too-small and not-too-large buffers to Windows read APIs because they manage to suffer from both problems
 //   at the same time, i.e. small reads suffer from syscall overhead, all reads incur costs proportional to buffer size (#110650)
 //
-pub(crate) fn default_read_to_end<R: Read + ?Sized>(
+pub(crate) async fn default_read_to_end<R: ?Sized + Read>(
     r: &mut R,
     buf: &mut Vec<u8>,
     size_hint: Option<usize>,
@@ -679,14 +717,14 @@ where
 
     const PROBE_SIZE: usize = 32;
 
-    fn small_probe_read<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize>
+    async fn small_probe_read<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize>
     where
         Error: core::convert::From<<R as embedded_io::ErrorType>::Error>,
     {
         let mut probe = [0u8; PROBE_SIZE];
 
         loop {
-            match r.read(&mut probe) {
+            match r.read(&mut probe).await {
                 Ok(n) => {
                     // there is no way to recover from allocation failure here
                     // because the data has already been read.
@@ -705,18 +743,21 @@ where
         }
     }
 
-    fn read_from_buf<F>(read: F, mut cursor: BorrowedCursor<'_>) -> Result<()>
+    async fn read_from_buf<R: ?Sized + Read>(
+        reader: &mut R,
+        mut cursor: BorrowedCursor<'_>,
+    ) -> Result<()>
     where
-        F: FnOnce(&mut [u8]) -> Result<usize>,
+        super::Error: core::convert::From<<R as embedded_io::ErrorType>::Error>,
     {
-        let n = read(cursor.ensure_init().init_mut())?;
+        let n = reader.read(cursor.ensure_init().init_mut()).await?;
         cursor.advance(n);
         Ok(())
     }
 
     // avoid inflating empty/small vecs before we have determined that there's anything to read
     if (size_hint.is_none() || size_hint == Some(0)) && buf.capacity() - buf.len() < PROBE_SIZE {
-        let read = small_probe_read(r, buf)?;
+        let read = small_probe_read(r, buf).await?;
 
         if read == 0 {
             return Ok(0);
@@ -731,7 +772,7 @@ where
             // and see if it returns `Ok(0)`. If so, we've avoided an
             // unnecessary doubling of the capacity. But if not, append the
             // probe buffer to the primary buffer and let its capacity grow.
-            let read = small_probe_read(r, buf)?;
+            let read = small_probe_read(r, buf).await?;
 
             if read == 0 {
                 return Ok(buf.len() - start_len);
@@ -755,7 +796,7 @@ where
 
         let mut cursor = read_buf.unfilled();
         let result = loop {
-            match read_from_buf(|b| r.read(b).map_err(Into::into), cursor.reborrow()) {
+            match read_from_buf(r, cursor.reborrow()).await {
                 Err(e) => {
                     if e.kind() == ErrorKind::Interrupted {
                         continue;

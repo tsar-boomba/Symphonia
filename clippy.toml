@@ -39,7 +39,7 @@
 #   they're instructive to the reader and improve the code aesthetics.
 #
 # --------------------------------------------------------------------------------------------------
-msrv = "1.85"
+msrv = "1.93"
 
 allow-unwrap-in-tests = true
 
