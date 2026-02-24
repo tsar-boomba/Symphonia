@@ -10,6 +10,7 @@ use crate::common::SideData;
 use super::{MapResult, Mapper, PacketParser};
 
 use alloc::boxed::Box;
+use symphonia_core::async_trait;
 use symphonia_core::audio::{Channels, Position};
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;
@@ -36,7 +37,7 @@ const OGG_OPUS_COMMENT_SIGNATURE: &[u8] = b"OpusTags";
 /// The maximum support Opus OGG mapping version.
 const OGG_OPUS_MAPPING_VERSION_MAX: u8 = 0x0f;
 
-pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
+pub async fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The identification packet for Opus must be a minimum size.
     if buf.len() < OGG_OPUS_MIN_IDENTIFICATION_PACKET_SIZE {
         return Ok(None);
@@ -46,7 +47,7 @@ pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 
     // The first 8 bytes are the magic signature ASCII bytes.
     let mut magic = [0; 8];
-    reader.read_buf_exact(&mut magic)?;
+    reader.read_buf_exact(&mut magic).await?;
 
     if magic != *OGG_OPUS_MAGIC_SIGNATURE {
         return Ok(None);
@@ -55,12 +56,12 @@ pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The next byte is the OGG Opus encapsulation version. The version is split into two
     // sub-fields: major and minor. These fields are stored in the upper and lower 4-bit,
     // respectively.
-    if reader.read_byte()? > OGG_OPUS_MAPPING_VERSION_MAX {
+    if reader.read_byte().await? > OGG_OPUS_MAPPING_VERSION_MAX {
         return Ok(None);
     }
 
     // The next byte is the number of channels and must not be 0.
-    let channel_count = reader.read_byte()?;
+    let channel_count = reader.read_byte().await?;
 
     if channel_count == 0 {
         return Ok(None);
@@ -68,16 +69,16 @@ pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 
     // The next 16-bit integer is the pre-skip padding (# of samples at 48kHz to subtract from the
     // OGG granule position to obtain the PCM sample position).
-    let pre_skip = reader.read_u16()?;
+    let pre_skip = reader.read_u16().await?;
 
     // The next 32-bit integer is the sample rate of the original audio.
-    let _ = reader.read_u32()?;
+    let _ = reader.read_u32().await?;
 
     // Next, the 16-bit gain value.
-    let _ = reader.read_u16()?;
+    let _ = reader.read_u16().await?;
 
     // The next byte indicates the channel mapping. Most of these values are reserved.
-    let channel_mapping = reader.read_byte()?;
+    let channel_mapping = reader.read_byte().await?;
 
     let positions = match channel_mapping {
         // RTP Mapping
@@ -156,8 +157,9 @@ pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
 
 pub struct OpusPacketParser {}
 
+#[async_trait]
 impl PacketParser for OpusPacketParser {
-    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
+    async fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
         // See https://www.rfc-editor.org/rfc/rfc6716
         // Read TOC (Table Of Contents) byte which is the first byte in the opus data.
         let toc_byte = match packet.first() {
@@ -222,6 +224,7 @@ struct OpusMapper {
     need_comment: bool,
 }
 
+#[async_trait]
 impl Mapper for OpusMapper {
     fn name(&self) -> &'static str {
         "opus"
@@ -243,9 +246,9 @@ impl Mapper for OpusMapper {
         Some(Box::new(OpusPacketParser {}))
     }
 
-    fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
+    async fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
         if !self.need_comment {
-            let (dur, discard) = OpusPacketParser {}.parse_next_packet_dur(packet);
+            let (dur, discard) = OpusPacketParser {}.parse_next_packet_dur(packet).await;
             Ok(MapResult::StreamData { dur, discard })
         }
         else {
@@ -253,14 +256,14 @@ impl Mapper for OpusMapper {
 
             // Read the header signature.
             let mut sig = [0; 8];
-            reader.read_buf_exact(&mut sig)?;
+            reader.read_buf_exact(&mut sig).await?;
 
             if sig == *OGG_OPUS_COMMENT_SIGNATURE {
                 // This packet should be a metadata packet containing a Vorbis Comment.
                 let mut builder = MetadataBuilder::new(VORBIS_COMMENT_METADATA_INFO);
                 let mut side_data = Default::default();
 
-                vorbis::read_vorbis_comment(&mut reader, &mut builder, &mut side_data)?;
+                vorbis::read_vorbis_comment(&mut reader, &mut builder, &mut side_data).await?;
 
                 let rev = builder.build();
 

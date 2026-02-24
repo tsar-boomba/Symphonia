@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use core::pin::Pin;
+
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 
@@ -14,9 +16,9 @@ use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_OGG;
-use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog, MetadataSideData};
 use symphonia_core::support_format;
+use symphonia_core::{async_trait, io::*};
 
 use log::{debug, info, warn};
 
@@ -48,11 +50,11 @@ pub struct OggReader<'s> {
 }
 
 impl<'s> OggReader<'s> {
-    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+    pub async fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         // A seekback buffer equal to the maximum OGG page size is required for this reader.
         mss.ensure_seekback_buffer(OGG_PAGE_MAX_SIZE);
 
-        let pages = PageReader::try_new(&mut mss)?;
+        let pages = PageReader::try_new(&mut mss).await?;
 
         if !pages.header().is_first_page {
             return unsupported_error("ogg: page is not marked as first");
@@ -69,15 +71,15 @@ impl<'s> OggReader<'s> {
             phys_byte_range_end: None,
         };
 
-        ogg.start_new_physical_stream()?;
+        ogg.start_new_physical_stream().await?;
 
         Ok(ogg)
     }
 
-    fn read_page(&mut self) -> Result<()> {
+    async fn read_page(&mut self) -> Result<()> {
         // Try reading pages until a page is successfully read, or an IO error.
         loop {
-            match self.pages.try_next_page(&mut self.reader) {
+            match self.pages.try_next_page(&mut self.reader).await {
                 Ok(_) => break,
                 Err(Error::IoError(e)) => return Err(Error::from(e)),
                 Err(e) => {
@@ -90,15 +92,14 @@ impl<'s> OggReader<'s> {
 
         // If the page is marked as a first page, then try to start a new physical stream.
         if page.header.is_first_page {
-            self.start_new_physical_stream()?;
+            self.start_new_physical_stream().await?;
             return reset_error();
         }
 
         if let Some(stream) = self.streams.get_mut(&page.header.serial) {
             // TODO: Process side data.
-            let _side_data = stream.read_page(&page)?;
-        }
-        else {
+            let _side_data = stream.read_page(&page).await?;
+        } else {
             // If there is no associated logical stream with this page, then this is a
             // completely random page within the physical stream. Discard it.
         }
@@ -115,8 +116,7 @@ impl<'s> OggReader<'s> {
 
         if let Some(stream) = self.streams.get(&page.header.serial) {
             stream.peek_packet()
-        }
-        else {
+        } else {
             None
         }
     }
@@ -130,7 +130,7 @@ impl<'s> OggReader<'s> {
         }
     }
 
-    fn next_logical_packet(&mut self) -> Result<Option<Packet>> {
+    async fn next_logical_packet(&mut self) -> Result<Option<Packet>> {
         loop {
             let page = self.pages.page();
 
@@ -142,7 +142,7 @@ impl<'s> OggReader<'s> {
                 }
             }
 
-            match self.read_page() {
+            match self.read_page().await {
                 Ok(_) => (),
                 Err(Error::IoError(err)) if err.is_eof() => {
                     // Check that all logical streams have read their last page.
@@ -159,7 +159,7 @@ impl<'s> OggReader<'s> {
         }
     }
 
-    fn do_seek(&mut self, serial: u32, required_ts: Timestamp) -> Result<SeekedTo> {
+    async fn do_seek(&mut self, serial: u32, required_ts: Timestamp) -> Result<SeekedTo> {
         // The stream being seeked.
         let stream = self.streams.get_mut(&serial).unwrap();
 
@@ -185,10 +185,10 @@ impl<'s> OggReader<'s> {
                 let mid_byte_pos = (start_byte_pos + end_byte_pos) / 2;
 
                 // Seek to the middle of the byte range.
-                self.reader.seek(SeekFrom::Start(mid_byte_pos))?;
+                self.reader.seek(SeekFrom::Start(mid_byte_pos)).await?;
 
                 // Read the next page.
-                match self.pages.next_page_for_serial(&mut self.reader, serial) {
+                match self.pages.next_page_for_serial(&mut self.reader, serial).await {
                     Ok(_) => (),
                     _ => {
                         // No more pages for the stream from the mid-point onwards.
@@ -203,7 +203,7 @@ impl<'s> OggReader<'s> {
                 }
 
                 // Probe the page to get the start and end timestamp.
-                let (start_ts, end_ts) = stream.inspect_page(&self.pages.page());
+                let (start_ts, end_ts) = stream.inspect_page(&self.pages.page()).await;
 
                 debug!(
                     "seek: bisect step: page={{ start_ts={start_ts}, end_ts={end_ts} }} \
@@ -214,13 +214,11 @@ impl<'s> OggReader<'s> {
                     // The required timestamp is less-than the timestamp of the first sample in the
                     // page. Update the upper bound and bisect again.
                     end_byte_pos = mid_byte_pos;
-                }
-                else if target_ts > end_ts {
+                } else if target_ts > end_ts {
                     // The required timestamp is greater-than the timestamp of the final sample in
                     // the in the page. Update the lower bound and bisect again.
                     start_byte_pos = mid_byte_pos;
-                }
-                else {
+                } else {
                     // The sample with the required timestamp is contained in the page. The
                     // bisection has converged on the correct page so stop the bisection.
                     start_byte_pos = mid_byte_pos;
@@ -232,9 +230,9 @@ impl<'s> OggReader<'s> {
             // If the bisection did not converge, then the linear search must continue from the
             // lower-bound (start) position of what would've been the next iteration of bisection.
             if start_byte_pos != end_byte_pos {
-                self.reader.seek(SeekFrom::Start(start_byte_pos))?;
+                self.reader.seek(SeekFrom::Start(start_byte_pos)).await?;
 
-                match self.pages.next_page_for_serial(&mut self.reader, serial) {
+                match self.pages.next_page_for_serial(&mut self.reader, serial).await {
                     Ok(_) => (),
                     _ => return seek_error(SeekErrorKind::OutOfRange),
                 }
@@ -247,7 +245,7 @@ impl<'s> OggReader<'s> {
 
                 // Read in the current page since it contains our timestamp.
                 if s == serial {
-                    stream.read_page(&self.pages.page())?;
+                    stream.read_page(&self.pages.page()).await?;
                 }
             }
         }
@@ -269,7 +267,7 @@ impl<'s> OggReader<'s> {
 
                     self.discard_logical_packet();
                 }
-                _ => match self.read_page() {
+                _ => match self.read_page().await {
                     Ok(_) => (),
                     Err(Error::IoError(err)) if err.is_eof() => {
                         // If all streams have read their last page, then the seek was out-of-range.
@@ -295,7 +293,7 @@ impl<'s> OggReader<'s> {
         Ok(SeekedTo { track_id: serial, actual_ts, required_ts })
     }
 
-    fn start_new_physical_stream(&mut self) -> Result<()> {
+    async fn start_new_physical_stream(&mut self) -> Result<()> {
         // The new mapper set.
         let mut streams = BTreeMap::<u32, LogicalStream>::new();
 
@@ -325,7 +323,7 @@ impl<'s> OggReader<'s> {
             // There should only be a single packet, the identification packet, in the first page.
             if let Some(pkt) = self.pages.first_packet() {
                 // If a stream mapper has been detected, create a logical stream with it.
-                if let Some(mapper) = mappings::detect(header.serial, pkt)? {
+                if let Some(mapper) = mappings::detect(header.serial, pkt).await? {
                     info!(
                         "selected {} mapper for stream with serial={:#x}",
                         mapper.name(),
@@ -337,7 +335,7 @@ impl<'s> OggReader<'s> {
             }
 
             // Read the next page.
-            self.pages.try_next_page(&mut self.reader)?;
+            self.pages.try_next_page(&mut self.reader).await?;
         }
 
         // Each logical stream may contain additional header packets after the identification packet
@@ -349,7 +347,7 @@ impl<'s> OggReader<'s> {
             let page = self.pages.page();
 
             if let Some(stream) = streams.get_mut(&page.header.serial) {
-                let side_data = stream.read_page_init(&page, true)?;
+                let side_data = stream.read_page_init(&page, true).await?;
 
                 // Consume each piece of side data.
                 for data in side_data {
@@ -376,7 +374,7 @@ impl<'s> OggReader<'s> {
             // the end of the current page.
             byte_range_start = self.reader.pos();
 
-            self.pages.try_next_page(&mut self.reader)?;
+            self.pages.try_next_page(&mut self.reader).await?;
         }
 
         // Probe the logical streams for their start and end pages.
@@ -394,7 +392,8 @@ impl<'s> OggReader<'s> {
                     &mut streams,
                     byte_range_start,
                     total_len,
-                )?;
+                )
+                .await?;
             }
         }
 
@@ -426,17 +425,20 @@ impl<'s> OggReader<'s> {
 }
 
 impl Scoreable for OggReader<'_> {
-    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-        Ok(Score::Supported(255))
+    fn score<'a, 'b>(
+        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
+        Box::pin(async { Ok(Score::Supported(255)) })
     }
 }
 
-impl ProbeableFormat<'_> for OggReader<'_> {
-    fn try_probe_new(
-        mss: MediaSourceStream<'_>,
+#[async_trait]
+impl<'s> ProbeableFormat<'s> for OggReader<'s> {
+    async fn try_probe_new(
+        mss: MediaSourceStream<'s>,
         opts: FormatOptions,
-    ) -> Result<Box<dyn FormatReader + '_>> {
-        Ok(Box::new(OggReader::try_new(mss, opts)?))
+    ) -> Result<Box<dyn FormatReader + 's>> {
+        Ok(Box::new(OggReader::try_new(mss, opts).await?))
     }
 
     fn probe_data() -> &'static [ProbeFormatData] {
@@ -449,13 +451,14 @@ impl ProbeableFormat<'_> for OggReader<'_> {
     }
 }
 
+#[async_trait]
 impl FormatReader for OggReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &OGG_FORMAT_INFO
     }
 
-    fn next_packet(&mut self) -> Result<Option<Packet>> {
-        self.next_logical_packet()
+    async fn next_packet(&mut self) -> Result<Option<Packet>> {
+        self.next_logical_packet().await
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -470,7 +473,7 @@ impl FormatReader for OggReader<'_> {
         &self.tracks
     }
 
-    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
+    async fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
         // Get the timestamp of the desired audio frame.
         let (required_ts, serial) = match to {
             // Frame timestamp given.
@@ -495,8 +498,7 @@ impl FormatReader for OggReader<'_> {
                             return seek_error(SeekErrorKind::OutOfRange);
                         }
                     }
-                }
-                else {
+                } else {
                     return seek_error(SeekErrorKind::InvalidTrack);
                 }
 
@@ -507,11 +509,9 @@ impl FormatReader for OggReader<'_> {
                 // Get the track serial.
                 let serial = if let Some(serial) = track_id {
                     serial
-                }
-                else if let Some(first_track) = self.tracks.first() {
+                } else if let Some(first_track) = self.tracks.first() {
                     first_track.id
-                }
-                else {
+                } else {
                     // No tracks.
                     return seek_error(SeekErrorKind::Unseekable);
                 };
@@ -546,8 +546,7 @@ impl FormatReader for OggReader<'_> {
                     }
 
                     ts
-                }
-                else {
+                } else {
                     // No mapper for track. The user provided a bad track ID.
                     return seek_error(SeekErrorKind::InvalidTrack);
                 };
@@ -559,7 +558,7 @@ impl FormatReader for OggReader<'_> {
         debug!("seeking track={serial:#x} to frame_ts={required_ts}");
 
         // Do the actual seek.
-        self.do_seek(serial, required_ts)
+        self.do_seek(serial, required_ts).await
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
