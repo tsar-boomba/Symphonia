@@ -14,7 +14,7 @@ use super::page::*;
 
 use log::debug;
 
-pub fn probe_stream_start(
+pub async fn probe_stream_start(
     reader: &mut MediaSourceStream<'_>,
     pages: &mut PageReader,
     streams: &mut BTreeMap<u32, LogicalStream>,
@@ -59,7 +59,7 @@ pub fn probe_stream_start(
         // If the stream hasn't been marked as probed.
         if !probed.contains(&page.header.serial) {
             // Probe the first page of the logical stream.
-            stream.inspect_start_page(&page);
+            stream.inspect_start_page(&page).await;
             // Mark the logical stream as probed.
             probed.insert(page.header.serial);
         }
@@ -70,7 +70,7 @@ pub fn probe_stream_start(
         }
 
         // Read the next page.
-        match pages.try_next_page(&mut scoped_reader) {
+        match pages.try_next_page(&mut scoped_reader).await {
             Ok(_) => {
                 page_changed = true;
             }
@@ -83,7 +83,7 @@ pub fn probe_stream_start(
     if page_changed {
         // Restore the original page that was read when entering this probe function.
         reader.seek_buffered(byte_range_start);
-        pages.next_page(reader)
+        pages.next_page(reader).await
     }
     else {
         // Just restore the original reader position, the page has not changed.
@@ -92,7 +92,7 @@ pub fn probe_stream_start(
     }
 }
 
-pub fn probe_stream_end(
+pub async fn probe_stream_end(
     reader: &mut MediaSourceStream<'_>,
     pages: &mut PageReader,
     streams: &mut BTreeMap<u32, LogicalStream>,
@@ -106,15 +106,15 @@ pub fn probe_stream_end(
     // Optimization: Try a linear scan of the last few pages first. This will cover all
     // non-chained physical streams, which is the majority of cases.
     if byte_range_end >= linear_scan_len && byte_range_start <= byte_range_end - linear_scan_len {
-        reader.seek(SeekFrom::Start(byte_range_end - linear_scan_len))?;
+        reader.seek(SeekFrom::Start(byte_range_end - linear_scan_len)).await?;
     }
     else {
-        reader.seek(SeekFrom::Start(byte_range_start))?;
+        reader.seek(SeekFrom::Start(byte_range_start)).await?;
     }
 
-    pages.next_page(reader)?;
+    pages.next_page(reader).await?;
 
-    let result = scan_stream_end(reader, pages, streams, byte_range_end);
+    let result = scan_stream_end(reader, pages, streams, byte_range_end).await;
 
     // If there are no pages belonging to the current physical stream at the end of the media
     // source stream, then one or more physical streams are chained. Use a bisection method to find
@@ -127,9 +127,9 @@ pub fn probe_stream_end(
 
         loop {
             let mid = (end + start) / 2;
-            reader.seek(SeekFrom::Start(mid))?;
+            reader.seek(SeekFrom::Start(mid)).await?;
 
-            match pages.next_page(reader) {
+            match pages.next_page(reader).await {
                 Ok(_) => (),
                 _ => break,
             }
@@ -149,24 +149,24 @@ pub fn probe_stream_end(
         }
 
         // Scan the last few pages of the physical stream.
-        reader.seek(SeekFrom::Start(start))?;
+        reader.seek(SeekFrom::Start(start)).await?;
 
-        pages.next_page(reader)?;
+        pages.next_page(reader).await?;
 
-        scan_stream_end(reader, pages, streams, end)
+        scan_stream_end(reader, pages, streams, end).await
     }
     else {
         result
     };
 
     // Restore the original page
-    reader.seek(SeekFrom::Start(byte_range_start))?;
-    pages.next_page(reader)?;
+    reader.seek(SeekFrom::Start(byte_range_start)).await?;
+    pages.next_page(reader).await?;
 
     Ok(result)
 }
 
-fn scan_stream_end(
+async fn scan_stream_end(
     reader: &mut MediaSourceStream<'_>,
     pages: &mut PageReader,
     streams: &mut BTreeMap<u32, LogicalStream>,
@@ -193,13 +193,13 @@ fn scan_stream_end(
         };
 
         // Inspect the end page.
-        stream.inspect_end_page(states.entry(page.header.serial).or_default(), &page);
+        stream.inspect_end_page(states.entry(page.header.serial).or_default(), &page).await;
 
         // The new end of the physical stream is the position after this page.
         upper_pos = Some(scoped_reader.pos());
 
         // Read to the next page. Exit on error.
-        if pages.next_page(&mut scoped_reader).is_err() {
+        if pages.next_page(&mut scoped_reader).await.is_err() {
             break;
         }
     }
