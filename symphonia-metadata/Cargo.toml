@@ -14,7 +14,9 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-default = ["ape", "id3v1", "id3v2"]
+default = ["std", "ape", "id3v1", "id3v2"]
+
+std = ["symphonia-core/std"]
 
 # Standalone metadata format readers.
 ape = []
@@ -39,6 +41,7 @@ log = { workspace = true }
 regex-lite = "0.1.6"
 smallvec = { workspace = true }
 symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
+hashbrown = { workspace = true }
 
 [lints]
 workspace = true
