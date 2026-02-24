@@ -11,9 +11,9 @@
 mod info {
     //! RIFF INFO chunk metadata format reading.
 
-    use std::collections::HashMap;
-    use std::str;
+    use core::str;
 
+    use hashbrown::HashMap;
     use lazy_static::lazy_static;
 
     use symphonia_core::errors::{Result, decode_error};
