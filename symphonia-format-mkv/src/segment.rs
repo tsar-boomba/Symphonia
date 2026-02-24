@@ -147,8 +147,8 @@ impl From<u64> for MatroskaTicks {
     }
 }
 
-impl std::fmt::Display for MatroskaTicks {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for MatroskaTicks {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.fmt(f)
     }
 }
@@ -218,8 +218,8 @@ impl From<u64> for SegmentTicks {
     }
 }
 
-impl std::fmt::Display for SegmentTicks {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for SegmentTicks {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.fmt(f)
     }
 }
@@ -278,8 +278,8 @@ impl From<u64> for TrackTicks {
     }
 }
 
-impl std::fmt::Display for TrackTicks {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for TrackTicks {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.fmt(f)
     }
 }
@@ -346,8 +346,8 @@ impl From<Timestamp> for SignedTrackTicks {
     }
 }
 
-impl std::fmt::Display for SignedTrackTicks {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for SignedTrackTicks {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.fmt(f)
     }
 }
