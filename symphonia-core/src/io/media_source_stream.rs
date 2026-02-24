@@ -5,21 +5,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// temporary exception from no_std until we don't use io here anymore
-extern crate std;
-
 use alloc::{boxed::Box, vec};
 use core::cmp;
 use core::ops::Sub;
-use std::io;
-use std::io::{IoSliceMut, Read, Seek};
+use embedded_io::{self as io, Read, Seek};
 
 use super::SeekBuffered;
 use super::{MediaSource, ReadBytes};
 
 #[inline(always)]
-fn unexpected_eof_error<T>() -> io::Result<T> {
-    Err(io::Error::from(io::ErrorKind::UnexpectedEof))
+fn unexpected_eof_error<T>() -> super::Result<T> {
+    Err(super::Error::other("unexpected eof"))
 }
 
 /// `MediaSourceStreamOptions` specifies the buffering behaviour of a `MediaSourceStream`.
@@ -55,7 +51,7 @@ impl Default for MediaSourceStreamOptions {
 /// invalidation. Note that regular a `seek()` will invalidate the buffer.
 pub struct MediaSourceStream<'s> {
     /// The source reader.
-    inner: Box<dyn MediaSource + 's>,
+    inner: Box<dyn MediaSource<Error = super::Error> + 's>,
     /// The ring buffer.
     ring: Box<[u8]>,
     /// The ring buffer's wrap-around mask.
@@ -77,7 +73,7 @@ impl<'s> MediaSourceStream<'s> {
     const MIN_BLOCK_LEN: usize = 1 * 1024;
     const MAX_BLOCK_LEN: usize = 32 * 1024;
 
-    pub fn new(source: Box<dyn MediaSource + 's>, options: MediaSourceStreamOptions) -> Self {
+    pub fn new(source: Box<dyn MediaSource<Error = super::Error> + 's>, options: MediaSourceStreamOptions) -> Self {
         // The buffer length must be a power of 2, and > the maximum read block length.
         assert!(options.buffer_len.count_ones() == 1);
         assert!(options.buffer_len > Self::MAX_BLOCK_LEN);
@@ -102,7 +98,7 @@ impl<'s> MediaSourceStream<'s> {
     }
 
     /// If the ring buffer has been exhausted, fetch a new block of data to replenish the buffer.
-    fn refill_buffer(&mut self) -> io::Result<()> {
+    fn refill_buffer(&mut self) -> super::Result<()> {
         // Only fetch when the ring buffer is empty.
         if self.is_buffer_empty() {
             // Split the vector at the write position to get slices of the two contiguous regions of
@@ -116,10 +112,12 @@ impl<'s> MediaSourceStream<'s> {
                 self.inner.read(&mut vec0[..self.read_block_len])?
             }
             else {
+                // TODO: figure out how to add back in
+
                 // Otherwise, perform a vectored read into the two contiguous region slices.
                 let rem = self.read_block_len - vec0.len();
 
-                let ring_vectors = &mut [IoSliceMut::new(vec0), IoSliceMut::new(&mut vec1[..rem])];
+                let ring_vectors = &mut [super::IoSliceMut::new(vec0), super::IoSliceMut::new(&mut vec1[..rem])];
 
                 self.inner.read_vectored(ring_vectors)?
             };
@@ -141,7 +139,7 @@ impl<'s> MediaSourceStream<'s> {
 
     /// If the ring buffer has been exhausted, fetch a new block of data to replenish the buffer. If
     /// no more data could be fetched, return an UnexpectedEof error.
-    fn refill_buffer_or_eof(&mut self) -> io::Result<()> {
+    fn refill_buffer_or_eof(&mut self) -> super::Result<()> {
         self.refill_buffer()?;
 
         if self.is_buffer_empty() {
@@ -177,7 +175,7 @@ impl<'s> MediaSourceStream<'s> {
     /// the ring buffer.
     ///
     /// Panics if the ring buffer is not empty.
-    fn read_from_source<'b>(&mut self, buf: &'b mut [u8]) -> io::Result<&'b mut [u8]> {
+    fn read_from_source<'b>(&mut self, buf: &'b mut [u8]) -> super::Result<&'b mut [u8]> {
         assert!(self.is_buffer_empty());
 
         let read_len = self.inner.read(buf)?;
@@ -272,6 +270,10 @@ impl<'s> MediaSourceStream<'s> {
     }
 }
 
+impl io::ErrorType for MediaSourceStream<'_> {
+    type Error = super::Error;
+}
+
 impl MediaSource for MediaSourceStream<'_> {
     #[inline]
     fn is_seekable(&self) -> bool {
@@ -285,7 +287,7 @@ impl MediaSource for MediaSourceStream<'_> {
 }
 
 impl io::Read for MediaSourceStream<'_> {
-    fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
+    fn read(&mut self, mut buf: &mut [u8]) -> super::Result<usize> {
         let read_len = buf.len();
 
         // First, read as much as possible from the ring buffer.
@@ -328,7 +330,7 @@ impl io::Read for MediaSourceStream<'_> {
 }
 
 impl io::Seek for MediaSourceStream<'_> {
-    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+    fn seek(&mut self, pos: io::SeekFrom) -> super::Result<u64> {
         // The current position of the underlying reader is ahead of the current position of the
         // MediaSourceStream by how ever many bytes have not been read from the read-ahead buffer
         // yet. When seeking from the current position adjust the position delta to offset that
@@ -350,7 +352,7 @@ impl io::Seek for MediaSourceStream<'_> {
 
 impl ReadBytes for MediaSourceStream<'_> {
     #[inline(always)]
-    fn read_byte(&mut self) -> io::Result<u8> {
+    fn read_byte(&mut self) -> super::Result<u8> {
         // This function, read_byte, is inlined for performance. To reduce code bloat, place the
         // read-ahead buffer replenishment in a seperate function. Call overhead will be negligible
         // compared to the actual underlying read.
@@ -364,7 +366,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         Ok(value)
     }
 
-    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+    fn read_double_bytes(&mut self) -> super::Result<[u8; 2]> {
         let mut bytes = [0; 2];
 
         let buf = self.get_readable_slice();
@@ -382,7 +384,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         Ok(bytes)
     }
 
-    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+    fn read_triple_bytes(&mut self) -> super::Result<[u8; 3]> {
         let mut bytes = [0; 3];
 
         let buf = self.get_readable_slice();
@@ -399,7 +401,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         Ok(bytes)
     }
 
-    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+    fn read_quad_bytes(&mut self) -> super::Result<[u8; 4]> {
         let mut bytes = [0; 4];
 
         let buf = self.get_readable_slice();
@@ -416,7 +418,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         Ok(bytes)
     }
 
-    fn read_buf(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read_buf(&mut self, buf: &mut [u8]) -> super::Result<usize> {
         // Implemented via io::Read trait.
         let read = self.read(buf)?;
 
@@ -426,7 +428,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         if !buf.is_empty() && read == 0 { unexpected_eof_error() } else { Ok(read) }
     }
 
-    fn read_buf_exact(&mut self, mut buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf_exact(&mut self, mut buf: &mut [u8]) -> super::Result<()> {
         while !buf.is_empty() {
             match self.read(buf) {
                 Ok(0) => break,
@@ -446,12 +448,12 @@ impl ReadBytes for MediaSourceStream<'_> {
         _: &[u8],
         _: usize,
         _: &'a mut [u8],
-    ) -> io::Result<&'a mut [u8]> {
+    ) -> super::Result<&'a mut [u8]> {
         // Intentionally left unimplemented.
         unimplemented!();
     }
 
-    fn ignore_bytes(&mut self, mut count: u64) -> io::Result<()> {
+    fn ignore_bytes(&mut self, mut count: u64) -> super::Result<()> {
         // If the stream is seekable and the number of bytes to ignore is large, perform a seek
         // first. Note that ignored bytes are rewindable. Therefore, ensure the ring-buffer is
         // full after the seek just like if bytes were ignored by consuming them instead.
@@ -568,13 +570,10 @@ impl SeekBuffered for MediaSourceStream<'_> {
 
 #[cfg(test)]
 mod tests {
-    // exception from no_std is fine in tests
-    extern crate std;
-
     use alloc::{boxed::Box, vec, vec::Vec};
-    use std::io::{Cursor, Read};
 
     use super::{MediaSourceStream, ReadBytes, SeekBuffered};
+    use crate::io::{Cursor, MediaSource};
 
     /// Generate a random vector of bytes of the specified length using a PRNG.
     fn generate_random_bytes(len: usize) -> Box<[u8]> {
