@@ -54,13 +54,13 @@ const SCALE_FACTOR_MPEG2_NSFB: [[[usize; 4]; 3]; 6] = [
 ];
 
 /// Reads the side_info for a single channel in a granule from a `BitStream`.
-fn read_granule_channel_side_info<B: ReadBitsLtr>(
+async fn read_granule_channel_side_info<B: ReadBitsLtr>(
     bs: &mut B,
     channel: &mut GranuleChannel,
     header: &FrameHeader,
 ) -> Result<()> {
-    channel.part2_3_length = bs.read_bits_leq32(12)? as u16;
-    channel.big_values = bs.read_bits_leq32(9)? as u16;
+    channel.part2_3_length = bs.read_bits_leq32(12).await? as u16;
+    channel.big_values = bs.read_bits_leq32(9).await? as u16;
 
     // The maximum number of samples in a granule is 576. One big_value decodes to 2 samples,
     // therefore there can be no more than 288 (576/2) big_values.
@@ -68,17 +68,17 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
         return decode_error("mpa: granule big_values > 288");
     }
 
-    channel.global_gain = bs.read_bits_leq32(8)? as u8;
+    channel.global_gain = bs.read_bits_leq32(8).await? as u8;
 
     channel.scalefac_compress =
-        if header.is_mpeg1() { bs.read_bits_leq32(4) } else { bs.read_bits_leq32(9) }? as u16;
+        if header.is_mpeg1() { bs.read_bits_leq32(4) .await} else { bs.read_bits_leq32(9) .await}? as u16;
 
-    let window_switching = bs.read_bool()?;
+    let window_switching = bs.read_bool().await?;
 
     if window_switching {
-        let block_type_enc = bs.read_bits_leq32(2)?;
+        let block_type_enc = bs.read_bits_leq32(2).await?;
 
-        let is_mixed = bs.read_bool()?;
+        let is_mixed = bs.read_bool().await?;
 
         channel.block_type = match block_type_enc {
             // Only transitional Long blocks (Start, End) are allowed with window switching.
@@ -92,11 +92,11 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
         // When window switching is used, there are only two regions, therefore there are only
         // two table selectors.
         for i in 0..2 {
-            channel.table_select[i] = bs.read_bits_leq32(5)? as u8;
+            channel.table_select[i] = bs.read_bits_leq32(5).await? as u8;
         }
 
         for i in 0..3 {
-            channel.subblock_gain[i] = bs.read_bits_leq32(3)? as u8;
+            channel.subblock_gain[i] = bs.read_bits_leq32(3).await? as u8;
         }
 
         // When using window switching, the boundaries of region[0..3] are set implicitly according
@@ -151,14 +151,14 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
         channel.block_type = BlockType::Long;
 
         for i in 0..3 {
-            channel.table_select[i] = bs.read_bits_leq32(5)? as u8;
+            channel.table_select[i] = bs.read_bits_leq32(5).await? as u8;
         }
 
         // When window switching is not used, only LONG scale-factor bands are used for each region.
         // The number of bands in region0 and region1 are defined in side_info. The stored value is
         // 1 less than the actual value.
-        let region0_count = bs.read_bits_leq32(4)? as usize + 1;
-        let region0_1_count = bs.read_bits_leq32(3)? as usize + region0_count + 1;
+        let region0_count = bs.read_bits_leq32(4).await? as usize + 1;
+        let region0_1_count = bs.read_bits_leq32(3).await? as usize + region0_count + 1;
 
         channel.region1_start = SFB_LONG_BANDS[header.sample_rate_idx][region0_count];
 
@@ -171,29 +171,29 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
     }
 
     // For MPEG2, preflag is determined implicitly when reading the scale factors.
-    channel.preflag = if header.is_mpeg1() { bs.read_bool()? } else { false };
+    channel.preflag = if header.is_mpeg1() { bs.read_bool().await? } else { false };
 
-    channel.scalefac_scale = bs.read_bool()?;
-    channel.count1table_select = bs.read_bit()? as u8;
+    channel.scalefac_scale = bs.read_bool().await?;
+    channel.count1table_select = bs.read_bit().await? as u8;
 
     Ok(())
 }
 
 /// Reads the side_info for all channels in a granule from a `BitStream`.
-fn read_granule_side_info<B: ReadBitsLtr>(
+async fn read_granule_side_info<B: ReadBitsLtr>(
     bs: &mut B,
     granule: &mut Granule,
     header: &FrameHeader,
 ) -> Result<()> {
     // Read the side_info for each channel in the granule.
     for channel in &mut granule.channels[..header.channel_mode.count()] {
-        read_granule_channel_side_info(bs, channel, header)?;
+        read_granule_channel_side_info(bs, channel, header).await?;
     }
     Ok(())
 }
 
 /// Reads the side_info of a MPEG audio frame from a `BitStream` into `FrameData`.
-pub(super) fn read_side_info<B: ReadBitsLtr>(
+pub(super) async fn read_side_info<B: ReadBitsLtr>(
     bs: &mut B,
     header: &FrameHeader,
     frame_data: &mut FrameData,
@@ -201,43 +201,43 @@ pub(super) fn read_side_info<B: ReadBitsLtr>(
     // For MPEG version 1...
     if header.is_mpeg1() {
         // First 9 bits is main_data_begin.
-        frame_data.main_data_begin = bs.read_bits_leq32(9)? as u16;
+        frame_data.main_data_begin = bs.read_bits_leq32(9).await? as u16;
 
         // Next 3 (>1 channel) or 5 (1 channel) bits are private and should be ignored.
         match header.channel_mode {
-            ChannelMode::Mono => bs.ignore_bits(5)?,
-            _ => bs.ignore_bits(3)?,
+            ChannelMode::Mono => bs.ignore_bits(5).await?,
+            _ => bs.ignore_bits(3).await?,
         };
 
         // Next four (or 8, if more than one channel) are the SCFSI bits.
         for scfsi in &mut frame_data.scfsi[..header.n_channels()] {
             for band in scfsi.iter_mut() {
-                *band = bs.read_bool()?;
+                *band = bs.read_bool().await?;
             }
         }
     }
     // For MPEG version 2...
     else {
         // First 8 bits is main_data_begin.
-        frame_data.main_data_begin = bs.read_bits_leq32(8)? as u16;
+        frame_data.main_data_begin = bs.read_bits_leq32(8).await? as u16;
 
         // Next 1 (1 channel) or 2 (>1 channel) bits are private and should be ignored.
         match header.channel_mode {
-            ChannelMode::Mono => bs.ignore_bits(1)?,
-            _ => bs.ignore_bits(2)?,
+            ChannelMode::Mono => bs.ignore_bits(1).await?,
+            _ => bs.ignore_bits(2).await?,
         }
     }
 
     // Read the side_info for each granule.
     for granule in frame_data.granules_mut(header.version) {
-        read_granule_side_info(bs, granule, header)?;
+        read_granule_side_info(bs, granule, header).await?;
     }
 
     Ok(header.side_info_len())
 }
 
 /// Reads the scale factors for a single channel in a granule in a MPEG version 1 audio frame.
-pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
+pub(super) async fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
     bs: &mut B,
     gr: usize,
     ch: usize,
@@ -264,7 +264,7 @@ pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
 
         if slen1 > 0 {
             for sfb in 0..n_sfb {
-                channel.scalefacs[sfb] = bs.read_bits_leq32(slen1)? as u8;
+                channel.scalefacs[sfb] = bs.read_bits_leq32(slen1).await? as u8;
             }
             bits_read += n_sfb * slen1 as usize;
         }
@@ -274,7 +274,7 @@ pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
         // not. Each band has a window of 3 with each scale factor being slen2 bits long.
         if slen2 > 0 {
             for sfb in n_sfb..(n_sfb + (6 * 3)) {
-                channel.scalefacs[sfb] = bs.read_bits_leq32(slen2)? as u8;
+                channel.scalefacs[sfb] = bs.read_bits_leq32(slen2).await? as u8;
             }
             bits_read += 6 * 3 * slen2 as usize;
         }
@@ -304,7 +304,7 @@ pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
             else if slen > 0 {
                 for sfb in *start..*end {
                     frame_data.granules[gr].channels[ch].scalefacs[sfb] =
-                        bs.read_bits_leq32(slen)? as u8;
+                        bs.read_bits_leq32(slen).await? as u8;
                 }
                 bits_read += slen as usize * (end - start);
             }
@@ -315,7 +315,7 @@ pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
 }
 
 /// Reads the scale factors for a single channel in a granule in a MPEG version 2 audio frame.
-pub(super) fn read_scale_factors_mpeg2<B: ReadBitsLtr>(
+pub(super) async fn read_scale_factors_mpeg2<B: ReadBitsLtr>(
     bs: &mut B,
     is_intensity_stereo: bool,
     channel: &mut GranuleChannel,
@@ -412,7 +412,7 @@ pub(super) fn read_scale_factors_mpeg2<B: ReadBitsLtr>(
         // scalefacs are preinitialized to 0, this process may be skipped.
         if slen > 0 {
             for sfb in start..(start + n_sfb) {
-                channel.scalefacs[sfb] = bs.read_bits_leq32(slen)? as u8;
+                channel.scalefacs[sfb] = bs.read_bits_leq32(slen).await? as u8;
             }
             bits_read += slen * n_sfb as u32;
         }

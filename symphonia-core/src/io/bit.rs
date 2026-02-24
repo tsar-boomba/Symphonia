@@ -513,7 +513,7 @@ pub trait FiniteBitStream {
 
 /// `ReadBitsLtr` reads bits from most-significant to least-significant.
 #[async_trait]
-pub trait ReadBitsLtr: private::FetchBitsLtr {
+pub trait ReadBitsLtr: Send + private::FetchBitsLtr {
     /// Discards any saved bits and resets the `BitStream` to prepare it for a byte-aligned read.
     #[inline(always)]
     fn realign(&mut self) {

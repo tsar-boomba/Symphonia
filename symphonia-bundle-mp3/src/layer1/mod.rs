@@ -68,14 +68,14 @@ impl Layer1 {
 
 impl Layer for Layer1 {
     #[allow(clippy::needless_range_loop)]
-    fn decode(
+    async fn decode(
         &mut self,
         reader: &mut BufReader<'_>,
         header: &FrameHeader,
         out: &mut AudioBuffer<f32>,
     ) -> Result<()> {
         // Ignore the CRC.
-        let _crc = if header.has_crc { Some(reader.read_be_u16()?) } else { None };
+        let _crc = if header.has_crc { Some(reader.read_be_u16().await?) } else { None };
 
         let mut bs = BitReaderLtr::new(reader.read_buf_bytes_available_ref());
 
@@ -98,7 +98,7 @@ impl Layer for Layer1 {
         // Read bit allocations for each non-intensity coded sub-bands.
         for sb in 0..bound {
             for chan in &mut alloc {
-                let bits = bs.read_bits_leq32(4)? as u8;
+                let bits = bs.read_bits_leq32(4).await? as u8;
 
                 if bits > 0xe {
                     return decode_error("mp1: invalid bit allocation");
@@ -111,7 +111,7 @@ impl Layer for Layer1 {
         // Read bit allocations for the intensity coded sub-bands.
         // NOTE: This loop causes a false positive with clippy.
         for sb in bound..32 {
-            let bits = bs.read_bits_leq32(4)? as u8;
+            let bits = bs.read_bits_leq32(4).await? as u8;
 
             if bits > 0xe {
                 return decode_error("mp1: invalid bit allocation");
@@ -127,7 +127,7 @@ impl Layer for Layer1 {
         for sb in 0..32 {
             for ch in 0..num_channels {
                 if alloc[ch][sb] != 0 {
-                    let index = bs.read_bits_leq32(6)? as usize;
+                    let index = bs.read_bits_leq32(6).await? as usize;
 
                     scalefacs[ch][sb] = LAYER12_SCALEFACTORS[index];
                 }
@@ -147,7 +147,7 @@ impl Layer for Layer1 {
 
                     if bits != 0 {
                         // Read the raw sample value from the bistream.
-                        let raw = bs.read_bits_leq32(bits)?;
+                        let raw = bs.read_bits_leq32(bits).await?;
 
                         // Dequantize the raw sample.
                         let sample = dequantize(bits, factor[bits as usize], raw);
@@ -164,7 +164,7 @@ impl Layer for Layer1 {
 
                 if bits != 0 {
                     // Read the raw sample value from the bistream.
-                    let raw = bs.read_bits_leq32(bits)?;
+                    let raw = bs.read_bits_leq32(bits).await?;
 
                     // Dequantize the raw sample.
                     let sample = dequantize(bits, factor[bits as usize], raw);

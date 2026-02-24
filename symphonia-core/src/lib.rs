@@ -12,7 +12,7 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
-#![no_std]
+#![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 
 #[macro_use]
 extern crate alloc;
@@ -39,3 +39,4 @@ pub mod video;
 pub use once_cell::sync::{OnceCell, Lazy};
 
 pub use num_traits::Float;
+pub use async_trait::async_trait;

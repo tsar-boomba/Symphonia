@@ -8,6 +8,7 @@
 //! Audio decoder specific support.
 
 use alloc::boxed::Box;
+use async_trait::async_trait;
 use core::fmt;
 
 use crate::audio::sample::SampleFormat;
@@ -203,6 +204,7 @@ pub struct AudioDecoderOptions {
 
 /// An `AudioDecoder` implements an audio codec's decode algorithm. It consumes `Packet`s and
 /// produces buffers of PCM audio.
+#[async_trait]
 pub trait AudioDecoder: Send + Sync {
     /// Reset the decoder.
     ///
@@ -231,7 +233,7 @@ pub trait AudioDecoder: Send + Sync {
     /// the decoded audio buffer to change. All other errors are unrecoverable.
     ///
     /// Implementors of decoders *must* `clear` the internal audio buffer if an error occurs.
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>>;
+    async fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>>;
 
     /// Optionally, obtain post-decode information such as the verification status.
     fn finalize(&mut self) -> FinalizeResult;

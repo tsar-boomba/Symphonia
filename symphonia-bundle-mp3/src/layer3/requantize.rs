@@ -45,7 +45,7 @@ pub(super) fn zero(buf: &mut [f32; 576]) {
 /// Note, each spectral sample is raised to the (4/3)-rd power. This is not actually part of the
 /// Huffman decoding process, but, by converting the integer sample to floating point here we don't
 /// need to do pointless casting or use an extra buffer.
-pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
+pub(super) async fn read_huffman_samples<B: ReadBitsLtr>(
     bs: &mut B,
     channel: &GranuleChannel,
     part3_bits: u32,
@@ -120,13 +120,13 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
                 // If x is saturated (it is at the maximum possible value), and the table specifies
                 // linbits, then read linbits more bits and add it to the sample.
                 if x == 15 && linbits > 0 {
-                    x += bs.read_bits_leq32(linbits)? as usize;
+                    x += bs.read_bits_leq32(linbits).await? as usize;
                     bits_read += linbits;
                 }
 
                 // The next bit is the sign bit. If the sign bit is 1, then the sample should be
                 // negative. The value of the sample is raised to the (4/3) power.
-                buf[i] = (1.0 - 2.0 * bs.read_bit()? as f32) * pow43_table[x];
+                buf[i] = (1.0 - 2.0 * bs.read_bit().await? as f32) * pow43_table[x];
                 bits_read += 1;
             } else {
                 buf[i] = 0.0;
@@ -137,11 +137,11 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
             // Likewise, repeat the previous two steps for the second sample, y.
             if y > 0 {
                 if y == 15 && linbits > 0 {
-                    y += bs.read_bits_leq32(linbits)? as usize;
+                    y += bs.read_bits_leq32(linbits).await? as usize;
                     bits_read += linbits;
                 }
 
-                buf[i] = (1.0 - 2.0 * bs.read_bit()? as f32) * pow43_table[y];
+                buf[i] = (1.0 - 2.0 * bs.read_bit().await? as f32) * pow43_table[y];
                 bits_read += 1;
             } else {
                 buf[i] = 0.0;
@@ -171,7 +171,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
         let num_ones = (value & 0xf).count_ones();
 
         // Read the sign bits for each non-zero sample in a single read.
-        let mut signs = bs.read_bits_leq32(num_ones)?;
+        let mut signs = bs.read_bits_leq32(num_ones).await?;
         bits_read += num_ones;
 
         // Unpack the samples.
@@ -207,7 +207,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
 
     // Ignore any extra "stuffing" bits.
     if bits_read < part3_bits {
-        bs.ignore_bits(part3_bits - bits_read)?;
+        bs.ignore_bits(part3_bits - bits_read).await?;
     }
     // Word on the street is that some encoders are poor at "stuffing" bits, resulting in part3_len
     // being ever so slightly too large. This causes the Huffman decode loop to decode the next few

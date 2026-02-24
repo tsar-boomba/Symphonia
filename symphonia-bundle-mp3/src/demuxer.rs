@@ -5,10 +5,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use core::pin::Pin;
+
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use symphonia_core::{Float, support_format};
+use symphonia_core::{async_trait, Float, support_format};
 
 use symphonia_core::checksum::Crc16AnsiLe;
 use symphonia_core::codecs::CodecParameters;
@@ -48,43 +50,48 @@ pub struct MpaReader<'s> {
 }
 
 impl Scoreable for MpaReader<'_> {
-    fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-        // Read the sync word for the first (assumed) MPEG frame and try to parse it into a header.
-        let sync1 = header::read_frame_header_word_no_sync(&mut src)?;
-        let hdr1 = header::parse_frame_header(sync1)?;
+    fn score<'a, 'b>(
+        mut src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
+        Box::pin(async move {
+            // Read the sync word for the first (assumed) MPEG frame and try to parse it into a header.
+            let sync1 = header::read_frame_header_word_no_sync(&mut src).await?;
+            let hdr1 = header::parse_frame_header(sync1)?;
 
-        // Since the first header was parsed successfully, this may be a MPEG audio format. However,
-        // if there is enough data left to read the frame body and another frame header, then a
-        // higher confidence may be gained. If there is not enough data left, return a partially
-        // confident score.
-        if src.bytes_available() < (hdr1.frame_size + header::MPEG_HEADER_LEN) as u64 {
-            return Ok(Score::Supported(127));
-        }
+            // Since the first header was parsed successfully, this may be a MPEG audio format. However,
+            // if there is enough data left to read the frame body and another frame header, then a
+            // higher confidence may be gained. If there is not enough data left, return a partially
+            // confident score.
+            if src.bytes_available() < (hdr1.frame_size + header::MPEG_HEADER_LEN) as u64 {
+                return Ok(Score::Supported(127));
+            }
 
-        // Skip the frame body.
-        src.ignore_bytes(hdr1.frame_size as u64)?;
+            // Skip the frame body.
+            src.ignore_bytes(hdr1.frame_size as u64).await?;
 
-        // Read another sync word for the second (assumed) MPEG frame.
-        let sync2 = header::read_frame_header_word_no_sync(&mut src)?;
+            // Read another sync word for the second (assumed) MPEG frame.
+            let sync2 = header::read_frame_header_word_no_sync(&mut src).await?;
 
-        // The second sync word should look like a sync word.
-        if !header::is_frame_header_word_synced(sync2) {
-            return Ok(Score::Unsupported);
-        }
+            // The second sync word should look like a sync word.
+            if !header::is_frame_header_word_synced(sync2) {
+                return Ok(Score::Unsupported);
+            }
 
-        // Try to parse the second sync word into a header.
-        let _ = header::parse_frame_header(sync2)?;
+            // Try to parse the second sync word into a header.
+            let _ = header::parse_frame_header(sync2)?;
 
-        Ok(Score::Supported(255))
+            Ok(Score::Supported(255))
+        })
     }
 }
 
-impl ProbeableFormat<'_> for MpaReader<'_> {
-    fn try_probe_new(
-        mss: MediaSourceStream<'_>,
+#[async_trait]
+impl<'s> ProbeableFormat<'s> for MpaReader<'s> {
+    async fn try_probe_new(
+        mss: MediaSourceStream<'s>,
         opts: FormatOptions,
-    ) -> Result<Box<dyn FormatReader + '_>> {
-        Ok(Box::new(MpaReader::try_new(mss, opts)?))
+    ) -> Result<Box<dyn FormatReader + 's>> {
+        Ok(Box::new(MpaReader::try_new(mss, opts).await?))
     }
 
     fn probe_data() -> &'static [ProbeFormatData] {
@@ -135,6 +142,7 @@ impl ProbeableFormat<'_> for MpaReader<'_> {
     }
 }
 
+#[async_trait]
 impl FormatReader for MpaReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         // Safety: MpaReader only supports/has audio tracks.
@@ -146,10 +154,10 @@ impl FormatReader for MpaReader<'_> {
         }
     }
 
-    fn next_packet(&mut self) -> Result<Option<Packet>> {
+    async fn next_packet(&mut self) -> Result<Option<Packet>> {
         let (header, data) = loop {
             // Read the next MPEG frame.
-            let (header, data) = match read_mpeg_frame(&mut self.reader) {
+            let (header, data) = match read_mpeg_frame(&mut self.reader).await {
                 Ok(frame) => frame,
                 Err(Error::IoError(err)) if err.is_eof() => {
                     // MPEG streams have no well-defined end, so when no more frames can be read,
@@ -161,14 +169,13 @@ impl FormatReader for MpaReader<'_> {
 
             // Check if the packet contains a Xing, Info, or VBRI tag.
             if is_maybe_info_tag(&data, &header) {
-                if try_read_info_tag(&data, &header).is_some() {
+                if try_read_info_tag(&data, &header).await.is_some() {
                     // Discard the packet and tag since it was not at the start of the stream.
                     warn!("found an unexpected xing tag, discarding");
                     continue;
                 }
-            }
-            else if is_maybe_vbri_tag(&data, &header)
-                && try_read_vbri_tag(&data, &header).is_some()
+            } else if is_maybe_vbri_tag(&data, &header)
+                && try_read_vbri_tag(&data, &header).await.is_some()
             {
                 // Discard the packet and tag since it was not at the start of the stream.
                 warn!("found an unexpected vbri tag, discarding");
@@ -218,7 +225,7 @@ impl FormatReader for MpaReader<'_> {
         &self.tracks
     }
 
-    fn seek(&mut self, mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
+    async fn seek(&mut self, mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
         const MAX_REF_FRAMES: usize = 4;
         const REF_FRAMES_MASK: usize = MAX_REF_FRAMES - 1;
 
@@ -253,8 +260,7 @@ impl FormatReader for MpaReader<'_> {
         // Ensure the seek position is within the bounds of the track.
         if required_ts < min_ts {
             return seek_error(SeekErrorKind::OutOfRange);
-        }
-        else if let Some(max_ts) = max_ts {
+        } else if let Some(max_ts) = max_ts {
             if required_ts > max_ts {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
@@ -279,8 +285,8 @@ impl FormatReader for MpaReader<'_> {
         // In accurate seek mode, the underlying media source stream will not be seeked unless the
         // required timestamp is in the past, in which case the stream is seeked back to the start.
         match mode {
-            SeekMode::Coarse if is_seekable => self.preseek_coarse(required_ts, min_ts, max_ts)?,
-            SeekMode::Accurate => self.preseek_accurate(required_ts, min_ts)?,
+            SeekMode::Coarse if is_seekable => self.preseek_coarse(required_ts, min_ts, max_ts).await?,
+            SeekMode::Accurate => self.preseek_accurate(required_ts, min_ts).await?,
             _ => (),
         };
 
@@ -295,7 +301,7 @@ impl FormatReader for MpaReader<'_> {
 
         loop {
             // Sync to the next frame.
-            let sync = match header::sync_frame(&mut self.reader) {
+            let sync = match header::sync_frame(&mut self.reader).await {
                 Ok(sync) => sync,
                 Err(Error::IoError(err)) if err.is_eof() => {
                     // MPEG streams have no well-defined end, so if no more frames can be read then
@@ -330,7 +336,7 @@ impl FormatReader for MpaReader<'_> {
                     // where its main data begins. Therefore, for a decoder to properly decode this
                     // frame, the reader must provide previous (reference) frames up-to and
                     // including the frame that contains the first byte this frame's main_data.
-                    let main_data_begin = read_main_data_begin(&mut self.reader, &header)? as u64;
+                    let main_data_begin = read_main_data_begin(&mut self.reader, &header).await? as u64;
 
                     debug!(
                         "found frame with ts={} @ pos={} with main_data_begin={}",
@@ -376,7 +382,7 @@ impl FormatReader for MpaReader<'_> {
             };
 
             // Otherwise, ignore the frame body.
-            self.reader.ignore_bytes(header.frame_size as u64)?;
+            self.reader.ignore_bytes(header.frame_size as u64).await?;
 
             // Increment the timestamp for the next packet.
             self.next_packet_ts = next_packet_ts;
@@ -400,9 +406,9 @@ impl FormatReader for MpaReader<'_> {
 }
 
 impl<'s> MpaReader<'s> {
-    pub fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+    pub async fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         // Try to read the first MPEG frame.
-        let (header, packet) = read_mpeg_frame_strict(&mut mss)?;
+        let (header, packet) = read_mpeg_frame_strict(&mut mss).await?;
 
         // Use the header to populate the codec parameters.
         let mut codec_params = AudioCodecParameters::new();
@@ -418,7 +424,7 @@ impl<'s> MpaReader<'s> {
         track.with_codec_params(CodecParameters::Audio(codec_params));
 
         // Check if there is a Xing/Info tag contained in the first frame.
-        if let Some(info_tag) = try_read_info_tag(&packet, &header) {
+        if let Some(info_tag) = try_read_info_tag(&packet, &header).await {
             // The LAME tag contains ReplayGain and padding information.
             if let Some(lame_tag) = info_tag.lame {
                 track.with_delay(lame_tag.enc_delay).with_padding(lame_tag.enc_padding);
@@ -436,16 +442,14 @@ impl<'s> MpaReader<'s> {
 
                 track.with_num_frames(num_frames.saturating_sub(u64::from(discard)));
             }
-        }
-        else if let Some(vbri_tag) = try_read_vbri_tag(&packet, &header) {
+        } else if let Some(vbri_tag) = try_read_vbri_tag(&packet, &header).await {
             info!("using vbri header for duration");
 
             let num_frames = u64::from(vbri_tag.num_mpeg_frames) * u64::from(header.num_frames());
 
             // Check if there is a VBRI tag.
             track.with_num_frames(num_frames);
-        }
-        else {
+        } else {
             // The first frame was not a Xing/Info header, rewind back to the start of the frame so
             // that it may be decoded.
             mss.seek_buffered_rev(MPEG_HEADER_LEN + header.frame_size);
@@ -454,7 +458,7 @@ impl<'s> MpaReader<'s> {
             if mss.is_seekable() {
                 info!("estimating duration from bitrate, may be inaccurate for vbr files");
 
-                if let Some(n_mpeg_frames) = estimate_num_mpeg_frames(&mut mss) {
+                if let Some(n_mpeg_frames) = estimate_num_mpeg_frames(&mut mss).await {
                     track.with_num_frames(n_mpeg_frames * u64::from(header.num_frames()));
                 }
             }
@@ -475,7 +479,7 @@ impl<'s> MpaReader<'s> {
 
     /// Seeks the media source stream to a byte position roughly where the packet with the required
     /// timestamp should be located.
-    fn preseek_coarse(
+    async fn preseek_coarse(
         &mut self,
         required_ts: Timestamp,
         min_ts: Timestamp,
@@ -515,10 +519,10 @@ impl<'s> MpaReader<'s> {
         // Seek the media source stream.
         self.reader.seek(SeekFrom::Start(
             seek_pos.try_into().map_err(|_| Error::SeekError(SeekErrorKind::OutOfRange))?,
-        ))?;
+        )).await?;
 
         // Resync to the start of the next MPEG frame.
-        let (header, _) = read_mpeg_frame_strict(&mut self.reader)?;
+        let (header, _) = read_mpeg_frame_strict(&mut self.reader).await?;
 
         // The byte position of the next MPEG frame relative to the start of the audio data.
         let audio_byte_pos = u128::from(self.reader.pos() - self.first_packet_pos);
@@ -544,9 +548,9 @@ impl<'s> MpaReader<'s> {
 
     /// Seeks the media source stream back to the start of the first packet if the required
     /// timestamp is in the past.
-    fn preseek_accurate(&mut self, required_ts: Timestamp, min_ts: Timestamp) -> Result<()> {
+    async fn preseek_accurate(&mut self, required_ts: Timestamp, min_ts: Timestamp) -> Result<()> {
         if required_ts < self.next_packet_ts {
-            let seeked_pos = self.reader.seek(SeekFrom::Start(self.first_packet_pos))?;
+            let seeked_pos = self.reader.seek(SeekFrom::Start(self.first_packet_pos)).await?;
 
             // Since the elementary stream has no timestamp information, the position seeked
             // to must be exactly as requested.
@@ -563,10 +567,10 @@ impl<'s> MpaReader<'s> {
 }
 
 /// Reads a MPEG frame and returns the header and buffer.
-fn read_mpeg_frame(reader: &mut MediaSourceStream<'_>) -> Result<(FrameHeader, Vec<u8>)> {
+async fn read_mpeg_frame(reader: &mut MediaSourceStream<'_>) -> Result<(FrameHeader, Vec<u8>)> {
     let (header, header_word) = loop {
         // Sync to the next frame header.
-        let sync = header::sync_frame(reader)?;
+        let sync = header::sync_frame(reader).await?;
 
         // Parse the frame header fully.
         if let Ok(header) = header::parse_frame_header(sync) {
@@ -581,24 +585,26 @@ fn read_mpeg_frame(reader: &mut MediaSourceStream<'_>) -> Result<(FrameHeader, V
     packet[0..MPEG_HEADER_LEN].copy_from_slice(&header_word.to_be_bytes());
 
     // Read the frame body.
-    reader.read_buf_exact(&mut packet[MPEG_HEADER_LEN..])?;
+    reader.read_buf_exact(&mut packet[MPEG_HEADER_LEN..]).await?;
 
     // Return the parsed header and packet body.
     Ok((header, packet))
 }
 
 /// Reads a MPEG frame and checks if the next frame begins after the packet.
-fn read_mpeg_frame_strict(reader: &mut MediaSourceStream<'_>) -> Result<(FrameHeader, Vec<u8>)> {
+async fn read_mpeg_frame_strict(
+    reader: &mut MediaSourceStream<'_>,
+) -> Result<(FrameHeader, Vec<u8>)> {
     loop {
         // Read the next MPEG frame.
-        let (header, packet) = read_mpeg_frame(reader)?;
+        let (header, packet) = read_mpeg_frame(reader).await?;
 
         // Get the position before trying to read the next header.
         let pos = reader.pos();
 
         // Read a sync word from the stream. If this read fails then the file may have ended and
         // this check cannot be performed.
-        if let Ok(sync) = header::read_frame_header_word_no_sync(reader) {
+        if let Ok(sync) = header::read_frame_header_word_no_sync(reader).await {
             // If the stream is not synced to the next frame's sync word, or the next frame header
             // is not parseable or similar to the current frame header, then reject the current
             // packet since the stream likely synced to random data.
@@ -642,26 +648,26 @@ struct FramePos {
 }
 
 /// Reads the main_data_begin field from the side information of a MPEG audio frame.
-fn read_main_data_begin<B: ReadBytes>(reader: &mut B, header: &FrameHeader) -> Result<u16> {
+async fn read_main_data_begin<B: ReadBytes>(reader: &mut B, header: &FrameHeader) -> Result<u16> {
     // After the head the optional CRC is present.
     if header.has_crc {
-        let _crc = reader.read_be_u16()?;
+        let _crc = reader.read_be_u16().await?;
     }
 
     // For MPEG version 1 the first 9 bits is main_data_begin.
     let main_data_begin = if header.is_mpeg1() {
-        reader.read_be_u16()? >> 7
+        reader.read_be_u16().await? >> 7
     }
     // For MPEG version 2 the first 8 bits is main_data_begin.
     else {
-        u16::from(reader.read_u8()?)
+        u16::from(reader.read_u8().await?)
     };
 
     Ok(main_data_begin)
 }
 
 /// Estimates the total number of MPEG frames in the media source stream.
-fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream<'_>) -> Option<u64> {
+async fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream<'_>) -> Option<u64> {
     const MAX_FRAMES: u32 = 16;
     const MAX_LEN: usize = 16 * 1024;
 
@@ -687,7 +693,7 @@ fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream<'_>) -> Option<u64> {
 
     let num_mpeg_frames = loop {
         // Read the frame header.
-        let header_val = break_on_err!(reader.read_be_u32());
+        let header_val = break_on_err!(reader.read_be_u32().await);
 
         // Parse the frame header.
         let header = break_on_err!(header::parse_frame_header(header_val));
@@ -697,7 +703,7 @@ fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream<'_>) -> Option<u64> {
         total_frames += 1;
 
         // Ignore the frame body.
-        break_on_err!(reader.ignore_bytes(header.frame_size as u64));
+        break_on_err!(reader.ignore_bytes(header.frame_size as u64).await);
 
         // Read up-to 16 frames, or 16kB, then calculate the average MPEG frame length, and from
         // that, the total number of MPEG frames.
@@ -739,13 +745,13 @@ struct XingInfoTag {
 }
 
 /// Try to read a Xing/Info tag from the provided MPEG frame.
-fn try_read_info_tag(buf: &[u8], header: &FrameHeader) -> Option<XingInfoTag> {
+async fn try_read_info_tag(buf: &[u8], header: &FrameHeader) -> Option<XingInfoTag> {
     // The Info header is a completely optional piece of information. Therefore, flatten an error
     // reading the tag into a None.
-    try_read_info_tag_inner(buf, header).ok().flatten()
+    try_read_info_tag_inner(buf, header).await.ok().flatten()
 }
 
-fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<XingInfoTag>> {
+async fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<XingInfoTag>> {
     // Do a quick check that this is a Xing/Info tag.
     if !is_maybe_info_tag(buf, header) {
         return Ok(None);
@@ -763,7 +769,7 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
     let mut reader = MonitorStream::new(BufReader::new(&buf[offset + MPEG_HEADER_LEN..]), crc16);
 
     // Check for Xing/Info header.
-    let id = reader.read_quad_bytes()?;
+    let id = reader.read_quad_bytes().await?;
 
     if id != XING_TAG_ID && id != INFO_TAG_ID {
         return Ok(None);
@@ -773,22 +779,21 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
     let is_cbr = id == INFO_TAG_ID;
 
     // Flags indicates what information is provided in this Xing/Info tag.
-    let flags = reader.read_be_u32()?;
+    let flags = reader.read_be_u32().await?;
 
-    let num_frames = if flags & 0x1 != 0 { Some(reader.read_be_u32()?) } else { None };
+    let num_frames = if flags & 0x1 != 0 { Some(reader.read_be_u32().await?) } else { None };
 
-    let num_bytes = if flags & 0x2 != 0 { Some(reader.read_be_u32()?) } else { None };
+    let num_bytes = if flags & 0x2 != 0 { Some(reader.read_be_u32().await?) } else { None };
 
     let toc = if flags & 0x4 != 0 {
         let mut toc = [0; 100];
-        reader.read_buf_exact(&mut toc)?;
+        reader.read_buf_exact(&mut toc).await?;
         Some(toc)
-    }
-    else {
+    } else {
         None
     };
 
-    let quality = if flags & 0x8 != 0 { Some(reader.read_be_u32()?) } else { None };
+    let quality = if flags & 0x8 != 0 { Some(reader.read_be_u32().await?) } else { None };
 
     /// The full LAME extension size.
     const LAME_EXT_LEN: u64 = 36;
@@ -800,42 +805,41 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
     let lame = if reader.inner().bytes_available() >= MIN_LAME_EXT_LEN {
         // Encoder string.
         let mut encoder = [0; 9];
-        reader.read_buf_exact(&mut encoder)?;
+        reader.read_buf_exact(&mut encoder).await?;
 
         // Revision.
-        let _revision = reader.read_u8()?;
+        let _revision = reader.read_u8().await?;
 
         // Lowpass filter value.
-        let _lowpass = reader.read_u8()?;
+        let _lowpass = reader.read_u8().await?;
 
         // Replay gain peak in 9.23 (bit) fixed-point format.
-        let replaygain_peak = match reader.read_be_u32()? {
+        let replaygain_peak = match reader.read_be_u32().await? {
             0 => None,
             peak => Some(32767.0 * (peak as f32 / 2.0f32.powi(23))),
         };
 
         // Radio replay gain.
-        let replaygain_radio = parse_lame_tag_replaygain(reader.read_be_u16()?, 1);
+        let replaygain_radio = parse_lame_tag_replaygain(reader.read_be_u16().await?, 1);
 
         // Audiophile replay gain.
-        let replaygain_audiophile = parse_lame_tag_replaygain(reader.read_be_u16()?, 2);
+        let replaygain_audiophile = parse_lame_tag_replaygain(reader.read_be_u16().await?, 2);
 
         // Encoding flags & ATH type.
-        let _encoding_flags = reader.read_u8()?;
+        let _encoding_flags = reader.read_u8().await?;
 
         // Arbitrary bitrate.
-        let _abr = reader.read_u8()?;
+        let _abr = reader.read_u8().await?;
 
         let (enc_delay, enc_padding) = {
-            let trim = reader.read_be_u24()?;
+            let trim = reader.read_be_u24().await?;
 
             if encoder[..4] == *b"LAME" || encoder[..4] == *b"Lavf" || encoder[..4] == *b"Lavc" {
                 let delay = 528 + 1 + (trim >> 12);
                 let padding = trim & ((1 << 12) - 1);
 
                 (delay, padding.saturating_sub(528 + 1))
-            }
-            else {
+            } else {
                 (0, 0)
             }
         };
@@ -844,32 +848,30 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
         // truncated.
         let crc = if reader.inner().bytes_available() >= LAME_EXT_LEN - MIN_LAME_EXT_LEN {
             // Flags.
-            let _misc = reader.read_u8()?;
+            let _misc = reader.read_u8().await?;
 
             // MP3 gain.
-            let _mp3_gain = reader.read_u8()?;
+            let _mp3_gain = reader.read_u8().await?;
 
             // Preset and surround info.
-            let _surround_info = reader.read_be_u16()?;
+            let _surround_info = reader.read_be_u16().await?;
 
             // Music length.
-            let _music_len = reader.read_be_u32()?;
+            let _music_len = reader.read_be_u32().await?;
 
             // Music (audio) CRC.
-            let _music_crc = reader.read_be_u16()?;
+            let _music_crc = reader.read_be_u16().await?;
 
             // The tag CRC. LAME always includes this CRC regardless of the protection bit, but
             // other encoders may only do so if the protection bit is set.
             if header.has_crc || encoder[..4] == *b"LAME" {
                 // Read the CRC using the inner reader to not change the computed CRC.
-                Some(reader.inner_mut().read_be_u16()?)
-            }
-            else {
+                Some(reader.inner_mut().read_be_u16().await?)
+            } else {
                 // No CRC is present.
                 None
             }
-        }
-        else {
+        } else {
             // The tag is truncated. No CRC will be present.
             info!("xing tag lame extension is truncated");
             None
@@ -888,14 +890,12 @@ fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Xi
                 enc_delay,
                 enc_padding,
             })
-        }
-        else {
+        } else {
             // The CRC did not match, this is probably not a LAME tag.
             warn!("xing tag lame extension crc mismatch");
             None
         }
-    }
-    else {
+    } else {
         // Frame not large enough for a LAME tag.
         info!("xing tag too small for lame extension");
         None
@@ -911,8 +911,7 @@ fn parse_lame_tag_replaygain(value: u16, expected_name: u8) -> Option<f32> {
     if name == expected_name {
         let gain = (value & 0x01ff) as f32 / 10.0;
         Some(if value & 0x200 != 0 { -gain } else { gain })
-    }
-    else {
+    } else {
         None
     }
 }
@@ -957,13 +956,13 @@ struct VbriTag {
 }
 
 /// Try to read a VBRI tag from the provided MPEG frame.
-fn try_read_vbri_tag(buf: &[u8], header: &FrameHeader) -> Option<VbriTag> {
+async fn try_read_vbri_tag(buf: &[u8], header: &FrameHeader) -> Option<VbriTag> {
     // The VBRI header is a completely optional piece of information. Therefore, flatten an error
     // reading the tag into a None.
-    try_read_vbri_tag_inner(buf, header).ok().flatten()
+    try_read_vbri_tag_inner(buf, header).await.ok().flatten()
 }
 
-fn try_read_vbri_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<VbriTag>> {
+async fn try_read_vbri_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<VbriTag>> {
     // Do a quick check that this is a VBRI tag.
     if !is_maybe_vbri_tag(buf, header) {
         return Ok(None);
@@ -972,28 +971,28 @@ fn try_read_vbri_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Option<Vb
     let mut reader = BufReader::new(buf);
 
     // The VBRI tag is always 32 bytes after the header.
-    reader.ignore_bytes(MPEG_HEADER_LEN as u64 + 32)?;
+    reader.ignore_bytes(MPEG_HEADER_LEN as u64 + 32).await?;
 
     // Check for the VBRI signature.
-    let id = reader.read_quad_bytes()?;
+    let id = reader.read_quad_bytes().await?;
 
     if id != VBRI_TAG_ID {
         return Ok(None);
     }
 
     // The version is always 1.
-    let version = reader.read_be_u16()?;
+    let version = reader.read_be_u16().await?;
 
     if version != 1 {
         return Ok(None);
     }
 
     // Delay is a 2-byte big-endiann floating point value?
-    let _delay = reader.read_be_u16()?;
-    let _quality = reader.read_be_u16()?;
+    let _delay = reader.read_be_u16().await?;
+    let _quality = reader.read_be_u16().await?;
 
-    let num_bytes = reader.read_be_u32()?;
-    let num_mpeg_frames = reader.read_be_u32()?;
+    let num_bytes = reader.read_be_u32().await?;
+    let num_mpeg_frames = reader.read_be_u32().await?;
 
     Ok(Some(VbriTag { num_bytes, num_mpeg_frames }))
 }

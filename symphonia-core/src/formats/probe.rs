@@ -8,12 +8,17 @@
 //! The `probe` module provides methods and traits to support auto-detection of media formats from
 //! arbitrary media streams.
 
+use core::pin::Pin;
+
 use alloc::{borrow::ToOwned, boxed::Box, string::String, vec::Vec};
+use async_trait::async_trait;
 
 use crate::common::Tier;
 use crate::errors::{Error, Result, unsupported_error};
 use crate::formats::{FormatInfo, FormatOptions, FormatReader};
-use crate::io::{MediaSource, MediaSourceStream, ReadBytes, ScopedStream, SeekBuffered, Seek, SeekFrom};
+use crate::io::{
+    MediaSource, MediaSourceStream, ReadBytes, ScopedStream, Seek, SeekBuffered, SeekFrom,
+};
 use crate::meta::{MetadataInfo, MetadataOptions, MetadataReader, MetadataSideData};
 
 use log::{debug, error, trace, warn};
@@ -139,8 +144,12 @@ pub struct ProbeMetadataData {
 }
 
 /// `FormatReader` probe factory function. Creates a boxed `FormatReader`.
-pub type FormatFactoryFn =
-    for<'s> fn(MediaSourceStream<'s>, FormatOptions) -> Result<Box<dyn FormatReader + 's>>;
+pub type FormatFactoryFn = for<'s> fn(
+    MediaSourceStream<'s>,
+    FormatOptions,
+) -> Pin<
+    Box<dyn Future<Output = Result<Box<dyn FormatReader + 's>>> + Send + 's>,
+>;
 
 /// `MetadataReader` probe factory function. Creates a boxed `MetadataReader`.
 pub type MetadataFactoryFn =
@@ -167,7 +176,9 @@ enum ProbeMatch {
 }
 
 /// A function pointer to the score function of the registered probeable.
-type ScoreFn = fn(ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score>;
+type ScoreFn = for<'a, 'b> fn(
+    src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>>;
 
 /// Private/internal generalized representation of a probeable format or metadata reader.
 #[derive(Copy, Clone)]
@@ -218,13 +229,16 @@ pub trait Scoreable {
     /// If an error is returned, errors other than [`Error::IoError`] (excluding the unexpected EOF
     /// kind) are treated as if [`Score::Unsupported`] was returned. All other IO errors abort
     /// the probe operation.
-    fn score(src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score>;
+    fn score<'a, 'b>(
+        src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>>;
 }
 
 /// To support probing, a `FormatReader` must implement the `ProbeableFormat` trait.
+#[async_trait]
 pub trait ProbeableFormat<'s>: FormatReader + Scoreable {
     /// Create an instance of the format reader.
-    fn try_probe_new(
+    async fn try_probe_new(
         mss: MediaSourceStream<'s>,
         opts: FormatOptions,
     ) -> Result<Box<dyn FormatReader + 's>>
@@ -334,7 +348,7 @@ impl Probe {
     /// Register the parameterized format reader at the standard tier.
     pub fn register_format<P>(&mut self)
     where
-        for<'a> P: ProbeableFormat<'a>,
+        for<'a> P: ProbeableFormat<'a> + 'static,
     {
         self.register_format_at_tier::<P>(Tier::Standard);
     }
@@ -350,7 +364,7 @@ impl Probe {
     /// Register the parameterized format reader at a specific tier.
     pub fn register_format_at_tier<P>(&mut self, tier: Tier)
     where
-        for<'a> P: ProbeableFormat<'a>,
+        for<'a> P: ProbeableFormat<'a> + 'static,
     {
         for data in P::probe_data() {
             // Build a generic format probe candidate.
@@ -455,7 +469,7 @@ impl Probe {
                 // If a container format is found, return an instance to it's reader.
                 ProbeMatch::Format { factory, .. } => {
                     // Instantiate the format reader.
-                    return factory(mss, fmt_opts);
+                    return factory(mss, fmt_opts).await;
                 }
                 // If metadata was found, instantiate the metadata reader, read the metadata, and
                 // push it onto the metadata log.
@@ -570,8 +584,7 @@ impl Probe {
 
         if count < self.opts.max_probe_depth {
             error!("probe reached EOF at {count} bytes");
-        }
-        else {
+        } else {
             // Could not find any marker within the probe limit.
             error!("reached probe limit of {} bytes", self.opts.max_probe_depth);
         }
@@ -596,21 +609,21 @@ impl Probe {
 
         // Try to find a descriptor in the preferred tier.
         if let Some(inst) =
-            find_reader(mss, &self.preferred, win, self.opts.max_score_depth, is_trailing)?
+            find_reader(mss, &self.preferred, win, self.opts.max_score_depth, is_trailing).await?
         {
             return Ok(Some(inst));
         }
 
         // Try to find a descriptor in the standard tier.
         if let Some(inst) =
-            find_reader(mss, &self.standard, win, self.opts.max_score_depth, is_trailing)?
+            find_reader(mss, &self.standard, win, self.opts.max_score_depth, is_trailing).await?
         {
             return Ok(Some(inst));
         }
 
         // Try to find a descriptor in the fallback tier.
         if let Some(inst) =
-            find_reader(mss, &self.fallback, win, self.opts.max_score_depth, is_trailing)?
+            find_reader(mss, &self.fallback, win, self.opts.max_score_depth, is_trailing).await?
         {
             return Ok(Some(inst));
         }
@@ -651,8 +664,8 @@ fn read_and_append_metadata<'s>(
     Ok(reader.into_inner())
 }
 
-fn find_reader(
-    mss: &mut MediaSourceStream,
+async fn find_reader(
+    mss: &mut MediaSourceStream<'_>,
     descs: &[GenericProbeMatch],
     win: [u8; 16],
     max_depth: u16,
@@ -677,7 +690,7 @@ fn find_reader(
         // If a match is found, then score using the descriptor's score function.
         if should_score {
             // If supported, return the instantiate.
-            if let Score::Supported(score) = score(desc, mss, max_depth)? {
+            if let Score::Supported(score) = score(desc, mss, max_depth).await? {
                 match &desc.specific {
                     ProbeMatch::Format { info, .. } => {
                         debug!("selected format reader '{}' with score {}", info.short_name, score)
@@ -707,16 +720,16 @@ fn find_reader(
     Ok(None)
 }
 
-fn score(
+async fn score(
     candidate: &GenericProbeMatch,
-    mss: &mut MediaSourceStream,
+    mss: &mut MediaSourceStream<'_>,
     max_depth: u16,
 ) -> Result<Score> {
     // Save the initial position to rewind back to after scoring is complete.
     let init_pos = mss.pos();
 
     // Perform the scoring operation.
-    let result = match (candidate.score)(ScopedStream::new(mss, u64::from(max_depth))) {
+    let result = match (candidate.score)(ScopedStream::new(mss, u64::from(max_depth))).await {
         Err(Error::IoError(err)) if err.is_eof() => {
             // IO errors that are not an unexpected end-of-file (or out-of-bounds) error, abort the
             // entire probe operation.

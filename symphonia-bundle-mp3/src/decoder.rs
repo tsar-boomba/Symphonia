@@ -16,7 +16,7 @@ use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioC
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::FiniteStream;
 use symphonia_core::packet::Packet;
-use symphonia_core::support_audio_codec;
+use symphonia_core::{async_trait, support_audio_codec};
 
 #[cfg(feature = "mp1")]
 use symphonia_core::codecs::audio::well_known::CODEC_ID_MP1;
@@ -83,10 +83,10 @@ impl MpaDecoder {
         Ok(MpaDecoder { params: params.clone(), state, buf: Default::default() })
     }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+    async fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         let mut reader = packet.as_buf_reader();
 
-        let header = header::read_frame_header(&mut reader)?;
+        let header = header::read_frame_header(&mut reader).await?;
 
         // The packet should be the size stated in the header.
         if header.frame_size != reader.bytes_available() as usize {
@@ -114,15 +114,15 @@ impl MpaDecoder {
         match &mut self.state {
             #[cfg(feature = "mp1")]
             State::Layer1(layer) if header.layer == MpegLayer::Layer1 => {
-                layer.decode(&mut reader, &header, &mut self.buf)?;
+                layer.decode(&mut reader, &header, &mut self.buf).await?;
             }
             #[cfg(feature = "mp2")]
             State::Layer2(layer) if header.layer == MpegLayer::Layer2 => {
-                layer.decode(&mut reader, &header, &mut self.buf)?;
+                layer.decode(&mut reader, &header, &mut self.buf).await?;
             }
             #[cfg(feature = "mp3")]
             State::Layer3(layer) if header.layer == MpegLayer::Layer3 => {
-                layer.decode(&mut reader, &header, &mut self.buf)?;
+                layer.decode(&mut reader, &header, &mut self.buf).await?;
             }
             _ => return decode_error("mpa: invalid mpeg audio layer"),
         }
@@ -134,6 +134,7 @@ impl MpaDecoder {
     }
 }
 
+#[async_trait]
 impl AudioDecoder for MpaDecoder {
     fn codec_info(&self) -> &CodecInfo {
         // Return the codec that's in-use.
@@ -149,8 +150,8 @@ impl AudioDecoder for MpaDecoder {
         self.state = State::new(self.params.codec);
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
-        if let Err(e) = self.decode_inner(packet) {
+    async fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+        if let Err(e) = self.decode_inner(packet).await {
             self.buf.clear();
             Err(e)
         }

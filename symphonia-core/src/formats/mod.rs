@@ -9,6 +9,7 @@
 //! demuxers.
 
 use alloc::{boxed::Box, string::String, string::ToString};
+use async_trait::async_trait;
 use core::fmt;
 
 use crate::codecs::{CodecParameters, audio, subtitle, video};
@@ -383,7 +384,8 @@ pub struct VendorDataAttachment {
 /// `FormatReader` provides an Iterator-like interface over packets for easy consumption and
 /// filtering. Seeking will invalidate the state of any `Decoder` processing packets from the
 /// `FormatReader` and should be reset after a successful seek operation.
-pub trait FormatReader: Send + Sync {
+#[async_trait]
+pub trait FormatReader: Send {
     /// Get basic information about the container format.
     fn format_info(&self) -> &FormatInfo;
 
@@ -420,7 +422,7 @@ pub trait FormatReader: Send + Sync {
     /// `SeekMode` is used, then the seek position may be after the requested position. Coarse
     /// seeking is an optional performance enhancement a reader may implement, therefore, a coarse
     /// seek may sometimes be an accurate seek.
-    fn seek(&mut self, mode: SeekMode, to: SeekTo) -> Result<SeekedTo>;
+    async fn seek(&mut self, mode: SeekMode, to: SeekTo) -> Result<SeekedTo>;
 
     /// Gets a list of tracks in the container.
     fn tracks(&self) -> &[Track];
@@ -475,7 +477,7 @@ pub trait FormatReader: Send + Sync {
     ///
     /// If `Err(ResetRequired)` is returned, then the track list must be re-examined and all
     /// `Decoder`s re-created. All other errors are unrecoverable.
-    fn next_packet(&mut self) -> Result<Option<Packet>>;
+    async fn next_packet(&mut self) -> Result<Option<Packet>>;
 
     /// Consumes the `FormatReader` and returns the underlying media source stream
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
