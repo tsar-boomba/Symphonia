@@ -7,6 +7,9 @@
 
 use core::cmp::min;
 
+use alloc::boxed::Box;
+use async_trait::async_trait;
+
 use crate::io::ReadBytes;
 use crate::util::bits::*;
 
@@ -460,11 +463,15 @@ pub mod vlc {
 }
 
 mod private {
+    use alloc::boxed::Box;
+    use async_trait::async_trait;
+
     use crate::io;
 
+    #[async_trait]
     pub trait FetchBitsLtr {
         /// Discard any remaining bits in the source and fetch 1 or more new bits.
-        fn fetch_bits(&mut self) -> io::Result<()>;
+        async fn fetch_bits(&mut self) -> io::Result<()>;
 
         /// Fetch 0 or more new bits, and append them after the remaining bits.
         fn fetch_bits_partial(&mut self) -> io::Result<()>;
@@ -479,9 +486,10 @@ mod private {
         fn consume_bits(&mut self, num: u32);
     }
 
+    #[async_trait]
     pub trait FetchBitsRtl {
         /// Discard any remaining bits in the source and fetch 1 or more new bits.
-        fn fetch_bits(&mut self) -> io::Result<()>;
+        async fn fetch_bits(&mut self) -> io::Result<()>;
 
         /// Fetch 0 or more new bits, and append them after the remaining bits.
         fn fetch_bits_partial(&mut self) -> io::Result<()>;
@@ -504,6 +512,7 @@ pub trait FiniteBitStream {
 }
 
 /// `ReadBitsLtr` reads bits from most-significant to least-significant.
+#[async_trait]
 pub trait ReadBitsLtr: private::FetchBitsLtr {
     /// Discards any saved bits and resets the `BitStream` to prepare it for a byte-aligned read.
     #[inline(always)]
@@ -514,7 +523,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Ignores the specified number of bits from the stream or returns an error.
     #[inline(always)]
-    fn ignore_bits(&mut self, mut num_bits: u32) -> super::Result<()> {
+    async fn ignore_bits(&mut self, mut num_bits: u32) -> super::Result<()> {
         if num_bits <= self.num_bits_left() {
             self.consume_bits(num_bits);
         }
@@ -522,7 +531,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
             // Consume whole bit caches directly.
             while num_bits > self.num_bits_left() {
                 num_bits -= self.num_bits_left();
-                self.fetch_bits()?;
+                self.fetch_bits().await?;
             }
 
             if num_bits > 0 {
@@ -537,15 +546,15 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Ignores one bit from the stream or returns an error.
     #[inline(always)]
-    fn ignore_bit(&mut self) -> super::Result<()> {
-        self.ignore_bits(1)
+    async fn ignore_bit(&mut self) -> super::Result<()> {
+        self.ignore_bits(1).await
     }
 
     /// Read a single bit as a boolean value or returns an error.
     #[inline(always)]
-    fn read_bool(&mut self) -> super::Result<bool> {
+    async fn read_bool(&mut self) -> super::Result<bool> {
         if self.num_bits_left() < 1 {
-            self.fetch_bits()?;
+            self.fetch_bits().await?;
         }
 
         let bit = self.get_bits() & (1 << 63) != 0;
@@ -556,9 +565,9 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Reads and returns a single bit or returns an error.
     #[inline(always)]
-    fn read_bit(&mut self) -> super::Result<u32> {
+    async fn read_bit(&mut self) -> super::Result<u32> {
         if self.num_bits_left() < 1 {
-            self.fetch_bits()?;
+            self.fetch_bits().await?;
         }
 
         let bit = self.get_bits() >> 63;
@@ -570,7 +579,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Reads and returns up to 32-bits or returns an error.
     #[inline(always)]
-    fn read_bits_leq32(&mut self, mut bit_width: u32) -> super::Result<u32> {
+    async fn read_bits_leq32(&mut self, mut bit_width: u32) -> super::Result<u32> {
         debug_assert!(bit_width <= u32::BITS);
 
         // Shift in two 32-bit operations instead of a single 64-bit operation to avoid panicing
@@ -581,7 +590,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
         while bit_width > self.num_bits_left() {
             bit_width -= self.num_bits_left();
 
-            self.fetch_bits()?;
+            self.fetch_bits().await?;
 
             // Unlike the first shift, bit_width is always > 0 here so this operation will never
             // shift by > 63 bits.
@@ -596,14 +605,14 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
     /// Reads up to 32-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    fn read_bits_leq32_signed(&mut self, bit_width: u32) -> super::Result<i32> {
-        let value = self.read_bits_leq32(bit_width)?;
+    async fn read_bits_leq32_signed(&mut self, bit_width: u32) -> super::Result<i32> {
+        let value = self.read_bits_leq32(bit_width).await?;
         Ok(sign_extend_leq32_to_i32(value, bit_width))
     }
 
     /// Reads and returns up to 64-bits or returns an error.
     #[inline(always)]
-    fn read_bits_leq64(&mut self, mut bit_width: u32) -> super::Result<u64> {
+    async fn read_bits_leq64(&mut self, mut bit_width: u32) -> super::Result<u64> {
         debug_assert!(bit_width <= u64::BITS);
 
         // Hard-code the bit_width == 0 case as it's not possible to handle both the bit_width == 0
@@ -621,7 +630,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
             while bit_width > self.num_bits_left() {
                 bit_width -= self.num_bits_left();
 
-                self.fetch_bits()?;
+                self.fetch_bits().await?;
 
                 bits |= self.get_bits() >> (u64::BITS - bit_width);
             }
@@ -637,14 +646,14 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
     /// Reads up to 64-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    fn read_bits_leq64_signed(&mut self, bit_width: u32) -> super::Result<i64> {
-        let value = self.read_bits_leq64(bit_width)?;
+    async fn read_bits_leq64_signed(&mut self, bit_width: u32) -> super::Result<i64> {
+        let value = self.read_bits_leq64(bit_width).await?;
         Ok(sign_extend_leq64_to_i64(value, bit_width))
     }
 
     /// Reads and returns a unary zeros encoded integer or an error.
     #[inline(always)]
-    fn read_unary_zeros(&mut self) -> super::Result<u32> {
+    async fn read_unary_zeros(&mut self) -> super::Result<u32> {
         let mut num = 0;
 
         loop {
@@ -655,7 +664,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
                 // If the number of zeros exceeds the number of bits left then all the remaining
                 // bits were 0.
                 num += self.num_bits_left();
-                self.fetch_bits()?;
+                self.fetch_bits().await?;
             }
             else {
                 // Otherwise, a 1 bit was encountered after `n_zeros` 0 bits.
@@ -677,7 +686,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Reads and returns a unary zeros encoded integer that is capped to a maximum value.
     #[inline(always)]
-    fn read_unary_zeros_capped(&mut self, mut limit: u32) -> super::Result<u32> {
+    async fn read_unary_zeros_capped(&mut self, mut limit: u32) -> super::Result<u32> {
         let mut num = 0;
 
         loop {
@@ -706,7 +715,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
                 }
             }
 
-            self.fetch_bits()?;
+            self.fetch_bits().await?;
         }
 
         Ok(num)
@@ -714,7 +723,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Reads and returns a unary ones encoded integer or an error.
     #[inline(always)]
-    fn read_unary_ones(&mut self) -> super::Result<u32> {
+    async fn read_unary_ones(&mut self) -> super::Result<u32> {
         // Note: This algorithm is identical to read_unary_zeros except flipped for 1s.
         let mut num = 0;
 
@@ -723,7 +732,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
             if num_ones >= self.num_bits_left() {
                 num += self.num_bits_left();
-                self.fetch_bits()?;
+                self.fetch_bits().await?;
             }
             else {
                 num += num_ones;
@@ -740,7 +749,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
 
     /// Reads and returns a unary ones encoded integer that is capped to a maximum value.
     #[inline(always)]
-    fn read_unary_ones_capped(&mut self, mut limit: u32) -> super::Result<u32> {
+    async fn read_unary_ones_capped(&mut self, mut limit: u32) -> super::Result<u32> {
         // Note: This algorithm is identical to read_unary_zeros_capped except flipped for 1s.
         let mut num = 0;
 
@@ -764,7 +773,7 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
                 }
             }
 
-            self.fetch_bits()?;
+            self.fetch_bits().await?;
         }
 
         Ok(num)
@@ -831,10 +840,11 @@ impl<'a, B: ReadBytes> BitStreamLtr<'a, B> {
     }
 }
 
+#[async_trait]
 impl<B: ReadBytes> private::FetchBitsLtr for BitStreamLtr<'_, B> {
     #[inline(always)]
-    fn fetch_bits(&mut self) -> super::Result<()> {
-        self.bits = u64::from(self.reader.read_u8()?) << 56;
+    async fn fetch_bits(&mut self) -> super::Result<()> {
+        self.bits = u64::from(self.reader.read_u8().await?) << 56;
         self.n_bits_left = u8::BITS;
         Ok(())
     }
@@ -880,6 +890,7 @@ impl<'a> BitReaderLtr<'a> {
     }
 }
 
+#[async_trait]
 impl private::FetchBitsLtr for BitReaderLtr<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> super::Result<()> {
@@ -898,7 +909,7 @@ impl private::FetchBitsLtr for BitReaderLtr<'_> {
         Ok(())
     }
 
-    fn fetch_bits(&mut self) -> super::Result<()> {
+    async fn fetch_bits(&mut self) -> super::Result<()> {
         let read_len = min(self.buf.len(), core::mem::size_of::<u64>());
 
         if read_len == 0 {
@@ -953,7 +964,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Ignores the specified number of bits from the stream or returns an error.
     #[inline(always)]
-    fn ignore_bits(&mut self, mut num_bits: u32) -> super::Result<()> {
+    async fn ignore_bits(&mut self, mut num_bits: u32) -> super::Result<()> {
         if num_bits <= self.num_bits_left() {
             self.consume_bits(num_bits);
         }
@@ -961,7 +972,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
             // Consume whole bit caches directly.
             while num_bits > self.num_bits_left() {
                 num_bits -= self.num_bits_left();
-                self.fetch_bits()?;
+                self.fetch_bits().await?;
             }
 
             if num_bits > 0 {
@@ -976,15 +987,15 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Ignores one bit from the stream or returns an error.
     #[inline(always)]
-    fn ignore_bit(&mut self) -> super::Result<()> {
-        self.ignore_bits(1)
+    async fn ignore_bit(&mut self) -> super::Result<()> {
+        self.ignore_bits(1).await
     }
 
     /// Read a single bit as a boolean value or returns an error.
     #[inline(always)]
-    fn read_bool(&mut self) -> super::Result<bool> {
+    async fn read_bool(&mut self) -> super::Result<bool> {
         if self.num_bits_left() < 1 {
-            self.fetch_bits()?;
+            self.fetch_bits().await?;
         }
 
         let bit = (self.get_bits() & 1) == 1;
@@ -995,9 +1006,9 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Reads and returns a single bit or returns an error.
     #[inline(always)]
-    fn read_bit(&mut self) -> super::Result<u32> {
+    async fn read_bit(&mut self) -> super::Result<u32> {
         if self.num_bits_left() < 1 {
-            self.fetch_bits()?;
+            self.fetch_bits().await?;
         }
 
         let bit = self.get_bits() & 1;
@@ -1009,7 +1020,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Reads and returns up to 32-bits or returns an error.
     #[inline(always)]
-    fn read_bits_leq32(&mut self, bit_width: u32) -> super::Result<u32> {
+    async fn read_bits_leq32(&mut self, bit_width: u32) -> super::Result<u32> {
         debug_assert!(bit_width <= u32::BITS);
 
         let mut bits = self.get_bits();
@@ -1018,7 +1029,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
         while bits_needed > self.num_bits_left() {
             bits_needed -= self.num_bits_left();
 
-            self.fetch_bits()?;
+            self.fetch_bits().await?;
 
             bits |= self.get_bits() << (bit_width - bits_needed);
         }
@@ -1034,14 +1045,14 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
     /// Reads up to 32-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    fn read_bits_leq32_signed(&mut self, bit_width: u32) -> super::Result<i32> {
-        let value = self.read_bits_leq32(bit_width)?;
+    async fn read_bits_leq32_signed(&mut self, bit_width: u32) -> super::Result<i32> {
+        let value = self.read_bits_leq32(bit_width).await?;
         Ok(sign_extend_leq32_to_i32(value, bit_width))
     }
 
     /// Reads and returns up to 64-bits or returns an error.
     #[inline(always)]
-    fn read_bits_leq64(&mut self, bit_width: u32) -> super::Result<u64> {
+    async fn read_bits_leq64(&mut self, bit_width: u32) -> super::Result<u64> {
         debug_assert!(bit_width <= u64::BITS);
 
         // Hard-code the bit_width == 0 case as it's not possible to handle both the bit_width == 0
@@ -1058,7 +1069,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
             while bits_needed > self.num_bits_left() {
                 bits_needed -= self.num_bits_left();
 
-                self.fetch_bits()?;
+                self.fetch_bits().await?;
 
                 // Since bits_needed will always be > 0, this will never shift by > 63 bits if
                 // bit_width == 64 and therefore will never panic.
@@ -1079,14 +1090,14 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
     /// Reads up to 64-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    fn read_bits_leq64_signed(&mut self, bit_width: u32) -> super::Result<i64> {
-        let value = self.read_bits_leq64(bit_width)?;
+    async fn read_bits_leq64_signed(&mut self, bit_width: u32) -> super::Result<i64> {
+        let value = self.read_bits_leq64(bit_width).await?;
         Ok(sign_extend_leq64_to_i64(value, bit_width))
     }
 
     /// Reads and returns a unary zeros encoded integer or an error.
     #[inline(always)]
-    fn read_unary_zeros(&mut self) -> super::Result<u32> {
+    async fn read_unary_zeros(&mut self) -> super::Result<u32> {
         let mut num = 0;
 
         loop {
@@ -1097,7 +1108,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
                 // If the number of zeros exceeds the number of bits left then all the remaining
                 // bits were 0.
                 num += self.num_bits_left();
-                self.fetch_bits()?;
+                self.fetch_bits().await?;
             }
             else {
                 // Otherwise, a 1 bit was encountered after `n_zeros` 0 bits.
@@ -1119,7 +1130,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Reads and returns a unary zeros encoded integer that is capped to a maximum value.
     #[inline(always)]
-    fn read_unary_zeros_capped(&mut self, mut limit: u32) -> super::Result<u32> {
+    async fn read_unary_zeros_capped(&mut self, mut limit: u32) -> super::Result<u32> {
         let mut num = 0;
 
         loop {
@@ -1148,7 +1159,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
                 }
             }
 
-            self.fetch_bits()?;
+            self.fetch_bits().await?;
         }
 
         Ok(num)
@@ -1156,7 +1167,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Reads and returns a unary ones encoded integer or an error.
     #[inline(always)]
-    fn read_unary_ones(&mut self) -> super::Result<u32> {
+    async fn read_unary_ones(&mut self) -> super::Result<u32> {
         // Note: This algorithm is identical to read_unary_zeros except flipped for 1s.
         let mut num = 0;
 
@@ -1165,7 +1176,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
             if num_ones >= self.num_bits_left() {
                 num += self.num_bits_left();
-                self.fetch_bits()?;
+                self.fetch_bits().await?;
             }
             else {
                 num += num_ones;
@@ -1182,7 +1193,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Reads and returns a unary ones encoded integer or an error.
     #[inline(always)]
-    fn read_unary_ones_capped(&mut self, mut limit: u32) -> super::Result<u32> {
+    async fn read_unary_ones_capped(&mut self, mut limit: u32) -> super::Result<u32> {
         // Note: This algorithm is identical to read_unary_zeros_capped except flipped for 1s.
         let mut num = 0;
 
@@ -1206,7 +1217,7 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
                 }
             }
 
-            self.fetch_bits()?;
+            self.fetch_bits().await?;
         }
 
         Ok(num)
@@ -1271,10 +1282,11 @@ impl<'a, B: ReadBytes> BitStreamRtl<'a, B> {
     }
 }
 
+#[async_trait]
 impl<B: ReadBytes> private::FetchBitsRtl for BitStreamRtl<'_, B> {
     #[inline(always)]
-    fn fetch_bits(&mut self) -> super::Result<()> {
-        self.bits = u64::from(self.reader.read_u8()?);
+    async fn fetch_bits(&mut self) -> super::Result<()> {
+        self.bits = u64::from(self.reader.read_u8().await?);
         self.n_bits_left = u8::BITS;
         Ok(())
     }
@@ -1320,6 +1332,7 @@ impl<'a> BitReaderRtl<'a> {
     }
 }
 
+#[async_trait]
 impl private::FetchBitsRtl for BitReaderRtl<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> super::Result<()> {
@@ -1338,7 +1351,7 @@ impl private::FetchBitsRtl for BitReaderRtl<'_> {
         Ok(())
     }
 
-    fn fetch_bits(&mut self) -> super::Result<()> {
+    async fn fetch_bits(&mut self) -> super::Result<()> {
         let read_len = min(self.buf.len(), core::mem::size_of::<u64>());
 
         if read_len == 0 {
@@ -1391,52 +1404,52 @@ mod tests {
     use super::{BitReaderLtr, ReadBitsLtr};
     use super::{BitReaderRtl, ReadBitsRtl};
 
-    #[test]
+    #[futures_test::test]
     #[allow(clippy::bool_assert_comparison)]
-    fn verify_bitstreamltr_ignore_bits() {
+    async fn verify_bitstreamltr_ignore_bits() {
         let mut bs = BitReaderLtr::new(&[
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
             0xc0, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0a, //
         ]);
 
-        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
 
-        bs.ignore_bits(128).unwrap();
+        bs.ignore_bits(128).await.unwrap();
 
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
 
-        bs.ignore_bits(7).unwrap();
+        bs.ignore_bits(7).await.unwrap();
 
-        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
 
-        bs.ignore_bits(19).unwrap();
+        bs.ignore_bits(19).await.unwrap();
 
-        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
 
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
 
-        bs.ignore_bits(24).unwrap();
+        bs.ignore_bits(24).await.unwrap();
 
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
 
         // Lower limit test.
         let mut bs = BitReaderLtr::new(&[0x00]);
 
-        assert!(bs.ignore_bits(0).is_ok());
+        assert!(bs.ignore_bits(0).await.is_ok());
 
         let mut bs = BitReaderLtr::new(&[]);
 
-        assert!(bs.ignore_bits(0).is_ok());
-        assert!(bs.ignore_bits(1).is_err());
+        assert!(bs.ignore_bits(0).await.is_ok());
+        assert!(bs.ignore_bits(1).await.is_err());
 
         // Upper limit test.
         let mut bs = BitReaderLtr::new(&[
@@ -1446,159 +1459,159 @@ mod tests {
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
         ]);
 
-        assert!(bs.ignore_bits(64).is_ok());
-        assert!(bs.ignore_bits(64).is_ok());
-        assert!(bs.ignore_bits(32).is_ok());
-        assert!(bs.ignore_bits(32).is_ok());
-        assert!(bs.ignore_bits(64).is_ok());
+        assert!(bs.ignore_bits(64).await.is_ok());
+        assert!(bs.ignore_bits(64).await.is_ok());
+        assert!(bs.ignore_bits(32).await.is_ok());
+        assert!(bs.ignore_bits(32).await.is_ok());
+        assert!(bs.ignore_bits(64).await.is_ok());
     }
 
-    #[test]
+    #[futures_test::test]
     #[allow(clippy::bool_assert_comparison)]
-    fn verify_bitstreamltr_read_bool() {
+    async fn verify_bitstreamltr_read_bool() {
         // General tests.
         let mut bs = BitReaderLtr::new(&[0b1010_1010]);
 
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
 
         // Error test.
         let mut bs = BitReaderLtr::new(&[]);
 
-        assert!(bs.read_bool().is_err());
+        assert!(bs.read_bool().await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamltr_read_bit() {
+    #[futures_test::test]
+    async fn verify_bitstreamltr_read_bit() {
         // General tests.
         let mut bs = BitReaderLtr::new(&[0b1010_1010]);
 
-        assert_eq!(bs.read_bit().unwrap(), 1);
-        assert_eq!(bs.read_bit().unwrap(), 0);
-        assert_eq!(bs.read_bit().unwrap(), 1);
-        assert_eq!(bs.read_bit().unwrap(), 0);
-        assert_eq!(bs.read_bit().unwrap(), 1);
-        assert_eq!(bs.read_bit().unwrap(), 0);
-        assert_eq!(bs.read_bit().unwrap(), 1);
-        assert_eq!(bs.read_bit().unwrap(), 0);
+        assert_eq!(bs.read_bit().await.unwrap(), 1);
+        assert_eq!(bs.read_bit().await.unwrap(), 0);
+        assert_eq!(bs.read_bit().await.unwrap(), 1);
+        assert_eq!(bs.read_bit().await.unwrap(), 0);
+        assert_eq!(bs.read_bit().await.unwrap(), 1);
+        assert_eq!(bs.read_bit().await.unwrap(), 0);
+        assert_eq!(bs.read_bit().await.unwrap(), 1);
+        assert_eq!(bs.read_bit().await.unwrap(), 0);
 
         // Error test.
         let mut bs = BitReaderLtr::new(&[]);
 
-        assert!(bs.read_bool().is_err());
+        assert!(bs.read_bool().await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamltr_read_bits_leq32() {
+    #[futures_test::test]
+    async fn verify_bitstreamltr_read_bits_leq32() {
         // General tests.
         let mut bs = BitReaderLtr::new(&[0b1010_0101, 0b0111_1110, 0b1101_0011]);
 
-        assert_eq!(bs.read_bits_leq32(4).unwrap(), 0b0000_0000_0000_1010);
-        assert_eq!(bs.read_bits_leq32(4).unwrap(), 0b0000_0000_0000_0101);
-        assert_eq!(bs.read_bits_leq32(13).unwrap(), 0b0000_1111_1101_1010);
-        assert_eq!(bs.read_bits_leq32(3).unwrap(), 0b0000_0000_0000_0011);
+        assert_eq!(bs.read_bits_leq32(4).await.unwrap(), 0b0000_0000_0000_1010);
+        assert_eq!(bs.read_bits_leq32(4).await.unwrap(), 0b0000_0000_0000_0101);
+        assert_eq!(bs.read_bits_leq32(13).await.unwrap(), 0b0000_1111_1101_1010);
+        assert_eq!(bs.read_bits_leq32(3).await.unwrap(), 0b0000_0000_0000_0011);
 
         // Lower limit test.
         let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff]);
 
-        assert_eq!(bs.read_bits_leq32(0).unwrap(), 0);
+        assert_eq!(bs.read_bits_leq32(0).await.unwrap(), 0);
 
         // Upper limit test.
         let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0x01]);
 
-        assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
-        assert_eq!(bs.read_bits_leq32(8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq32(32).await.unwrap(), u32::MAX);
+        assert_eq!(bs.read_bits_leq32(8).await.unwrap(), 0x01);
 
         // Cache fetch test.
         let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]);
 
-        assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
-        assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
-        assert_eq!(bs.read_bits_leq32(8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq32(32).await.unwrap(), u32::MAX);
+        assert_eq!(bs.read_bits_leq32(32).await.unwrap(), u32::MAX);
+        assert_eq!(bs.read_bits_leq32(8).await.unwrap(), 0x01);
 
         // Test error cases.
         let mut bs = BitReaderLtr::new(&[0xff]);
 
-        assert!(bs.read_bits_leq32(9).is_err());
+        assert!(bs.read_bits_leq32(9).await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamltr_read_bits_leq64() {
+    #[futures_test::test]
+    async fn verify_bitstreamltr_read_bits_leq64() {
         // General tests.
         let mut bs = BitReaderLtr::new(&[
             0x99, 0xaa, 0x55, 0xff, 0xff, 0x55, 0xaa, 0x99, //
             0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, //
         ]);
 
-        assert_eq!(bs.read_bits_leq64(40).unwrap(), 0x99aa55ffff);
-        assert_eq!(bs.read_bits_leq64(4).unwrap(), 0x05);
-        assert_eq!(bs.read_bits_leq64(4).unwrap(), 0x05);
-        assert_eq!(bs.read_bits_leq64(16).unwrap(), 0xaa99);
-        assert_eq!(bs.read_bits_leq64(64).unwrap(), 0x1122334455667788);
+        assert_eq!(bs.read_bits_leq64(40).await.unwrap(), 0x99aa55ffff);
+        assert_eq!(bs.read_bits_leq64(4).await.unwrap(), 0x05);
+        assert_eq!(bs.read_bits_leq64(4).await.unwrap(), 0x05);
+        assert_eq!(bs.read_bits_leq64(16).await.unwrap(), 0xaa99);
+        assert_eq!(bs.read_bits_leq64(64).await.unwrap(), 0x1122334455667788);
 
         // Lower limit test.
         let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
 
-        assert_eq!(bs.read_bits_leq64(0).unwrap(), 0);
+        assert_eq!(bs.read_bits_leq64(0).await.unwrap(), 0);
 
         // Upper limit test.
         let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]);
 
-        assert_eq!(bs.read_bits_leq64(64).unwrap(), u64::MAX);
-        assert_eq!(bs.read_bits_leq64(8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq64(64).await.unwrap(), u64::MAX);
+        assert_eq!(bs.read_bits_leq64(8).await.unwrap(), 0x01);
 
         // Test error cases.
         let mut bs = BitReaderLtr::new(&[0xff]);
 
-        assert!(bs.read_bits_leq64(9).is_err());
+        assert!(bs.read_bits_leq64(9).await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamltr_read_unary_zeros() {
+    #[futures_test::test]
+    async fn verify_bitstreamltr_read_unary_zeros() {
         // General tests
         let mut bs =
             BitReaderLtr::new(&[0b0000_0001, 0b0001_0000, 0b0000_0000, 0b1000_0000, 0b1111_1011]);
 
-        assert_eq!(bs.read_unary_zeros().unwrap(), 7);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 3);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 12);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 7);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 1);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 3);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 12);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 1);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
 
         // Upper limit test
         let mut bs = BitReaderLtr::new(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
 
-        assert_eq!(bs.read_unary_zeros().unwrap(), 63);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 63);
 
         // Lower limit test
         let mut bs = BitReaderLtr::new(&[0x80]);
 
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
 
         // Error test.
         let mut bs = BitReaderLtr::new(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
-        assert!(bs.read_unary_zeros().is_err());
+        assert!(bs.read_unary_zeros().await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamltr_read_unary_zeros_capped() {
+    #[futures_test::test]
+    async fn verify_bitstreamltr_read_unary_zeros_capped() {
         // Basic test
         let mut bs = BitReaderLtr::new(&[0b0000_0001, 0b0000_0001]);
 
-        assert_eq!(bs.read_unary_zeros_capped(8).unwrap(), 7);
-        assert_eq!(bs.read_unary_zeros_capped(4).unwrap(), 4);
+        assert_eq!(bs.read_unary_zeros_capped(8).await.unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros_capped(4).await.unwrap(), 4);
 
         // Long limit test
         let mut bs = BitReaderLtr::new(&[
@@ -1607,64 +1620,64 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
         ]);
 
-        assert_eq!(bs.read_unary_zeros_capped(96).unwrap(), 79);
-        assert_eq!(bs.read_unary_zeros_capped(104).unwrap(), 104);
+        assert_eq!(bs.read_unary_zeros_capped(96).await.unwrap(), 79);
+        assert_eq!(bs.read_unary_zeros_capped(104).await.unwrap(), 104);
     }
 
-    #[test]
-    fn verify_bitstreamltr_read_unary_ones() {
+    #[futures_test::test]
+    async fn verify_bitstreamltr_read_unary_ones() {
         // General tests
         let mut bs =
             BitReaderLtr::new(&[0b1111_1110, 0b1110_1111, 0b1111_1111, 0b0111_1111, 0b0000_0100]);
 
-        assert_eq!(bs.read_unary_ones().unwrap(), 7);
-        assert_eq!(bs.read_unary_ones().unwrap(), 3);
-        assert_eq!(bs.read_unary_ones().unwrap(), 12);
-        assert_eq!(bs.read_unary_ones().unwrap(), 7);
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
-        assert_eq!(bs.read_unary_ones().unwrap(), 1);
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 7);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 3);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 12);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 7);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 1);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
 
         // Upper limit test
         let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe]);
 
-        assert_eq!(bs.read_unary_ones().unwrap(), 63);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 63);
 
         // Lower limit test
         let mut bs = BitReaderLtr::new(&[0x7f]);
 
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
 
         // Error test.
         let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
 
-        assert!(bs.read_unary_ones().is_err());
+        assert!(bs.read_unary_ones().await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamltr_read_unary_ones_capped() {
+    #[futures_test::test]
+    async fn verify_bitstreamltr_read_unary_ones_capped() {
         // Basic test
         let mut bs = BitReaderLtr::new(&[0b1111_1110, 0b1111_1110]);
 
-        assert_eq!(bs.read_unary_ones_capped(8).unwrap(), 7);
-        assert_eq!(bs.read_unary_ones_capped(4).unwrap(), 4);
+        assert_eq!(bs.read_unary_ones_capped(8).await.unwrap(), 7);
+        assert_eq!(bs.read_unary_ones_capped(4).await.unwrap(), 4);
 
         let mut bs =
             BitReaderLtr::new(&[0b1111_1110, 0b1110_1111, 0b1111_1111, 0b0111_1111, 0b0000_0100]);
 
-        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 7);
-        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 3);
-        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 9); // Limit
-        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 3);
-        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 7);
-        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 0);
-        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 0);
-        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 0);
-        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 0);
-        assert_eq!(bs.read_unary_ones_capped(9).unwrap(), 1);
+        assert_eq!(bs.read_unary_ones_capped(9).await.unwrap(), 7);
+        assert_eq!(bs.read_unary_ones_capped(9).await.unwrap(), 3);
+        assert_eq!(bs.read_unary_ones_capped(9).await.unwrap(), 9); // Limit
+        assert_eq!(bs.read_unary_ones_capped(9).await.unwrap(), 3);
+        assert_eq!(bs.read_unary_ones_capped(9).await.unwrap(), 7);
+        assert_eq!(bs.read_unary_ones_capped(9).await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones_capped(9).await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones_capped(9).await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones_capped(9).await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones_capped(9).await.unwrap(), 1);
 
         // Long limit test
         let mut bs = BitReaderLtr::new(&[
@@ -1674,12 +1687,12 @@ mod tests {
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
         ]);
 
-        assert_eq!(bs.read_unary_ones_capped(144).unwrap(), 143);
-        assert_eq!(bs.read_unary_ones_capped(256).unwrap(), 256);
+        assert_eq!(bs.read_unary_ones_capped(144).await.unwrap(), 143);
+        assert_eq!(bs.read_unary_ones_capped(256).await.unwrap(), 256);
     }
 
-    #[test]
-    fn verify_codebook_builder_make_empty() {
+    #[futures_test::test]
+    async fn verify_codebook_builder_make_empty() {
         // Empty codebook.
         let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
         let codebook = builder.make::<Entry8x8>(&[], &[], &[]);
@@ -1751,8 +1764,8 @@ mod tests {
         (codebook, data, TEXT)
     }
 
-    #[test]
-    fn verify_bitstreamltr_read_codebook() {
+    #[futures_test::test]
+    async fn verify_bitstreamltr_read_codebook() {
         let (codebook, buf, text) = generate_codebook(BitOrder::Verbatim);
 
         let mut bs = BitReaderLtr::new(&buf);
@@ -1763,8 +1776,8 @@ mod tests {
         assert_eq!(text, core::str::from_utf8(&decoded).unwrap());
     }
 
-    #[test]
-    fn fuzz_bitstreamltr_read_codebook() {
+    #[futures_test::test]
+    async fn fuzz_bitstreamltr_read_codebook() {
         // Short fuzzing of codebook decoding.
         use rand::rngs::SmallRng;
 
@@ -1786,52 +1799,52 @@ mod tests {
 
     // BitStreamRtl
 
-    #[test]
+    #[futures_test::test]
     #[allow(clippy::bool_assert_comparison)]
-    fn verify_bitstreamrtl_ignore_bits() {
+    async fn verify_bitstreamrtl_ignore_bits() {
         let mut bs = BitReaderRtl::new(&[
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
             0x02, 0x08, 0x00, 0x80, 0x00, 0x00, 0x00, 0x50, //
         ]);
 
-        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
 
-        bs.ignore_bits(128).unwrap();
+        bs.ignore_bits(128).await.unwrap();
 
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
 
-        bs.ignore_bits(7).unwrap();
+        bs.ignore_bits(7).await.unwrap();
 
-        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
 
-        bs.ignore_bits(19).unwrap();
+        bs.ignore_bits(19).await.unwrap();
 
-        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
 
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
 
-        bs.ignore_bits(24).unwrap();
+        bs.ignore_bits(24).await.unwrap();
 
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
 
         // Lower limit test.
         let mut bs = BitReaderRtl::new(&[0x00]);
 
-        assert!(bs.ignore_bits(0).is_ok());
+        assert!(bs.ignore_bits(0).await.is_ok());
 
         let mut bs = BitReaderRtl::new(&[]);
 
-        assert!(bs.ignore_bits(0).is_ok());
-        assert!(bs.ignore_bits(1).is_err());
+        assert!(bs.ignore_bits(0).await.is_ok());
+        assert!(bs.ignore_bits(1).await.is_err());
 
         // Upper limit test.
         let mut bs = BitReaderRtl::new(&[
@@ -1841,90 +1854,90 @@ mod tests {
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
         ]);
 
-        assert!(bs.ignore_bits(64).is_ok());
-        assert!(bs.ignore_bits(64).is_ok());
-        assert!(bs.ignore_bits(32).is_ok());
-        assert!(bs.ignore_bits(32).is_ok());
-        assert!(bs.ignore_bits(64).is_ok());
+        assert!(bs.ignore_bits(64).await.is_ok());
+        assert!(bs.ignore_bits(64).await.is_ok());
+        assert!(bs.ignore_bits(32).await.is_ok());
+        assert!(bs.ignore_bits(32).await.is_ok());
+        assert!(bs.ignore_bits(64).await.is_ok());
     }
 
-    #[test]
+    #[futures_test::test]
     #[allow(clippy::bool_assert_comparison)]
-    fn verify_bitstreamrtl_read_bool() {
+    async fn verify_bitstreamrtl_read_bool() {
         // General tests.
         let mut bs = BitReaderRtl::new(&[0b1010_1010]);
 
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), true);
-        assert_eq!(bs.read_bool().unwrap(), false);
-        assert_eq!(bs.read_bool().unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
+        assert_eq!(bs.read_bool().await.unwrap(), false);
+        assert_eq!(bs.read_bool().await.unwrap(), true);
 
         // Error test.
         let mut bs = BitReaderRtl::new(&[]);
 
-        assert!(bs.read_bool().is_err());
+        assert!(bs.read_bool().await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamrtl_read_bit() {
+    #[futures_test::test]
+    async fn verify_bitstreamrtl_read_bit() {
         // General tests.
         let mut bs = BitReaderRtl::new(&[0b1010_1010]);
 
-        assert_eq!(bs.read_bit().unwrap(), 0);
-        assert_eq!(bs.read_bit().unwrap(), 1);
-        assert_eq!(bs.read_bit().unwrap(), 0);
-        assert_eq!(bs.read_bit().unwrap(), 1);
-        assert_eq!(bs.read_bit().unwrap(), 0);
-        assert_eq!(bs.read_bit().unwrap(), 1);
-        assert_eq!(bs.read_bit().unwrap(), 0);
-        assert_eq!(bs.read_bit().unwrap(), 1);
+        assert_eq!(bs.read_bit().await.unwrap(), 0);
+        assert_eq!(bs.read_bit().await.unwrap(), 1);
+        assert_eq!(bs.read_bit().await.unwrap(), 0);
+        assert_eq!(bs.read_bit().await.unwrap(), 1);
+        assert_eq!(bs.read_bit().await.unwrap(), 0);
+        assert_eq!(bs.read_bit().await.unwrap(), 1);
+        assert_eq!(bs.read_bit().await.unwrap(), 0);
+        assert_eq!(bs.read_bit().await.unwrap(), 1);
 
         // Error test.
         let mut bs = BitReaderRtl::new(&[]);
 
-        assert!(bs.read_bit().is_err());
+        assert!(bs.read_bit().await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamrtl_read_bits_leq32() {
+    #[futures_test::test]
+    async fn verify_bitstreamrtl_read_bits_leq32() {
         // General tests.
         let mut bs = BitReaderRtl::new(&[0b1010_0101, 0b0111_1110, 0b1101_0011]);
 
-        assert_eq!(bs.read_bits_leq32(4).unwrap(), 0b0000_0000_0000_0101);
-        assert_eq!(bs.read_bits_leq32(4).unwrap(), 0b0000_0000_0000_1010);
-        assert_eq!(bs.read_bits_leq32(13).unwrap(), 0b0001_0011_0111_1110);
-        assert_eq!(bs.read_bits_leq32(3).unwrap(), 0b0000_0000_0000_0110);
+        assert_eq!(bs.read_bits_leq32(4).await.unwrap(), 0b0000_0000_0000_0101);
+        assert_eq!(bs.read_bits_leq32(4).await.unwrap(), 0b0000_0000_0000_1010);
+        assert_eq!(bs.read_bits_leq32(13).await.unwrap(), 0b0001_0011_0111_1110);
+        assert_eq!(bs.read_bits_leq32(3).await.unwrap(), 0b0000_0000_0000_0110);
 
         // Lower limit test.
         let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff]);
 
-        assert_eq!(bs.read_bits_leq32(0).unwrap(), 0);
+        assert_eq!(bs.read_bits_leq32(0).await.unwrap(), 0);
 
         // Upper limit test.
         let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0x01]);
 
-        assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
-        assert_eq!(bs.read_bits_leq32(8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq32(32).await.unwrap(), u32::MAX);
+        assert_eq!(bs.read_bits_leq32(8).await.unwrap(), 0x01);
 
         // Cache fetch test.
         let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]);
 
-        assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
-        assert_eq!(bs.read_bits_leq32(32).unwrap(), u32::MAX);
-        assert_eq!(bs.read_bits_leq32(8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq32(32).await.unwrap(), u32::MAX);
+        assert_eq!(bs.read_bits_leq32(32).await.unwrap(), u32::MAX);
+        assert_eq!(bs.read_bits_leq32(8).await.unwrap(), 0x01);
 
         // Test error cases.
         let mut bs = BitReaderRtl::new(&[0xff]);
 
-        assert!(bs.read_bits_leq32(9).is_err());
+        assert!(bs.read_bits_leq32(9).await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamrtl_read_bits_leq64() {
+    #[futures_test::test]
+    async fn verify_bitstreamrtl_read_bits_leq64() {
         // General tests.
         let mut bs = BitReaderRtl::new(&[
             0x99, 0xaa, 0x55, 0xff, 0xff, 0x55, 0xaa, 0x99, //
@@ -1933,71 +1946,71 @@ mod tests {
             0x44, 0x55, 0x66, 0x77,
         ]);
 
-        assert_eq!(bs.read_bits_leq64(40).unwrap(), 0xffff55aa99);
-        assert_eq!(bs.read_bits_leq64(4).unwrap(), 0x05);
-        assert_eq!(bs.read_bits_leq64(4).unwrap(), 0x05);
-        assert_eq!(bs.read_bits_leq64(16).unwrap(), 0x99aa);
-        assert_eq!(bs.read_bits_leq64(64).unwrap(), 0x8877665544332211);
-        assert_eq!(bs.read_bits_leq64(32).unwrap(), 0x33221100);
-        assert_eq!(bs.read_bits_leq64(64).unwrap(), 0x7766554433221100);
+        assert_eq!(bs.read_bits_leq64(40).await.unwrap(), 0xffff55aa99);
+        assert_eq!(bs.read_bits_leq64(4).await.unwrap(), 0x05);
+        assert_eq!(bs.read_bits_leq64(4).await.unwrap(), 0x05);
+        assert_eq!(bs.read_bits_leq64(16).await.unwrap(), 0x99aa);
+        assert_eq!(bs.read_bits_leq64(64).await.unwrap(), 0x8877665544332211);
+        assert_eq!(bs.read_bits_leq64(32).await.unwrap(), 0x33221100);
+        assert_eq!(bs.read_bits_leq64(64).await.unwrap(), 0x7766554433221100);
 
         // Lower limit test.
         let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
 
-        assert_eq!(bs.read_bits_leq64(0).unwrap(), 0);
+        assert_eq!(bs.read_bits_leq64(0).await.unwrap(), 0);
 
         // Upper limit test.
         let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]);
 
-        assert_eq!(bs.read_bits_leq64(64).unwrap(), u64::MAX);
-        assert_eq!(bs.read_bits_leq64(8).unwrap(), 0x01);
+        assert_eq!(bs.read_bits_leq64(64).await.unwrap(), u64::MAX);
+        assert_eq!(bs.read_bits_leq64(8).await.unwrap(), 0x01);
 
         // Test error cases.
         let mut bs = BitReaderRtl::new(&[0xff]);
 
-        assert!(bs.read_bits_leq64(9).is_err());
+        assert!(bs.read_bits_leq64(9).await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamrtl_read_unary_zeros() {
+    #[futures_test::test]
+    async fn verify_bitstreamrtl_read_unary_zeros() {
         // General tests
         let mut bs =
             BitReaderRtl::new(&[0b1000_0000, 0b0000_1000, 0b0000_0000, 0b0000_0001, 0b1101_1111]);
 
-        assert_eq!(bs.read_unary_zeros().unwrap(), 7);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 3);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 12);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 7);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 1);
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 3);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 12);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 1);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
 
         // Upper limit test
         let mut bs = BitReaderRtl::new(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80]);
 
-        assert_eq!(bs.read_unary_zeros().unwrap(), 63);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 63);
 
         // Lower limit test
         let mut bs = BitReaderRtl::new(&[0x01]);
 
-        assert_eq!(bs.read_unary_zeros().unwrap(), 0);
+        assert_eq!(bs.read_unary_zeros().await.unwrap(), 0);
 
         // Error test.
         let mut bs = BitReaderRtl::new(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
-        assert!(bs.read_unary_zeros().is_err());
+        assert!(bs.read_unary_zeros().await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamrtl_read_unary_zeros_capped() {
+    #[futures_test::test]
+    async fn verify_bitstreamrtl_read_unary_zeros_capped() {
         // General tests
         let mut bs = BitReaderRtl::new(&[0b1000_0000, 0b1000_0000]);
 
-        assert_eq!(bs.read_unary_zeros_capped(8).unwrap(), 7);
-        assert_eq!(bs.read_unary_zeros_capped(4).unwrap(), 4);
+        assert_eq!(bs.read_unary_zeros_capped(8).await.unwrap(), 7);
+        assert_eq!(bs.read_unary_zeros_capped(4).await.unwrap(), 4);
 
         // Long limit tests
         let mut bs = BitReaderRtl::new(&[
@@ -2008,50 +2021,50 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
         ]);
 
-        assert_eq!(bs.read_unary_zeros_capped(96).unwrap(), 79);
-        assert_eq!(bs.read_unary_zeros_capped(163).unwrap(), 163);
+        assert_eq!(bs.read_unary_zeros_capped(96).await.unwrap(), 79);
+        assert_eq!(bs.read_unary_zeros_capped(163).await.unwrap(), 163);
     }
 
-    #[test]
-    fn verify_bitstreamrtl_read_unary_ones() {
+    #[futures_test::test]
+    async fn verify_bitstreamrtl_read_unary_ones() {
         // General tests
         let mut bs =
             BitReaderRtl::new(&[0b0111_1111, 0b1111_0111, 0b1111_1111, 0b1111_1110, 0b0010_0000]);
 
-        assert_eq!(bs.read_unary_ones().unwrap(), 7);
-        assert_eq!(bs.read_unary_ones().unwrap(), 3);
-        assert_eq!(bs.read_unary_ones().unwrap(), 12);
-        assert_eq!(bs.read_unary_ones().unwrap(), 7);
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
-        assert_eq!(bs.read_unary_ones().unwrap(), 1);
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 7);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 3);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 12);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 7);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 1);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
 
         // Upper limit test
         let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f]);
 
-        assert_eq!(bs.read_unary_ones().unwrap(), 63);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 63);
 
         // Lower limit test
         let mut bs = BitReaderRtl::new(&[0xfe]);
 
-        assert_eq!(bs.read_unary_ones().unwrap(), 0);
+        assert_eq!(bs.read_unary_ones().await.unwrap(), 0);
 
         // Error test.
         let mut bs = BitReaderRtl::new(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
 
-        assert!(bs.read_unary_ones().is_err());
+        assert!(bs.read_unary_ones().await.is_err());
     }
 
-    #[test]
-    fn verify_bitstreamrtl_read_unary_ones_capped() {
+    #[futures_test::test]
+    async fn verify_bitstreamrtl_read_unary_ones_capped() {
         // General tests
         let mut bs = BitReaderRtl::new(&[0b0111_1111, 0b0111_1111]);
 
-        assert_eq!(bs.read_unary_ones_capped(8).unwrap(), 7);
-        assert_eq!(bs.read_unary_ones_capped(4).unwrap(), 4);
+        assert_eq!(bs.read_unary_ones_capped(8).await.unwrap(), 7);
+        assert_eq!(bs.read_unary_ones_capped(4).await.unwrap(), 4);
 
         // Long limit tests
         let mut bs = BitReaderRtl::new(&[
@@ -2062,12 +2075,12 @@ mod tests {
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, //
         ]);
 
-        assert_eq!(bs.read_unary_ones_capped(96).unwrap(), 79);
-        assert_eq!(bs.read_unary_ones_capped(163).unwrap(), 163);
+        assert_eq!(bs.read_unary_ones_capped(96).await.unwrap(), 79);
+        assert_eq!(bs.read_unary_ones_capped(163).await.unwrap(), 163);
     }
 
-    #[test]
-    fn verify_bitstreamrtl_read_codebook() {
+    #[futures_test::test]
+    async fn verify_bitstreamrtl_read_codebook() {
         // The codewords are in MSb bit-order, but reading the bitstream in LSb order. Therefore,
         // use the reverse bit order.
         let (codebook, buf, text) = generate_codebook(BitOrder::Reverse);
@@ -2080,8 +2093,8 @@ mod tests {
         assert_eq!(text, core::str::from_utf8(&decoded).unwrap());
     }
 
-    #[test]
-    fn fuzz_bitstreamrtl_read_codebook() {
+    #[futures_test::test]
+    async fn fuzz_bitstreamrtl_read_codebook() {
         // Short fuzzing of codebook decoding.
         use rand::rngs::SmallRng;
 

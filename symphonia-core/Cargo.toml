@@ -36,6 +36,7 @@ exp-subtitle-codecs = []
 exp-video-codecs = []
 
 [dependencies]
+async-trait = "0.1.89"
 bitflags = "2.4.2"
 bytemuck = "1.7"
 embedded-io = { version = "0.7.1", features = ["alloc"] }
@@ -54,7 +55,11 @@ version = "6.1.0"
 optional = true
 default-features = false
 
+[dev-dependencies]
+futures-test = "0.3"
+
 [dev-dependencies.rand]
 version = "0.9.2"
 features = ["small_rng"]
 default-features = false
+
