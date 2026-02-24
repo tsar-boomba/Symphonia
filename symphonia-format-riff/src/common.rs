@@ -7,9 +7,10 @@
 
 /// `PacketInfo` helps to simulate packetization over a number of blocks of data.
 /// In case the codec is blockless the block size equals one full audio frame in bytes.
-use std::marker::PhantomData;
-use std::num::NonZero;
+use core::marker::PhantomData;
+use core::num::NonZero;
 
+use alloc::string::String;
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::audio::well_known::{
     CODEC_ID_ADPCM_IMA_WAV, CODEC_ID_ADPCM_MS, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE,

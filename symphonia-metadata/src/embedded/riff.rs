@@ -11,6 +11,7 @@
 mod info {
     //! RIFF INFO chunk metadata format reading.
 
+    use alloc::string::String;
     use core::str;
 
     use hashbrown::HashMap;
@@ -93,6 +94,8 @@ mod info {
 #[cfg(feature = "riff-id3")]
 mod id3 {
     //! RIFF ID3 chunk metadata format reading.
+
+    use alloc::vec::Vec;
 
     use symphonia_core::errors::Result;
     use symphonia_core::io::ReadBytes;

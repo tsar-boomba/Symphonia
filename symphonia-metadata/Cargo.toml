@@ -14,9 +14,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-default = ["std", "ape", "id3v1", "id3v2"]
-
-std = ["symphonia-core/std"]
+default = ["ape", "id3v1", "id3v2"]
 
 # Standalone metadata format readers.
 ape = []
