@@ -19,7 +19,6 @@ use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::units::Time;
 
 use std::collections::HashMap;
-use std::io::{Seek, SeekFrom};
 use std::num::NonZero;
 use std::sync::Arc;
 
@@ -450,8 +449,7 @@ impl<'s> IsoMp4Reader<'s> {
                 Ok(None) => break,
                 // If fragmented, an EOF is the only way to truly detect the end of stream.
                 Err(AtomError::Other(Error::IoError(err)))
-                    if self.moov.is_fragmented()
-                        && err.kind() == std::io::ErrorKind::UnexpectedEof =>
+                    if self.moov.is_fragmented() && err.is_eof() =>
                 {
                     break;
                 }

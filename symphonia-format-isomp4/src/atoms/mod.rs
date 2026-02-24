@@ -5,9 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::{io::SeekFrom, num::NonZeroU64};
+use std::num::NonZeroU64;
 
-use symphonia_core::io::{MediaSource, ReadBytes, SeekBuffered};
+use symphonia_core::io::{MediaSource, ReadBytes, SeekBuffered, SeekFrom};
 
 /// Atom parsing limits.
 pub mod limits {
@@ -469,8 +469,8 @@ pub enum AtomError {
     Other(symphonia_core::errors::Error),
 }
 
-impl From<std::io::Error> for AtomError {
-    fn from(err: std::io::Error) -> AtomError {
+impl From<symphonia_core::io::Error> for AtomError {
+    fn from(err: symphonia_core::io::Error) -> AtomError {
         AtomError::Other(symphonia_core::errors::Error::IoError(err))
     }
 }
@@ -765,7 +765,7 @@ impl<R: ReadAtom> AtomIterator<R> {
     /// Attempts to cheaply seek within the cache first, before seeking the underlying reader.
     pub(crate) fn seek_atom_start(&mut self) -> Result<()>
     where
-        R: MediaSource,
+        R: MediaSource<Error = symphonia_core::io::Error>,
     {
         let atom = self.pending.take().ok_or(AtomError::NoPendingAtom)?;
         self.seek_reader(atom.pos())?;
@@ -778,7 +778,7 @@ impl<R: ReadAtom> AtomIterator<R> {
     /// Attempts to cheaply seek within the cache first, before seeking the underlying reader.
     pub(crate) fn seek_atom_end(&mut self) -> Result<()>
     where
-        R: MediaSource,
+        R: MediaSource<Error = symphonia_core::io::Error>,
     {
         let atom = self.pending.take().ok_or(AtomError::NoPendingAtom)?;
 
@@ -798,7 +798,7 @@ impl<R: ReadAtom> AtomIterator<R> {
     /// by ignoring bytes until the desired position is reached.
     fn seek_reader(&mut self, pos: u64) -> Result<()>
     where
-        R: MediaSource,
+        R: MediaSource<Error = symphonia_core::io::Error>,
     {
         // Attempt a seek within the cache first.
         if self.reader.seek_buffered(pos) != pos {
@@ -850,7 +850,7 @@ impl<R: ReadAtom> AtomIterator<R> {
     /// the iterator must be re-synchronized by calling `seek_atom_start` or `seek_atom_end`.
     pub(crate) fn read_raw_boxed_slice_exact(&mut self, pos: u64, len: usize) -> Result<Box<[u8]>>
     where
-        R: MediaSource,
+        R: MediaSource<Error = symphonia_core::io::Error>,
     {
         // Must currently have a pending atom to allow resynchronizing to it.
         let _ = self.pending.as_ref().ok_or(AtomError::NoPendingAtom)?;

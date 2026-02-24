@@ -22,7 +22,7 @@ use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::{Error, Result, unsupported_error};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
-use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
+use symphonia::core::io::{FromStd, MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
 
 use clap::{Arg, ArgAction};
@@ -188,7 +188,7 @@ impl DecoderInstance {
             let packet = match self.format.next_packet() {
                 Ok(Some(packet)) => packet,
                 Ok(None) => return Ok(None),
-                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(Error::IoError(err)) if err.is_eof() => {
                     // WavReader will always return an UnexpectedEof when it ends because the
                     // reference decoder is piping the decoded audio and cannot write out the
                     // actual length of the media. Treat UnexpectedEof as the end of the stream.
@@ -351,16 +351,16 @@ fn run_test(path: &Path, opts: &TestOptions, result: &mut TestResult) -> Result<
     let mut ref_process = RefProcess::try_spawn(opts.ref_decoder, opts.gapless, path)?;
 
     // 2. Instantiate a Symphonia decoder for the reference process output.
-    let ref_ms = Box::new(ReadOnlySource::new(match ref_process.child.stdout.take() {
+    let ref_ms = Box::new(ReadOnlySource::new(FromStd::new(match ref_process.child.stdout.take() {
         Some(s) => s,
         None => return unsupported_error("reference decoder has no stdout"),
-    }));
+    })));
     let ref_mss = MediaSourceStream::new(ref_ms, Default::default());
 
     let mut ref_inst = DecoderInstance::try_open(ref_mss, Default::default(), Default::default())?;
 
     // 3. Instantiate a Symphonia decoder for the test target.
-    let tgt_ms = Box::new(File::open(path)?);
+    let tgt_ms = Box::new(FromStd::new(File::open(path)?));
     let tgt_mss = MediaSourceStream::new(tgt_ms, Default::default());
 
     let tgt_fmt_opts = Default::default();

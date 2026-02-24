@@ -126,7 +126,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
         Ok(())
     }
 
-    fn read_boxed_slice(&mut self, len: usize) -> io::Result<Box<[u8]>> {
+    fn read_boxed_slice(&mut self, len: usize) -> super::Result<Box<[u8]>> {
         // Limit read_boxed_slice() to the remainder of the scoped bytes if len is greater.
         let scoped_len = cmp::min(self.len - self.read, len as u64) as usize;
         let data = self.inner.read_boxed_slice(scoped_len)?;
@@ -134,7 +134,7 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
         Ok(data)
     }
 
-    fn read_boxed_slice_exact(&mut self, len: usize) -> io::Result<Box<[u8]>> {
+    fn read_boxed_slice_exact(&mut self, len: usize) -> super::Result<Box<[u8]>> {
         if self.len - self.read < len as u64 {
             return out_of_bounds_error();
         }
