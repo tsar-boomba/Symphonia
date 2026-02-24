@@ -23,10 +23,10 @@ pub struct OpusHead {
 }
 
 impl OpusHead {
-    pub fn read<B: ReadBytes>(reader: &mut B, max_version: u8) -> Result<Self> {
+    pub async fn read<B: ReadBytes>(reader: &mut B, max_version: u8) -> Result<Self> {
         // The first 8 bytes are the magic signature ASCII bytes.
         let mut magic = [0; 8];
-        reader.read_buf_exact(&mut magic)?;
+        reader.read_buf_exact(&mut magic).await?;
 
         if magic != *OPUS_MAGIC_SIGNATURE {
             return unsupported_error("common (opus): invalid magic signature");
@@ -34,13 +34,13 @@ impl OpusHead {
 
         // The next byte is the encapsulation version. The max version is specified by the caller
         // since it depends on the container format used.
-        let version = reader.read_byte()?;
+        let version = reader.read_byte().await?;
         if version > max_version {
             return decode_error("common (opus): invalid version");
         }
 
         // The next byte is the number of channels and must not be 0.
-        let channel_count = reader.read_byte()?;
+        let channel_count = reader.read_byte().await?;
 
         if channel_count == 0 {
             return decode_error("common (opus): invalid channel count");
@@ -48,16 +48,16 @@ impl OpusHead {
 
         // The next 16-bit integer is the pre-skip padding (# of samples at 48kHz to subtract from
         // the OGG granule position to obtain the PCM sample position).
-        let pre_skip = reader.read_u16()?;
+        let pre_skip = reader.read_u16().await?;
 
         // The next 32-bit integer is the sample rate of the original audio.
-        let original_sample_rate = reader.read_u32()?;
+        let original_sample_rate = reader.read_u32().await?;
 
         // Next, the 16-bit gain value.
-        let gain = reader.read_i16()?;
+        let gain = reader.read_i16().await?;
 
         // The next byte indicates the channel mapping. Most of these values are reserved.
-        let channel_mapping = reader.read_byte()?;
+        let channel_mapping = reader.read_byte().await?;
 
         let positions = match channel_mapping {
             // RTP Mapping

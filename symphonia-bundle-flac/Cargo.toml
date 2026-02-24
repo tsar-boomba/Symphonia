@@ -26,3 +26,6 @@ features = ["flac"]
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+futures-test = "0.3"

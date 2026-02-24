@@ -153,7 +153,9 @@ pub type FormatFactoryFn = for<'s> fn(
 
 /// `MetadataReader` probe factory function. Creates a boxed `MetadataReader`.
 pub type MetadataFactoryFn =
-    for<'s> fn(MediaSourceStream<'s>, MetadataOptions) -> Result<Box<dyn MetadataReader + 's>>;
+    for<'s> fn(MediaSourceStream<'s>, MetadataOptions) -> Pin<
+    Box<dyn Future<Output = Result<Box<dyn MetadataReader + 's>>> + Send + 's>,
+>;
 
 /// A probe match is the result of one probe iteration on a given media source stream.
 ///
@@ -251,9 +253,10 @@ pub trait ProbeableFormat<'s>: FormatReader + Scoreable {
 }
 
 /// To support probing, a `MetadataReader` must implement the `ProbeableMetadata` trait.
+#[async_trait]
 pub trait ProbeableMetadata<'s>: MetadataReader + Scoreable {
     /// Create an instance of the metadata reader.
-    fn try_probe_new(
+    async fn try_probe_new(
         mss: MediaSourceStream<'s>,
         opts: MetadataOptions,
     ) -> Result<Box<dyn MetadataReader + 's>>
@@ -356,7 +359,7 @@ impl Probe {
     /// Register the parameterized metadata reader at the standard tier.
     pub fn register_metadata<P>(&mut self)
     where
-        for<'a> P: ProbeableMetadata<'a>,
+        for<'a> P: ProbeableMetadata<'a> + 'static,
     {
         self.register_metadata_at_tier::<P>(Tier::Standard);
     }
@@ -385,7 +388,7 @@ impl Probe {
     /// Register the parameterized metadata reader at a specific tier.
     pub fn register_metadata_at_tier<P>(&mut self, tier: Tier)
     where
-        for<'a> P: ProbeableMetadata<'a>,
+        for<'a> P: ProbeableMetadata<'a> + 'static,
     {
         for data in P::probe_data() {
             // Build a generic metadata probe candidate.
@@ -474,8 +477,8 @@ impl Probe {
                 // If metadata was found, instantiate the metadata reader, read the metadata, and
                 // push it onto the metadata log.
                 ProbeMatch::Metadata { factory, .. } => {
-                    let mut reader = factory(mss, meta_opts)?;
-                    read_and_append_metadata(&mut reader, &mut fmt_opts)?;
+                    let mut reader = factory(mss, meta_opts).await?;
+                    read_and_append_metadata(&mut reader, &mut fmt_opts).await?;
                     mss = reader.into_inner();
                 }
             }
@@ -530,12 +533,12 @@ impl Probe {
                 if let Some(ProbeMatch::Metadata { factory, .. }) =
                     self.find_best_reader(&mut mss, true).await?
                 {
-                    let mut reader = factory(mss, meta_opts)?;
+                    let mut reader = factory(mss, meta_opts).await?;
 
                     // When reading anchored metadata fails it is reasonable to just ignore the
                     // error and continue because the MSS will be repositioned immediately after
                     // anyways.
-                    let is_ok = read_and_append_metadata(&mut reader, fmt_opts).is_ok();
+                    let is_ok = read_and_append_metadata(&mut reader, fmt_opts).await.is_ok();
 
                     if !is_ok {
                         warn!(
@@ -651,12 +654,12 @@ impl Probe {
     }
 }
 
-fn read_and_append_metadata<'s>(
+async fn read_and_append_metadata<'s>(
     reader: &mut Box<dyn MetadataReader + 's>,
     fmt_opts: &mut FormatOptions,
 ) -> Result<()> {
     // Read all metadata and get a metdata revision.
-    let metadata = reader.read_all()?;
+    let metadata = reader.read_all().await?;
 
     debug!("appending '{}' metadata", reader.metadata_info().short_name);
 
