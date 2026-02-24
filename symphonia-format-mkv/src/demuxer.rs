@@ -5,10 +5,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::{HashMap, VecDeque};
-use std::convert::TryFrom;
-use std::num::NonZero;
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
+use core::convert::TryFrom;
+use core::num::NonZero;
 
+use hashbrown::HashMap;
 use symphonia_core::errors::{Error, Result, SeekErrorKind, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
@@ -304,8 +307,7 @@ impl<'s> MkvReader<'s> {
 
             if let Some(lang_bcp47) = &track.lang_bcp47 {
                 tr.with_language(lang_bcp47);
-            }
-            else {
+            } else {
                 tr.with_language(&track.lang);
             }
 
@@ -503,15 +505,13 @@ impl<'s> MkvReader<'s> {
                     }
                     block_type @ (MkvElement::SimpleBlock | MkvElement::BlockGroup) => {
                         // Get the current cluster information.
-                        let Some(cluster) = self.current_cluster.as_ref()
-                        else {
+                        let Some(cluster) = self.current_cluster.as_ref() else {
                             log::warn!("expected to have cluster");
                             return Ok(true);
                         };
 
                         // Get the cluster timestamp.
-                        let Some(cluster_ts) = cluster.timestamp
-                        else {
+                        let Some(cluster_ts) = cluster.timestamp else {
                             log::warn!("missing cluster timestamp");
                             return Ok(true);
                         };
