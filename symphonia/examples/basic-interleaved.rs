@@ -13,6 +13,10 @@ use symphonia_core::formats::TrackType;
 use symphonia_core::io::FromStd;
 
 fn main() {
+    futures_executor::block_on(main_fut())
+}
+
+async fn main_fut() {
     // Get command line arguments.
     let args: Vec<String> = env::args().collect();
 
@@ -34,7 +38,7 @@ fn main() {
 
     // Probe the media source stream for a format.
     let mut format =
-        symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts).unwrap();
+        symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts).await.unwrap();
 
     // Get the default audio track.
     let track = format.default_track(TrackType::Audio).unwrap();
@@ -42,7 +46,7 @@ fn main() {
     // Create a decoder for the track.
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(track.codec_params.as_ref().unwrap().audio().unwrap(), &dec_opts)
-        .unwrap();
+        .await.unwrap();
 
     // Store the track identifier, we'll use it to filter packets.
     let track_id = track.id;
@@ -51,14 +55,14 @@ fn main() {
     let mut total_sample_count = 0;
 
     // Read and decode all packets from the format reader.
-    while let Some(packet) = format.next_packet().unwrap() {
+    while let Some(packet) = format.next_packet().await.unwrap() {
         // If the packet does not belong to the selected track, skip it.
         if packet.track_id() != track_id {
             continue;
         }
 
         // Decode the packet into audio samples, ignoring any decode errors.
-        match decoder.decode(&packet) {
+        match decoder.decode(&packet).await {
             Ok(audio_buf) => {
                 // The decoded audio samples may now be accessed via the generic audio buffer
                 // returned by the decoder. You may match on the buffer to access a sample-format

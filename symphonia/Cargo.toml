@@ -99,6 +99,9 @@ opt-simd = [
 exp-subtitle-codecs = ["symphonia-core/exp-subtitle-codecs"]
 exp-video-codecs = ["symphonia-core/exp-video-codecs"]
 
+[dev-dependencies]
+futures-executor = "0.3"
+
 [dependencies]
 
 
