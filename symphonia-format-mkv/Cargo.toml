@@ -21,3 +21,6 @@ symphonia-common = { version = "0.6.1", path = "../symphonia-common" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+futures-test = "0.3"

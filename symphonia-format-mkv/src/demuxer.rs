@@ -5,21 +5,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_core::Float;
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::convert::TryFrom;
 use core::num::NonZero;
+use core::pin::Pin;
 
 use hashbrown::HashMap;
 use symphonia_core::errors::{Error, Result, SeekErrorKind, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_MKV;
-use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::support_format;
 use symphonia_core::units::TimeBase;
+use symphonia_core::{async_trait, io::*};
 
 use log::{info, warn};
 
@@ -75,7 +77,7 @@ struct ClusterState {
 }
 
 impl<'s> MkvReader<'s> {
-    pub fn try_new(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+    pub async fn try_new(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         // Get the total length of the stream, if possible.
         let (is_seekable, total_len) = (mss.is_seekable(), mss.byte_len());
 
@@ -87,14 +89,14 @@ impl<'s> MkvReader<'s> {
         let mut it = EbmlIterator::new(mss, MkvSchema, total_len);
 
         // Read the EBML header.
-        let ebml = it.next_element::<EbmlHeaderElement>()?;
+        let ebml = it.next_element::<EbmlHeaderElement>().await?;
 
         if !matches!(ebml.doc_type.as_str(), "matroska" | "webm") {
             return unsupported_error("mkv: not a matroska / webm file");
         }
 
         // Read the root element, Segment.
-        let segment_pos = match it.next_header()? {
+        let segment_pos = match it.next_header().await? {
             Some(elem) if elem.element_type() == MkvElement::Segment => elem.data_pos(),
             _ => return unsupported_error("mkv: missing segment element"),
         };
@@ -111,10 +113,10 @@ impl<'s> MkvReader<'s> {
         let mut attachments = None;
         let mut chapters = None;
 
-        while let Ok(Some(header)) = it.next_header() {
+        while let Ok(Some(header)) = it.next_header().await {
             match header.element_type() {
                 MkvElement::SeekHead => {
-                    let seek_head = it.read_master_element::<SeekHeadElement>()?;
+                    let seek_head = it.read_master_element::<SeekHeadElement>().await?;
                     for element in seek_head.seeks.into_vec() {
                         let element_type = match it.schema().get_element_info(element.id as u32) {
                             Some(info) => info.element_type(),
@@ -124,17 +126,17 @@ impl<'s> MkvReader<'s> {
                     }
                 }
                 MkvElement::Tracks => {
-                    segment_tracks = Some(it.read_master_element::<TracksElement>()?);
+                    segment_tracks = Some(it.read_master_element::<TracksElement>().await?);
                 }
                 MkvElement::Info => {
-                    info = Some(it.read_master_element::<InfoElement>()?);
+                    info = Some(it.read_master_element::<InfoElement>().await?);
                 }
                 MkvElement::Cues => {
-                    cues = Some(it.read_master_element::<CuesElement>()?);
+                    cues = Some(it.read_master_element::<CuesElement>().await?);
                 }
                 MkvElement::Tags => {
                     // Multiple tags element per segment allowed.
-                    tags.push(it.read_master_element::<TagsElement>()?);
+                    tags.push(it.read_master_element::<TagsElement>().await?);
                 }
                 MkvElement::Cluster => {
                     // Set state for current cluster for the first call of `next_element`.
@@ -150,14 +152,14 @@ impl<'s> MkvReader<'s> {
                     if attachments.is_some() {
                         log::warn!("unexpected attachments element");
                     }
-                    attachments = Some(it.read_master_element::<AttachmentsElement>()?);
+                    attachments = Some(it.read_master_element::<AttachmentsElement>().await?);
                 }
                 MkvElement::Chapters => {
                     // Only one chapters element per segment is expected.
                     if chapters.is_some() {
                         log::warn!("unexpected chapters element");
                     }
-                    chapters = Some(it.read_master_element::<ChaptersElement>()?);
+                    chapters = Some(it.read_master_element::<ChaptersElement>().await?);
                 }
                 other => {
                     log::debug!("top-level scan ignored element {other:?}");
@@ -177,10 +179,10 @@ impl<'s> MkvReader<'s> {
                 it.pop_elements_upto(MkvElement::Segment)?;
 
                 // Seek the iterator to the child element.
-                it.seek_to_child(pos)?;
+                it.seek_to_child(pos).await?;
 
                 // Resume iteration.
-                let element_type = match it.next_header()? {
+                let element_type = match it.next_header().await? {
                     Some(header) => header.element_type(),
                     _ => continue,
                 };
@@ -190,31 +192,31 @@ impl<'s> MkvReader<'s> {
                 // position against the element type asked to be read.
                 match element_type {
                     MkvElement::Tracks => {
-                        segment_tracks = Some(it.read_master_element::<TracksElement>()?);
+                        segment_tracks = Some(it.read_master_element::<TracksElement>().await?);
                     }
                     MkvElement::Info => {
-                        info = Some(it.read_master_element::<InfoElement>()?);
+                        info = Some(it.read_master_element::<InfoElement>().await?);
                     }
                     MkvElement::Tags => {
                         // Multiple tags element per segment allowed.
-                        tags.push(it.read_master_element::<TagsElement>()?);
+                        tags.push(it.read_master_element::<TagsElement>().await?);
                     }
                     MkvElement::Cues => {
-                        cues = Some(it.read_master_element::<CuesElement>()?);
+                        cues = Some(it.read_master_element::<CuesElement>().await?);
                     }
                     MkvElement::Attachments => {
                         // Only one attachments element per segment is expected.
                         if attachments.is_some() {
                             log::warn!("unexpected attachments element after meta seek");
                         }
-                        attachments = Some(it.read_master_element::<AttachmentsElement>()?);
+                        attachments = Some(it.read_master_element::<AttachmentsElement>().await?);
                     }
                     MkvElement::Chapters => {
                         // Only one chapters element per segment is expected.
                         if chapters.is_some() {
                             log::warn!("unexpected chapters element after meta seek");
                         }
-                        chapters = Some(it.read_master_element::<ChaptersElement>()?)
+                        chapters = Some(it.read_master_element::<ChaptersElement>().await?)
                     }
                     _ => (),
                 }
@@ -229,8 +231,8 @@ impl<'s> MkvReader<'s> {
         // first cluster.
         if is_seekable {
             let cluster_pos = current_cluster.as_ref().map(|cluster| cluster.start).unwrap_or(0);
-            it.seek_to_child(cluster_pos)?;
-            let _ = it.next_header()?;
+            it.seek_to_child(cluster_pos).await?;
+            let _ = it.next_header().await?;
         }
 
         // Descend into the cluster.
@@ -313,7 +315,7 @@ impl<'s> MkvReader<'s> {
 
             tr.with_flags(track.flags);
 
-            if let Some(codec_params) = make_track_codec_params(track)? {
+            if let Some(codec_params) = make_track_codec_params(track).await? {
                 tr.with_codec_params(codec_params);
             }
 
@@ -344,7 +346,7 @@ impl<'s> MkvReader<'s> {
         })
     }
 
-    fn seek_track_by_ts_forward(&mut self, track_id: u32, ts: Timestamp) -> Result<SeekedTo> {
+    async fn seek_track_by_ts_forward(&mut self, track_id: u32, ts: Timestamp) -> Result<SeekedTo> {
         let actual_ts = 'out: loop {
             // Skip frames from the buffer until the given timestamp
             while let Some(frame) = self.frames.front() {
@@ -362,7 +364,7 @@ impl<'s> MkvReader<'s> {
                 }
             }
 
-            if !self.next_element()? {
+            if !self.next_element().await? {
                 // There are no more elements.
                 return Err(Error::SeekError(SeekErrorKind::OutOfRange));
             }
@@ -371,7 +373,7 @@ impl<'s> MkvReader<'s> {
         Ok(SeekedTo { track_id, required_ts: ts, actual_ts })
     }
 
-    fn seek_track_by_ts_atomic(
+    async fn seek_track_by_ts_atomic(
         &mut self,
         id: u32,
         tb: TimeBase,
@@ -381,10 +383,10 @@ impl<'s> MkvReader<'s> {
         let iter_state = self.iter.save_state();
         let cluster_state = self.current_cluster;
 
-        match self.seek_track_by_ts(id, tb, ts) {
+        match self.seek_track_by_ts(id, tb, ts).await {
             Err(err) => {
                 // Restore saved iterator and cluster states.
-                self.iter.restore_state(iter_state)?;
+                self.iter.restore_state(iter_state).await?;
                 self.current_cluster = cluster_state;
                 Err(err)
             }
@@ -392,7 +394,7 @@ impl<'s> MkvReader<'s> {
         }
     }
 
-    fn seek_track_by_ts(&mut self, id: u32, tb: TimeBase, ts: Timestamp) -> Result<SeekedTo> {
+    async fn seek_track_by_ts(&mut self, id: u32, tb: TimeBase, ts: Timestamp) -> Result<SeekedTo> {
         log::debug!("seeking track_id={id} to ts={ts}");
 
         // If cues exist, seek to the nearest cue point.
@@ -428,10 +430,10 @@ impl<'s> MkvReader<'s> {
             self.iter.pop_elements_upto(MkvElement::Segment)?;
 
             // Seek to the specific cluster element.
-            self.iter.seek_to_child(target_cue_point.positions.cluster_pos)?;
+            self.iter.seek_to_child(target_cue_point.positions.cluster_pos).await?;
 
             // Resume iteration.
-            let cluster = match self.iter.next_header()? {
+            let cluster = match self.iter.next_header().await? {
                 // The seeked element is a cluster.
                 Some(header) if header.element_type() == MkvElement::Cluster => header,
                 // The seeked element is not a cluster or there were no more elements at the cue
@@ -455,16 +457,16 @@ impl<'s> MkvReader<'s> {
             // If a cluster relative position is available, seek to the exact simple block or
             // block group element.
             if let Some(cluster_rel_pos) = target_cue_point.positions.cluster_rel_pos {
-                self.iter.seek_to_child(cluster_rel_pos)?;
+                self.iter.seek_to_child(cluster_rel_pos).await?;
             }
         }
 
         // Seek to exact block.
-        self.seek_track_by_ts_forward(id, ts)
+        self.seek_track_by_ts_forward(id, ts).await
     }
 
-    fn next_element(&mut self) -> Result<bool> {
-        match self.iter.next_header()? {
+    async fn next_element(&mut self) -> Result<bool> {
+        match self.iter.next_header().await? {
             None => {
                 // The EBML iterator has consumed all child elements at the current level of the
                 // document.
@@ -498,7 +500,7 @@ impl<'s> MkvReader<'s> {
                         // Cluster timestamp element.
                         match self.current_cluster.as_mut() {
                             Some(cc) => {
-                                cc.timestamp = self.iter.read_u64()?.map(SegmentTicks::from)
+                                cc.timestamp = self.iter.read_u64().await?.map(SegmentTicks::from)
                             }
                             _ => log::warn!("expected to have cluster"),
                         }
@@ -518,9 +520,9 @@ impl<'s> MkvReader<'s> {
 
                         // Get block data and duration.
                         let (data, duration) = match block_type {
-                            MkvElement::SimpleBlock => (self.iter.read_binary()?, None),
+                            MkvElement::SimpleBlock => (self.iter.read_binary().await?, None),
                             MkvElement::BlockGroup => {
-                                let group = self.iter.read_master_element::<BlockGroupElement>()?;
+                                let group = self.iter.read_master_element::<BlockGroupElement>().await?;
                                 (group.data, group.duration)
                             }
                             _ => unreachable!(),
@@ -533,7 +535,7 @@ impl<'s> MkvReader<'s> {
                             cluster_ts,
                             &self.track_states,
                             &mut self.frames,
-                        )? {
+                        ).await? {
                             warn!("pts for block is too large");
                             return Ok(false);
                         }
@@ -550,15 +552,16 @@ impl<'s> MkvReader<'s> {
     }
 }
 
-impl ProbeableFormat<'_> for MkvReader<'_> {
-    fn try_probe_new(
-        mss: MediaSourceStream<'_>,
+#[async_trait]
+impl<'s> ProbeableFormat<'s> for MkvReader<'s> {
+    async fn try_probe_new(
+        mss: MediaSourceStream<'s>,
         opts: FormatOptions,
-    ) -> Result<Box<dyn FormatReader + '_>>
+    ) -> Result<Box<dyn FormatReader + 's>>
     where
         Self: Sized,
     {
-        Ok(Box::new(MkvReader::try_new(mss, opts)?))
+        Ok(Box::new(MkvReader::try_new(mss, opts).await?))
     }
 
     fn probe_data() -> &'static [ProbeFormatData] {
@@ -571,6 +574,7 @@ impl ProbeableFormat<'_> for MkvReader<'_> {
     }
 }
 
+#[async_trait]
 impl FormatReader for MkvReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &MKV_FORMAT_INFO
@@ -592,7 +596,7 @@ impl FormatReader for MkvReader<'_> {
         self.metadata.metadata()
     }
 
-    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
+    async fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
         if self.tracks.is_empty() {
             return seek_error(SeekErrorKind::Unseekable);
         }
@@ -613,13 +617,13 @@ impl FormatReader for MkvReader<'_> {
                     }
                 };
                 let track_id = track.id;
-                self.seek_track_by_ts_atomic(track_id, tb, ts)
+                self.seek_track_by_ts_atomic(track_id, tb, ts).await
             }
             SeekTo::Timestamp { ts, track_id } => {
                 match self.tracks.iter().find(|t| t.id == track_id) {
                     Some(track) => {
                         let tb = track.time_base.expect("track always has a timebase");
-                        self.seek_track_by_ts_atomic(track_id, tb, ts)
+                        self.seek_track_by_ts_atomic(track_id, tb, ts).await
                     }
                     None => seek_error(SeekErrorKind::InvalidTrack),
                 }
@@ -631,7 +635,7 @@ impl FormatReader for MkvReader<'_> {
         &self.tracks
     }
 
-    fn next_packet(&mut self) -> Result<Option<Packet>> {
+    async fn next_packet(&mut self) -> Result<Option<Packet>> {
         loop {
             if let Some(frame) = self.frames.pop_front() {
                 return Ok(Some(Packet::new(
@@ -642,7 +646,7 @@ impl FormatReader for MkvReader<'_> {
                 )));
             }
 
-            if !self.next_element()? {
+            if !self.next_element().await? {
                 // Reached the end of stream.
                 return Ok(None);
             }
@@ -658,8 +662,10 @@ impl FormatReader for MkvReader<'_> {
 }
 
 impl Scoreable for MkvReader<'_> {
-    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-        Ok(Score::Supported(255))
+    fn score<'a, 'b>(
+        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
+        Box::pin(async { Ok(Score::Supported(255)) })
     }
 }
 
