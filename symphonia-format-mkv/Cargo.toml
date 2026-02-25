@@ -19,3 +19,6 @@ log = "0.4"
 hashbrown = { workspace = true }
 symphonia-core = { version = "0.6.0", path = "../symphonia-core" }
 symphonia-common = { version = "0.6.0", path = "../symphonia-common" }
+
+[dev-dependencies]
+futures-test = "0.3"

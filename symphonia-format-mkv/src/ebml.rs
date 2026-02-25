@@ -5,6 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use core::pin::Pin;
+
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -78,9 +80,9 @@ pub(crate) enum EbmlDataType {
 }
 
 /// Trait for an object providing element information in an EBML document schema.
-pub(crate) trait EbmlElementInfo: Copy + Clone {
+pub(crate) trait EbmlElementInfo: Send + Copy + Clone {
     /// The element type enumeration for the schema.
-    type ElementType: Copy + Clone + Default + PartialEq + Eq + PartialOrd + Ord + core::fmt::Debug;
+    type ElementType: Send + Copy + Clone + Default + PartialEq + Eq + PartialOrd + Ord + core::fmt::Debug;
 
     /// Get the element type.
     fn element_type(&self) -> Self::ElementType;
@@ -111,7 +113,7 @@ pub(crate) trait EbmlElementInfo: Copy + Clone {
 }
 
 /// Trait implemented for an EBML document schema.
-pub(crate) trait EbmlSchema {
+pub(crate) trait EbmlSchema: Send {
     /// The maximum allowed element depth in the EBML document.
     const MAX_DEPTH: usize;
 
@@ -155,15 +157,15 @@ impl<S: EbmlSchema> EbmlElementHeader<S> {
     pub const MIN_SIZE: u64 = 2;
 
     /// Read an EBML element header from the stream.
-    pub(crate) fn read<R: ReadBytes>(reader: &mut R, depth: u8, schema: &S) -> Result<Self> {
+    pub(crate) async fn read<R: ReadBytes>(reader: &mut R, depth: u8, schema: &S) -> Result<Self> {
         // Read the variable width element ID.
-        let (id, id_len) = read_element_id(reader)?;
+        let (id, id_len) = read_element_id(reader).await?;
 
         // Determine the starting position of the element.
         let pos = reader.pos() - u64::from(id_len);
 
         // Read the variable width element data size.
-        let data_size = read_element_data_size(reader)?;
+        let data_size = read_element_data_size(reader).await?;
 
         // Calculate the total length of the header.
         let header_size = (reader.pos() - pos) as u8;
@@ -258,12 +260,15 @@ impl<S: EbmlSchema> EbmlElementHeader<S> {
 }
 
 /// Trait for an EBML element.
-pub trait EbmlElement<S: EbmlSchema>: Sized {
+pub trait EbmlElement<S: EbmlSchema>: Sized + Send {
     /// The element type of this element.
     const TYPE: <S::ElementInfo as EbmlElementInfo>::ElementType;
 
     /// Read the element.
-    fn read<R: ReadEbml>(it: &mut EbmlIterator<R, S>, hdr: &EbmlElementHeader<S>) -> Result<Self>;
+    fn read<R: ReadEbml>(
+        it: &mut EbmlIterator<R, S>,
+        hdr: &EbmlElementHeader<S>,
+    ) -> impl Future<Output = Result<Self>> + Send;
 }
 
 /// Saved EBML iterator state.
@@ -391,13 +396,14 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     }
 
     /// Restore the state of the iterator.
-    pub(crate) fn restore_state(&mut self, state: EbmlIteratorState<S>) -> Result<()>
+    pub(crate) async fn restore_state(&mut self, state: EbmlIteratorState<S>) -> Result<()>
     where
         R: MediaSource,
         symphonia_core::io::Error: core::convert::From<<R as symphonia_core::io::ErrorType>::Error>,
     {
         self.reader
             .seek(SeekFrom::Start(state.pos))
+            .await
             .map_err(symphonia_core::io::Error::from)?;
         self.current = state.current;
         self.stack = state.stack;
@@ -407,7 +413,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     /// Seek the iterator to a child element at the given offset within the current parent.
     ///
     /// On a successful seek, a call to next_header or next_element will return the child element.
-    pub(crate) fn seek_to_child(&mut self, offset: u64) -> Result<()>
+    pub(crate) async fn seek_to_child(&mut self, offset: u64) -> Result<()>
     where
         R: MediaSource,
         symphonia_core::io::Error: core::convert::From<<R as symphonia_core::io::ErrorType>::Error>,
@@ -440,6 +446,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
         // Seek to the child element position.
         self.reader
             .seek(SeekFrom::Start(child_pos))
+            .await
             .map_err(symphonia_core::io::Error::from)?;
 
         // Reset the iterator so that a call to next_element or next_header yields the child
@@ -451,15 +458,15 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     /// Read the next master element.
     ///
     /// Discards any unread data from the previous element.
-    pub(crate) fn next_element<E: EbmlElement<S>>(&mut self) -> Result<E> {
-        let _header = self.next_header()?;
-        self.read_master_element()
+    pub(crate) async fn next_element<E: EbmlElement<S>>(&mut self) -> Result<E> {
+        let _header = self.next_header().await?;
+        self.read_master_element().await
     }
 
     /// Read the header of the next element.
     ///
     /// Discards any unread data from the previous element.
-    pub(crate) fn next_header(&mut self) -> Result<Option<&EbmlElementHeader<S>>> {
+    pub(crate) async fn next_header(&mut self) -> Result<Option<&EbmlElementHeader<S>>> {
         // Consume the current element if it has a known size, and skip past any remaining unread
         // data.
         if let Some(elem) = self.current.take() {
@@ -470,7 +477,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                     if pos < end {
                         // Element had unread data, skip it.
                         log::debug!("skipping {} unread bytes", end - pos);
-                        self.reader.ignore_bytes(end - pos)?;
+                        self.reader.ignore_bytes(end - pos).await?;
                     }
                 }
                 _ => {
@@ -508,7 +515,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
         let depth = self.depth();
 
         // Read an EBML element header.
-        let header = EbmlElementHeader::read(&mut self.reader, depth, &self.schema)?;
+        let header = EbmlElementHeader::read(&mut self.reader, depth, &self.schema).await?;
 
         // let indent = 2 * header.depth as usize;
         // log::trace!(
@@ -572,7 +579,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                     // TODO: Maybe scan for other elements instead of skipping to the end of the
                     // parent?
                     log::debug!("element out-of-bounds, ignoring");
-                    self.reader.ignore_bytes(parent_end - pos)?;
+                    self.reader.ignore_bytes(parent_end - pos).await?;
                     return Ok(None);
                 }
             }
@@ -584,36 +591,40 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     }
 
     /// Read the contents of the current element if it is a master element.
-    pub(crate) fn read_master_element<E: EbmlElement<S>>(&mut self) -> Result<E> {
-        // Get a copy of the current element's header.
-        let header = *self.current_or_err()?;
+    pub(crate) fn read_master_element<E: EbmlElement<S>>(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<E>> + Send + '_>> {
+        Box::pin(async move {
+            // Get a copy of the current element's header.
+            let header = *self.current_or_err()?;
 
-        if let Some(info) = header.element_info {
-            // The current element is a known element type.
-            if info.data_type() == EbmlDataType::Master && info.element_type() == E::TYPE {
-                // The current element is a master element with the same type of the element being
-                // read.
-                self.push_element()?;
-                let element = E::read(self, &header)?;
-                self.pop_element()?;
-                Ok(element)
+            if let Some(info) = header.element_info {
+                // The current element is a known element type.
+                if info.data_type() == EbmlDataType::Master && info.element_type() == E::TYPE {
+                    // The current element is a master element with the same type of the element being
+                    // read.
+                    self.push_element()?;
+                    let element = E::read(self, &header).await?;
+                    self.pop_element()?;
+                    Ok(element)
+                } else {
+                    // Element is not a master element, it cannot be read as an element.
+                    Err(EbmlError::ExpectedMasterElement)
+                }
             } else {
-                // Element is not a master element, it cannot be read as an element.
-                Err(EbmlError::ExpectedMasterElement)
+                // The current element is not a known element type.
+                Err(EbmlError::UnknownElement)
             }
-        } else {
-            // The current element is not a known element type.
-            Err(EbmlError::UnknownElement)
-        }
+        })
     }
 
     /// Skip element data instead of reading it.
-    pub(crate) fn skip_data(&mut self) -> Result<()> {
+    pub(crate) async fn skip_data(&mut self) -> Result<()> {
         let header = self.current_or_err()?;
 
         // The data length should be known for all non-master elements.
         let size = header.data_size.ok_or(EbmlError::UnknownElementDataSize)?;
-        self.reader.ignore_bytes(size)?;
+        self.reader.ignore_bytes(size).await?;
         self.discard_current();
 
         Ok(())
@@ -621,7 +632,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
 
     /// Read the value of an element containing unsigned integer data. If the element is empty,
     /// returns `None`.
-    pub(crate) fn read_u64(&mut self) -> Result<Option<u64>> {
+    pub(crate) async fn read_u64(&mut self) -> Result<Option<u64>> {
         let element = self.current_or_err()?;
 
         match element.element_info {
@@ -633,7 +644,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                         0 => Ok(None),
                         1..=8 => {
                             let mut buf = [0u8; 8];
-                            self.reader.read_buf_exact(&mut buf[8 - size..])?;
+                            self.reader.read_buf_exact(&mut buf[8 - size..]).await?;
                             self.discard_current();
                             Ok(Some(u64::from_be_bytes(buf)))
                         }
@@ -650,21 +661,21 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     /// returns a user-provided default value instead.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn read_u64_default(&mut self, default: u64) -> Result<u64> {
-        Ok(self.read_u64()?.unwrap_or(default))
+    pub(crate) async fn read_u64_default(&mut self, default: u64) -> Result<u64> {
+        Ok(self.read_u64().await?.unwrap_or(default))
     }
 
     /// Read the value of an element containing unsigned integer data. If the element is empty,
     /// returns 0, the EBML-defined default value for an empty unsigned integer element.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn read_u64_no_default(&mut self) -> Result<u64> {
-        Ok(self.read_u64()?.unwrap_or_default())
+    pub(crate) async fn read_u64_no_default(&mut self) -> Result<u64> {
+        Ok(self.read_u64().await?.unwrap_or_default())
     }
 
     /// Read the value of an element containing signed integer data. If the element is empty,
     /// returns `None`.
-    pub(crate) fn read_i64(&mut self) -> Result<Option<i64>> {
+    pub(crate) async fn read_i64(&mut self) -> Result<Option<i64>> {
         let element = self.current_or_err()?;
 
         match element.element_info {
@@ -677,7 +688,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                         0 => Ok(None),
                         1..=8 => {
                             let mut buf = [0u8; 8];
-                            self.reader.read_buf_exact(&mut buf[8 - size..])?;
+                            self.reader.read_buf_exact(&mut buf[8 - size..]).await?;
                             self.discard_current();
                             let signed =
                                 sign_extend_leq64_to_i64(u64::from_be_bytes(buf), 8 * size as u32);
@@ -696,21 +707,21 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     /// returns a user-provided default value instead.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn read_i64_default(&mut self, default: i64) -> Result<i64> {
-        Ok(self.read_i64()?.unwrap_or(default))
+    pub(crate) async fn read_i64_default(&mut self, default: i64) -> Result<i64> {
+        Ok(self.read_i64().await?.unwrap_or(default))
     }
 
     /// Read the value of an element containing unsigned integer data. If the element is empty,
     /// returns 0, the EBML-defined default value for an empty signed integer element.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn read_i64_no_default(&mut self) -> Result<i64> {
-        Ok(self.read_i64()?.unwrap_or_default())
+    pub(crate) async fn read_i64_no_default(&mut self) -> Result<i64> {
+        Ok(self.read_i64().await?.unwrap_or_default())
     }
 
     /// Read the value of an element containing floating-point data. If the element is empty,
     /// returns `None`.
-    pub(crate) fn read_f64(&mut self) -> Result<Option<f64>> {
+    pub(crate) async fn read_f64(&mut self) -> Result<Option<f64>> {
         let element = self.current_or_err()?;
 
         match element.element_info {
@@ -721,12 +732,12 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                     match size {
                         0 => Ok(None),
                         4 => {
-                            let value = self.reader.read_be_f32()?;
+                            let value = self.reader.read_be_f32().await?;
                             self.discard_current();
                             Ok(Some(f64::from(value)))
                         }
                         8 => {
-                            let value = self.reader.read_be_f64()?;
+                            let value = self.reader.read_be_f64().await?;
                             self.discard_current();
                             Ok(Some(value))
                         }
@@ -743,44 +754,44 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     /// returns a user-provided default value instead.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn read_f64_default(&mut self, default: f64) -> Result<f64> {
-        Ok(self.read_f64()?.unwrap_or(default))
+    pub(crate) async fn read_f64_default(&mut self, default: f64) -> Result<f64> {
+        Ok(self.read_f64().await?.unwrap_or(default))
     }
 
     /// Read the value of an element containing floating-point data. If the element is empty,
     /// returns 0.0, the EBML-defined default value for an empty floating-point element.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn read_f64_no_default(&mut self) -> Result<f64> {
-        Ok(self.read_f64()?.unwrap_or_default())
+    pub(crate) async fn read_f64_no_default(&mut self) -> Result<f64> {
+        Ok(self.read_f64().await?.unwrap_or_default())
     }
 
     /// Read the value of an element containing a date. If the element is empty, returns `None`.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn read_date(&mut self) -> Result<Option<i64>> {
-        self.read_i64()
+    pub(crate) async fn read_date(&mut self) -> Result<Option<i64>> {
+        self.read_i64().await
     }
 
     /// Read the value of an element containing a date. If the element is empty, returns a
     /// user-provided default value instead.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn read_date_default(&mut self, default: i64) -> Result<i64> {
-        Ok(self.read_date()?.unwrap_or(default))
+    pub(crate) async fn read_date_default(&mut self, default: i64) -> Result<i64> {
+        Ok(self.read_date().await?.unwrap_or(default))
     }
 
     /// Read the value of an element containing a date. If the element is empty, returns 0, the
     /// EBML-defined default value for an empty date element.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn read_date_no_default(&mut self) -> Result<i64> {
-        Ok(self.read_date()?.unwrap_or_default())
+    pub(crate) async fn read_date_no_default(&mut self) -> Result<i64> {
+        Ok(self.read_date().await?.unwrap_or_default())
     }
 
     /// Read the value of an element containing string data. If the element is empty, returns
     /// `None`.
-    pub(crate) fn read_string(&mut self) -> Result<Option<String>> {
+    pub(crate) async fn read_string(&mut self) -> Result<Option<String>> {
         let element = self.current_or_err()?;
 
         match element.element_info {
@@ -791,7 +802,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                     match size {
                         0 => Ok(None),
                         _ => {
-                            let data = self.reader.read_boxed_slice_exact(size)?;
+                            let data = self.reader.read_boxed_slice_exact(size).await?;
                             self.discard_current();
                             let bytes = data.split(|b| *b == 0).next().unwrap_or(&data);
                             Ok(Some(String::from_utf8_lossy(bytes).into_owned()))
@@ -808,20 +819,20 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     /// user-provided default value instead.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn read_string_default(&mut self, default: &str) -> Result<String> {
-        Ok(self.read_string()?.unwrap_or_else(|| default.into()))
+    pub(crate) async fn read_string_default(&mut self, default: &str) -> Result<String> {
+        Ok(self.read_string().await?.unwrap_or_else(|| default.into()))
     }
 
     /// Read the value of an element containing string data. If the element is empty, returns "",
     /// the EBML-defined default value for an empty string element.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn read_string_no_default(&mut self) -> Result<String> {
-        Ok(self.read_string()?.unwrap_or_default())
+    pub(crate) async fn read_string_no_default(&mut self) -> Result<String> {
+        Ok(self.read_string().await?.unwrap_or_default())
     }
 
     /// Read a boxed slice of the binary data carried by a binary element.
-    pub(crate) fn read_binary(&mut self) -> Result<Box<[u8]>> {
+    pub(crate) async fn read_binary(&mut self) -> Result<Box<[u8]>> {
         let element = self.current_or_err()?;
 
         match element.element_info {
@@ -829,7 +840,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                 EbmlDataType::Master => Err(EbmlError::ExpectedNonMasterElement),
                 EbmlDataType::Binary => {
                     let size = element.data_size.ok_or(EbmlError::UnknownElementDataSize)? as usize;
-                    let data = self.reader.read_boxed_slice_exact(size)?;
+                    let data = self.reader.read_boxed_slice_exact(size).await?;
                     self.discard_current();
                     Ok(data)
                 }
@@ -842,7 +853,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
     /// Read the binary data carried by a binary element into a provided byte slice.
     ///
     /// It is an error if the buffer is too small.
-    pub(crate) fn read_binary_into(&mut self, buf: &mut [u8]) -> Result<usize> {
+    pub(crate) async fn read_binary_into(&mut self, buf: &mut [u8]) -> Result<usize> {
         let element = self.current_or_err()?;
 
         match element.element_info {
@@ -853,7 +864,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                     if size > buf.len() {
                         return Err(EbmlError::BufferTooSmall);
                     }
-                    let read_len = self.reader.read_buf(&mut buf[..size])?;
+                    let read_len = self.reader.read_buf(&mut buf[..size]).await?;
                     self.discard_current();
                     Ok(read_len)
                 }
@@ -887,9 +898,9 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
 
 /// Read an EBML element ID (as in RFC8794) from the current position of the reader and returns
 /// its value, and length in bytes (1-4).
-fn read_element_id<R: ReadBytes>(reader: &mut R) -> Result<(u32, u8)> {
+async fn read_element_id<R: ReadBytes>(reader: &mut R) -> Result<(u32, u8)> {
     // Read the leading byte of the element ID.
-    let byte = reader.read_byte()?;
+    let byte = reader.read_byte().await?;
 
     // The number of leading zeros indicate length of the element ID in bytes.
     let len = byte.leading_zeros() as u8 + 1;
@@ -902,7 +913,7 @@ fn read_element_id<R: ReadBytes>(reader: &mut R) -> Result<(u32, u8)> {
     // Read remaining octets
     let mut id = u32::from(byte);
     for _ in 1..len {
-        let byte = reader.read_byte()?;
+        let byte = reader.read_byte().await?;
         id = (id << 8) | u32::from(byte);
     }
 
@@ -911,8 +922,8 @@ fn read_element_id<R: ReadBytes>(reader: &mut R) -> Result<(u32, u8)> {
 }
 
 /// Read the size of an EBML element.
-fn read_element_data_size<R: ReadBytes>(reader: &mut R) -> Result<Option<u64>> {
-    let (size, len) = read_vint(reader)?;
+async fn read_element_data_size<R: ReadBytes>(reader: &mut R) -> Result<Option<u64>> {
+    let (size, len) = read_vint(reader).await?;
 
     // If the VINT_DATA portion of the variable sized unsigned integer representing the data size is
     // all 1s, then the element data size is unknown. The VINT_DATA portion of the decoded integer
@@ -928,13 +939,13 @@ fn read_element_data_size<R: ReadBytes>(reader: &mut R) -> Result<Option<u64>> {
 
 /// Read an unsigned variable size integer (as in RFC8794) from the reader and return it or an
 /// error.
-pub(crate) fn read_unsigned_vint<R: ReadBytes>(reader: &mut R) -> Result<u64> {
-    Ok(read_vint(reader)?.0)
+pub(crate) async fn read_unsigned_vint<R: ReadBytes>(reader: &mut R) -> Result<u64> {
+    Ok(read_vint(reader).await?.0)
 }
 
 /// Read a signed variable size integer (as in RFC8794) from the reader and return it or an error.
-pub(crate) fn read_signed_vint<R: ReadBytes>(reader: &mut R) -> Result<i64> {
-    let (value, len) = read_vint(reader)?;
+pub(crate) async fn read_signed_vint<R: ReadBytes>(reader: &mut R) -> Result<i64> {
+    let (value, len) = read_vint(reader).await?;
     // Convert to a signed integer by range shifting.
     let half_range = i64::pow(2, (u32::from(len) * 7) - 1) - 1;
     Ok(value as i64 - half_range)
@@ -942,8 +953,8 @@ pub(crate) fn read_signed_vint<R: ReadBytes>(reader: &mut R) -> Result<i64> {
 
 /// Read an unsigned variable size integer (as in RFC8794) from the stream and return both its value
 /// and length in byte, or an error.
-fn read_vint<R: ReadBytes>(mut reader: R) -> Result<(u64, u8)> {
-    let byte = reader.read_byte()?;
+async fn read_vint<R: ReadBytes>(mut reader: R) -> Result<(u64, u8)> {
+    let byte = reader.read_byte().await?;
 
     // Determine VINT_WIDTH + 1, the total length of the variable size integer.
     let len = byte.leading_zeros() as u8 + 1;
@@ -957,7 +968,7 @@ fn read_vint<R: ReadBytes>(mut reader: R) -> Result<(u64, u8)> {
 
     // Read remaining bytes.
     for _ in 1..len {
-        let byte = reader.read_byte()?;
+        let byte = reader.read_byte().await?;
         vint = (vint << 8) | u64::from(byte);
     }
 
@@ -970,36 +981,42 @@ mod tests {
 
     use super::{read_element_id, read_signed_vint, read_unsigned_vint};
 
-    #[test]
-    fn verify_read_element_id() {
-        assert_eq!(read_element_id(&mut BufReader::new(&[0x82])).unwrap(), (0x82, 1));
-        assert_eq!(read_element_id(&mut BufReader::new(&[0x40, 0x02])).unwrap(), (0x4002, 2));
+    #[futures_test::test]
+    async fn verify_read_element_id() {
+        assert_eq!(read_element_id(&mut BufReader::new(&[0x82])).await.unwrap(), (0x82, 1));
+        assert_eq!(read_element_id(&mut BufReader::new(&[0x40, 0x02])).await.unwrap(), (0x4002, 2));
         assert_eq!(
-            read_element_id(&mut BufReader::new(&[0x20, 0x00, 0x02])).unwrap(),
+            read_element_id(&mut BufReader::new(&[0x20, 0x00, 0x02])).await.unwrap(),
             (0x200002, 3)
         );
         assert_eq!(
-            read_element_id(&mut BufReader::new(&[0x10, 0x00, 0x00, 0x02])).unwrap(),
+            read_element_id(&mut BufReader::new(&[0x10, 0x00, 0x00, 0x02])).await.unwrap(),
             (0x10000002, 4)
         );
     }
 
-    #[test]
-    fn verify_read_unsigned_vint() {
-        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x82])).unwrap(), 2);
-        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x40, 0x02])).unwrap(), 2);
-        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x20, 0x00, 0x02])).unwrap(), 2);
-        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x10, 0x00, 0x00, 0x02])).unwrap(), 2);
+    #[futures_test::test]
+    async fn verify_read_unsigned_vint() {
+        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x82])).await.unwrap(), 2);
+        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x40, 0x02])).await.unwrap(), 2);
+        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x20, 0x00, 0x02])).await.unwrap(), 2);
         assert_eq!(
-            read_unsigned_vint(&mut BufReader::new(&[0x08, 0x00, 0x00, 0x00, 0x02])).unwrap(),
+            read_unsigned_vint(&mut BufReader::new(&[0x10, 0x00, 0x00, 0x02])).await.unwrap(),
             2
         );
         assert_eq!(
-            read_unsigned_vint(&mut BufReader::new(&[0x04, 0x00, 0x00, 0x00, 0x00, 0x02])).unwrap(),
+            read_unsigned_vint(&mut BufReader::new(&[0x08, 0x00, 0x00, 0x00, 0x02])).await.unwrap(),
+            2
+        );
+        assert_eq!(
+            read_unsigned_vint(&mut BufReader::new(&[0x04, 0x00, 0x00, 0x00, 0x00, 0x02]))
+                .await
+                .unwrap(),
             2
         );
         assert_eq!(
             read_unsigned_vint(&mut BufReader::new(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]))
+                .await
                 .unwrap(),
             2
         );
@@ -1007,14 +1024,15 @@ mod tests {
             read_unsigned_vint(&mut BufReader::new(&[
                 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
             ]))
+            .await
             .unwrap(),
             2
         );
     }
 
-    #[test]
-    fn verify_read_signed_vint() {
-        assert_eq!(read_signed_vint(&mut BufReader::new(&[0x80])).unwrap(), -63);
-        assert_eq!(read_signed_vint(&mut BufReader::new(&[0x40, 0x00])).unwrap(), -8191);
+    #[futures_test::test]
+    async fn verify_read_signed_vint() {
+        assert_eq!(read_signed_vint(&mut BufReader::new(&[0x80])).await.unwrap(), -63);
+        assert_eq!(read_signed_vint(&mut BufReader::new(&[0x40, 0x00])).await.unwrap(), -8191);
     }
 }
