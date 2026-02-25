@@ -181,8 +181,7 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
             // as a prefix, move it to the next branch.
             if *next == codeword << i {
                 *next = branch << i;
-            }
-            else {
+            } else {
                 break;
             }
         }
@@ -210,67 +209,64 @@ pub struct VorbisCodebook {
 }
 
 impl VorbisCodebook {
-    pub fn read<B: ReadBitsRtl>(bs: &mut B) -> Result<Self> {
+    pub async fn read<B: ReadBitsRtl>(bs: &mut B) -> Result<Self> {
         // Verify codebook synchronization word.
-        let sync = bs.read_bits_leq32(24)?;
+        let sync = bs.read_bits_leq32(24).await?;
 
         if sync != 0x564342 {
             return decode_error("vorbis: invalid codebook sync");
         }
 
         // Read codebook number of dimensions and entries.
-        let codebook_dimensions = bs.read_bits_leq32(16)? as u16;
-        let codebook_entries = bs.read_bits_leq32(24)?;
+        let codebook_dimensions = bs.read_bits_leq32(16).await? as u16;
+        let codebook_entries = bs.read_bits_leq32(24).await?;
 
         // Ordered flag.
-        let is_length_ordered = bs.read_bool()?;
+        let is_length_ordered = bs.read_bool().await?;
 
         let mut code_lens = Vec::<u8>::with_capacity(codebook_entries as usize);
         let mut code_values = Vec::<u32>::with_capacity(codebook_entries as usize);
 
         if !is_length_ordered {
             // Codeword list is not length ordered.
-            let is_sparse = bs.read_bool()?;
+            let is_sparse = bs.read_bool().await?;
 
             if is_sparse {
                 // Sparsely packed codeword entry list.
                 for entry in 0..codebook_entries {
-                    let is_used = bs.read_bool()?;
+                    let is_used = bs.read_bool().await?;
 
                     // The codeword list is sparse. Only populate entries that are used.
                     if is_used {
-                        let code_len = bs.read_bits_leq32(5)? as u8 + 1;
+                        let code_len = bs.read_bits_leq32(5).await? as u8 + 1;
 
                         code_lens.push(code_len);
                         code_values.push(entry);
                     }
                 }
-            }
-            else {
+            } else {
                 // Densely packed codeword entry list.
                 for _ in 0..codebook_entries {
-                    let code_len = bs.read_bits_leq32(5)? as u8 + 1;
+                    let code_len = bs.read_bits_leq32(5).await? as u8 + 1;
                     code_lens.push(code_len)
                 }
 
                 // The codeword list is not sparse. Populate all values.
                 code_values.extend(0..codebook_entries);
             }
-        }
-        else {
+        } else {
             // Codeword list is length ordered.
             let mut cur_entry = 0;
-            let mut cur_len = bs.read_bits_leq32(5)? + 1;
+            let mut cur_len = bs.read_bits_leq32(5).await? + 1;
 
             loop {
                 let num_bits = if codebook_entries > cur_entry {
                     ilog(codebook_entries - cur_entry)
-                }
-                else {
+                } else {
                     0
                 };
 
-                let num = bs.read_bits_leq32(num_bits)?;
+                let num = bs.read_bits_leq32(num_bits).await?;
 
                 code_lens.extend(core::iter::repeat_n(cur_len as u8, num as usize));
 
@@ -303,15 +299,15 @@ impl VorbisCodebook {
         }
 
         // Read and unpack vector quantization (VQ) lookup table.
-        let lookup_type = bs.read_bits_leq32(4)?;
+        let lookup_type = bs.read_bits_leq32(4).await?;
 
         let vq_vec = match lookup_type & 0xf {
             0 => None,
             1 | 2 => {
-                let min_value = float32_unpack(bs.read_bits_leq32(32)?);
-                let delta_value = float32_unpack(bs.read_bits_leq32(32)?);
-                let value_bits = bs.read_bits_leq32(4)? + 1;
-                let sequence_p = bs.read_bool()?;
+                let min_value = float32_unpack(bs.read_bits_leq32(32).await?);
+                let delta_value = float32_unpack(bs.read_bits_leq32(32).await?);
+                let value_bits = bs.read_bits_leq32(4).await? + 1;
+                let sequence_p = bs.read_bool().await?;
 
                 // Lookup type is either 1 or 2 as per outer match.
                 let lookup_values = match lookup_type {
@@ -323,7 +319,7 @@ impl VorbisCodebook {
                 let mut multiplicands = Vec::<u16>::new();
 
                 for _ in 0..lookup_values {
-                    multiplicands.push(bs.read_bits_leq32(value_bits)? as u16);
+                    multiplicands.push(bs.read_bits_leq32(value_bits).await? as u16);
                 }
 
                 let vq_lookup = match lookup_type {
@@ -382,8 +378,7 @@ impl VorbisCodebook {
             let start = dim * entry as usize;
 
             Ok(&vq[start..start + dim])
-        }
-        else {
+        } else {
             decode_error("vorbis: not a vq codebook")
         }
     }

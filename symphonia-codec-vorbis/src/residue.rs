@@ -60,26 +60,26 @@ pub struct Residue {
 }
 
 impl Residue {
-    pub fn try_read(
+    pub async fn try_read(
         bs: &mut BitReaderRtl<'_>,
         residue_type: u16,
         max_codebook: u8,
     ) -> Result<Self> {
-        let setup = Self::read_setup(bs, residue_type, max_codebook)?;
+        let setup = Self::read_setup(bs, residue_type, max_codebook).await?;
 
         Ok(Residue { setup, part_classes: Default::default(), type2_buf: Default::default() })
     }
 
-    fn read_setup(
+    async fn read_setup(
         bs: &mut BitReaderRtl<'_>,
         residue_type: u16,
         max_codebook: u8,
     ) -> Result<ResidueSetup> {
-        let residue_begin = bs.read_bits_leq32(24)?;
-        let residue_end = bs.read_bits_leq32(24)?;
-        let residue_partition_size = bs.read_bits_leq32(24)? + 1;
-        let residue_classifications = bs.read_bits_leq32(6)? as u8 + 1;
-        let residue_classbook = bs.read_bits_leq32(8)? as u8;
+        let residue_begin = bs.read_bits_leq32(24).await?;
+        let residue_end = bs.read_bits_leq32(24).await?;
+        let residue_partition_size = bs.read_bits_leq32(24).await? + 1;
+        let residue_classifications = bs.read_bits_leq32(6).await? as u8 + 1;
+        let residue_classbook = bs.read_bits_leq32(8).await? as u8;
 
         if residue_end < residue_begin {
             return decode_error("vorbis: invalid residue begin and end");
@@ -88,9 +88,10 @@ impl Residue {
         let mut residue_vq_books = Vec::<ResidueVqClass>::new();
 
         for _ in 0..residue_classifications {
-            let low_bits = bs.read_bits_leq32(3)? as u8;
+            let low_bits = bs.read_bits_leq32(3).await? as u8;
 
-            let high_bits = if bs.read_bool()? { bs.read_bits_leq32(5)? as u8 } else { 0 };
+            let high_bits =
+                if bs.read_bool().await? { bs.read_bits_leq32(5).await? as u8 } else { 0 };
 
             let is_used = (high_bits << 3) | low_bits;
 
@@ -108,7 +109,7 @@ impl Residue {
 
                 if is_codebook_used {
                     // Read the codebook number.
-                    *book = bs.read_bits_leq32(8)? as u8;
+                    *book = bs.read_bits_leq32(8).await? as u8;
 
                     // The codebook number cannot be 0 or exceed the number of codebooks in this
                     // stream.
@@ -135,7 +136,7 @@ impl Residue {
         Ok(residue)
     }
 
-    pub fn read_residue(
+    pub async fn read_residue(
         &mut self,
         bs: &mut BitReaderRtl<'_>,
         bs_exp: u8,
@@ -145,8 +146,7 @@ impl Residue {
     ) -> Result<()> {
         let result = if self.setup.residue_type == 2 {
             self.read_residue_inner_type_2(bs, bs_exp, codebooks, residue_channels, channels)
-        }
-        else {
+        } else {
             self.read_residue_inner_type_0_1(bs, bs_exp, codebooks, residue_channels, channels)
         };
 
@@ -461,8 +461,7 @@ fn decode_classes(mut val: u32, parts_per_classword: u16, classifications: u32, 
         }
 
         skip
-    }
-    else {
+    } else {
         0
     };
 

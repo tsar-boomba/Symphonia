@@ -10,6 +10,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use hashbrown::HashSet;
 
+use symphonia_core::async_trait;
 use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BitReaderRtl, ReadBitsRtl};
 
@@ -113,8 +114,9 @@ macro_rules! try_or_ret {
     };
 }
 
+#[async_trait]
 pub trait Floor: Send + Sync {
-    fn read_channel(
+    async fn read_channel(
         &mut self,
         bs: &mut BitReaderRtl<'_>,
         codebooks: &[VorbisCodebook],
@@ -148,35 +150,35 @@ pub struct Floor0 {
 }
 
 impl Floor0 {
-    pub fn try_read(
+    pub async fn try_read(
         bs: &mut BitReaderRtl<'_>,
         bs0_exp: u8,
         bs1_exp: u8,
         max_codebook: u8,
     ) -> Result<Box<dyn Floor>> {
-        let setup = Self::read_setup(bs, bs0_exp, bs1_exp, max_codebook)?;
+        let setup = Self::read_setup(bs, bs0_exp, bs1_exp, max_codebook).await?;
 
         Ok(Box::new(Floor0 { setup, is_unused: false, amplitude: 0, coeffs: [0.0; 256] }))
     }
 
-    fn read_setup(
+    async fn read_setup(
         bs: &mut BitReaderRtl<'_>,
         bs0_exp: u8,
         bs1_exp: u8,
         max_codebook: u8,
     ) -> Result<Floor0Setup> {
-        let floor0_order = bs.read_bits_leq32(8)? as u8;
-        let floor0_rate = bs.read_bits_leq32(16)? as u16;
-        let floor0_bark_map_size = bs.read_bits_leq32(16)? as u16;
-        let floor0_amplitude_bits = bs.read_bits_leq32(6)? as u8;
-        let floor0_amplitude_offset = bs.read_bits_leq32(8)? as u8;
-        let floor0_number_of_books = bs.read_bits_leq32(4)? as u8 + 1;
+        let floor0_order = bs.read_bits_leq32(8).await? as u8;
+        let floor0_rate = bs.read_bits_leq32(16).await? as u16;
+        let floor0_bark_map_size = bs.read_bits_leq32(16).await? as u16;
+        let floor0_amplitude_bits = bs.read_bits_leq32(6).await? as u8;
+        let floor0_amplitude_offset = bs.read_bits_leq32(8).await? as u8;
+        let floor0_number_of_books = bs.read_bits_leq32(4).await? as u8 + 1;
         let mut floor0_book_list = [0; 16];
 
         let end = usize::from(floor0_number_of_books);
 
         for book in &mut floor0_book_list[..end] {
-            *book = bs.read_bits_leq32(8)? as u8;
+            *book = bs.read_bits_leq32(8).await? as u8;
 
             if *book >= max_codebook {
                 return decode_error("vorbis: floor0, invalid codebook number");
@@ -203,8 +205,9 @@ impl Floor0 {
     }
 }
 
+#[async_trait]
 impl Floor for Floor0 {
-    fn read_channel(
+    async fn read_channel(
         &mut self,
         bs: &mut BitReaderRtl<'_>,
         codebooks: &[VorbisCodebook],
@@ -213,13 +216,13 @@ impl Floor for Floor0 {
         self.is_unused = true;
 
         self.amplitude =
-            io_try_or_ret!(bs.read_bits_leq64(u32::from(self.setup.floor0_amplitude_bits)));
+            io_try_or_ret!(bs.read_bits_leq64(u32::from(self.setup.floor0_amplitude_bits)).await);
 
         if self.amplitude != 0 {
             // Read the index into the floor's codebook list that contains the actual codebook
             // index.
             let floor_book_idx_bits = ilog(u32::from(self.setup.floor0_number_of_books));
-            let floor_book_idx = io_try_or_ret!(bs.read_bits_leq32(floor_book_idx_bits)) as usize;
+            let floor_book_idx = io_try_or_ret!(bs.read_bits_leq32(floor_book_idx_bits).await) as usize;
 
             // Get the actual codebook index from the floor's codebook list.
             let codebook_idx = self.setup.floor0_book_list[floor_book_idx] as usize;
@@ -440,8 +443,8 @@ pub struct Floor1 {
 }
 
 impl Floor1 {
-    pub fn try_read(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Box<dyn Floor>> {
-        let setup = Self::read_setup(bs, max_codebook)?;
+    pub async fn try_read(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Box<dyn Floor>> {
+        let setup = Self::read_setup(bs, max_codebook).await?;
 
         let x_list_len = setup.floor1_x_list.len();
 
@@ -454,9 +457,9 @@ impl Floor1 {
         }))
     }
 
-    fn read_setup(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Floor1Setup> {
+    async fn read_setup(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Floor1Setup> {
         // The number of partitions. 5-bit value, 0..31 range.
-        let floor1_partitions = bs.read_bits_leq32(5)? as usize;
+        let floor1_partitions = bs.read_bits_leq32(5).await? as usize;
 
         // Parition list of up-to 32 partitions (floor1_partitions), with each partition indicating
         // a 4-bit class (0..16) identifier.
@@ -469,7 +472,7 @@ impl Floor1 {
 
             // Read the partition class list.
             for class_idx in &mut floor1_partition_class_list[..floor1_partitions] {
-                *class_idx = bs.read_bits_leq32(4)? as u8;
+                *class_idx = bs.read_bits_leq32(4).await? as u8;
 
                 // Find the maximum class value.
                 max_class = max_class.max(*class_idx);
@@ -478,11 +481,11 @@ impl Floor1 {
             let num_classes = usize::from(1 + max_class);
 
             for class in floor1_classes[..num_classes].iter_mut() {
-                class.dimensions = bs.read_bits_leq32(3)? as u8 + 1;
-                class.subclass_bits = bs.read_bits_leq32(2)? as u8;
+                class.dimensions = bs.read_bits_leq32(3).await? as u8 + 1;
+                class.subclass_bits = bs.read_bits_leq32(2).await? as u8;
 
                 if class.subclass_bits != 0 {
-                    let masterbook = bs.read_bits_leq32(8)? as u8;
+                    let masterbook = bs.read_bits_leq32(8).await? as u8;
 
                     if masterbook >= max_codebook {
                         return decode_error("vorbis: floor1, invalid codebook for class");
@@ -495,7 +498,7 @@ impl Floor1 {
 
                 for (i, book) in class.subbooks[..num_subclasses].iter_mut().enumerate() {
                     // Read the codebook number.
-                    *book = bs.read_bits_leq32(8)? as u8;
+                    *book = bs.read_bits_leq32(8).await? as u8;
 
                     // A codebook number > 0 indicates a codebook is used.
                     if *book > 0 {
@@ -512,9 +515,9 @@ impl Floor1 {
             }
         }
 
-        let floor1_multiplier = bs.read_bits_leq32(2)? as u8 + 1;
+        let floor1_multiplier = bs.read_bits_leq32(2).await? as u8 + 1;
 
-        let rangebits = bs.read_bits_leq32(4)?;
+        let rangebits = bs.read_bits_leq32(4).await?;
 
         let mut floor1_x_list = Vec::new();
         let mut floor1_x_list_unique = HashSet::new();
@@ -531,7 +534,7 @@ impl Floor1 {
             }
 
             for _ in 0..class.dimensions {
-                let x = bs.read_bits_leq32(rangebits)?;
+                let x = bs.read_bits_leq32(rangebits).await?;
 
                 // All elements in the x list must be unique.
                 if !floor1_x_list_unique.insert(x) {
@@ -655,8 +658,9 @@ impl Floor1 {
     }
 }
 
+#[async_trait]
 impl Floor for Floor1 {
-    fn read_channel(
+    async fn read_channel(
         &mut self,
         bs: &mut BitReaderRtl<'_>,
         codebooks: &[VorbisCodebook],
@@ -665,7 +669,7 @@ impl Floor for Floor1 {
         self.is_unused = true;
 
         // First bit marks if this floor is used. Exit early if it is not.
-        let is_used = io_try_or_ret!(bs.read_bool());
+        let is_used = io_try_or_ret!(bs.read_bool().await);
 
         if !is_used {
             return Ok(());
@@ -677,8 +681,8 @@ impl Floor for Floor1 {
         // The number of bits required to represent range.
         let range_bits = ilog(range - 1);
 
-        self.floor_y[0] = io_try_or_ret!(bs.read_bits_leq32(range_bits));
-        self.floor_y[1] = io_try_or_ret!(bs.read_bits_leq32(range_bits));
+        self.floor_y[0] = io_try_or_ret!(bs.read_bits_leq32(range_bits).await);
+        self.floor_y[1] = io_try_or_ret!(bs.read_bits_leq32(range_bits).await);
 
         let mut offset = 2;
 

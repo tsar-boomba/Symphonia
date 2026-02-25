@@ -34,7 +34,7 @@ use symphonia_core::dsp::mdct::Imdct;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BitReaderRtl, BufReader, FiniteBitStream, ReadBitsRtl, ReadBytes};
 use symphonia_core::packet::Packet;
-use symphonia_core::support_audio_codec;
+use symphonia_core::{async_trait, support_audio_codec};
 
 use symphonia_common::xiph::audio::vorbis::*;
 
@@ -77,7 +77,7 @@ pub struct VorbisDecoder {
 }
 
 impl VorbisDecoder {
-    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+    pub async fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
         // This decoder only supports Vorbis.
         if params.codec != CODEC_ID_VORBIS {
             return unsupported_error("vorbis: invalid codec");
@@ -93,10 +93,10 @@ impl VorbisDecoder {
         let mut reader = BufReader::new(extra_data);
 
         // Read ident header.
-        let ident = read_ident_header(&mut reader)?;
+        let ident = read_ident_header(&mut reader).await?;
 
         // Read setup data.
-        let setup = read_setup(&mut reader, &ident)?;
+        let setup = read_setup(&mut reader, &ident).await?;
 
         // Initialize static DSP data.
         let windows = Windows::new(1 << ident.bs0_exp, 1 << ident.bs1_exp);
@@ -136,19 +136,19 @@ impl VorbisDecoder {
         })
     }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+    async fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         let mut bs = BitReaderRtl::new(packet.buf());
 
         // Section 4.3.1 - Packet Type, Mode, and Window Decode
 
         // First bit must be 0 to indicate audio packet.
-        if bs.read_bool()? {
+        if bs.read_bool().await? {
             return decode_error("vorbis: not an audio packet");
         }
 
         let num_modes = self.modes.len() - 1;
 
-        let mode_number = bs.read_bits_leq32(common::ilog(num_modes as u32))? as usize;
+        let mode_number = bs.read_bits_leq32(common::ilog(num_modes as u32)).await? as usize;
 
         if mode_number >= self.modes.len() {
             return decode_error("vorbis: invalid packet mode number");
@@ -160,8 +160,8 @@ impl VorbisDecoder {
         let (bs_exp, imdct) = if mode.block_flag {
             // This packet (block) uses a long window. Do not use the window flags since they may
             // be wrong.
-            let _prev_window_flag = bs.read_bool()?;
-            let _next_window_flag = bs.read_bool()?;
+            let _prev_window_flag = bs.read_bool().await?;
+            let _next_window_flag = bs.read_bool().await?;
 
             (self.ident.bs1_exp, &mut self.dsp.imdct_long)
         }
@@ -184,7 +184,7 @@ impl VorbisDecoder {
             let floor = &mut self.floors[submap.floor as usize];
 
             // Read the floor from the bitstream.
-            floor.read_channel(&mut bs, &self.codebooks)?;
+            floor.read_channel(&mut bs, &self.codebooks).await?;
 
             ch.do_not_decode = floor.is_unused();
 
@@ -237,7 +237,7 @@ impl VorbisDecoder {
                 &self.codebooks,
                 &residue_channels,
                 &mut self.dsp.channels,
-            )?;
+            ).await?;
         }
 
         // Section 4.3.5 - Inverse Coupling
@@ -324,6 +324,7 @@ impl VorbisDecoder {
     }
 }
 
+#[async_trait]
 impl AudioDecoder for VorbisDecoder {
     fn reset(&mut self) {
         self.dsp.reset();
@@ -338,8 +339,8 @@ impl AudioDecoder for VorbisDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
-        if let Err(e) = self.decode_inner(packet) {
+    async fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+        if let Err(e) = self.decode_inner(packet).await {
             self.buf.clear();
             Err(e)
         }
@@ -357,15 +358,16 @@ impl AudioDecoder for VorbisDecoder {
     }
 }
 
+#[async_trait]
 impl RegisterableAudioDecoder for VorbisDecoder {
-    fn try_registry_new(
+    async fn try_registry_new(
         params: &AudioCodecParameters,
         opts: &AudioDecoderOptions,
     ) -> Result<Box<dyn AudioDecoder>>
     where
         Self: Sized,
     {
-        Ok(Box::new(VorbisDecoder::try_new(params, opts)?))
+        Ok(Box::new(VorbisDecoder::try_new(params, opts).await?))
     }
 
     fn supported_codecs() -> &'static [SupportedAudioCodec] {
@@ -397,9 +399,9 @@ const VORBIS_BLOCKSIZE_MIN: u8 = 6;
 /// The maximum block size (8192) expressed as a power-of-2 exponent.
 const VORBIS_BLOCKSIZE_MAX: u8 = 13;
 
-fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
+async fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
     // The packet type must be an identification header.
-    let packet_type = reader.read_u8()?;
+    let packet_type = reader.read_u8().await?;
 
     if packet_type != VORBIS_PACKET_TYPE_IDENTIFICATION {
         return decode_error("vorbis: invalid packet type for identification header");
@@ -407,21 +409,21 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
 
     // Next, the header packet signature must be correct.
     let mut packet_sig_buf = [0; 6];
-    reader.read_buf_exact(&mut packet_sig_buf)?;
+    reader.read_buf_exact(&mut packet_sig_buf).await?;
 
     if packet_sig_buf != VORBIS_HEADER_PACKET_SIGNATURE {
         return decode_error("vorbis: invalid header signature");
     }
 
     // Next, the Vorbis version must be 0.
-    let version = reader.read_u32()?;
+    let version = reader.read_u32().await?;
 
     if version != VORBIS_VERSION {
         return unsupported_error("vorbis: only vorbis 1 is supported");
     }
 
     // Next, the number of channels and sample rate must be non-zero.
-    let n_channels = reader.read_u8()?;
+    let n_channels = reader.read_u8().await?;
 
     if n_channels == 0 {
         return decode_error("vorbis: number of channels cannot be 0");
@@ -432,19 +434,19 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
         return unsupported_error("vorbis: only a maximum of 32 channels are supported");
     }
 
-    let sample_rate = reader.read_u32()?;
+    let sample_rate = reader.read_u32().await?;
 
     if sample_rate == 0 {
         return decode_error("vorbis: sample rate cannot be 0");
     }
 
     // Read the bitrate range.
-    let _bitrate_max = reader.read_u32()?;
-    let _bitrate_nom = reader.read_u32()?;
-    let _bitrate_min = reader.read_u32()?;
+    let _bitrate_max = reader.read_u32().await?;
+    let _bitrate_nom = reader.read_u32().await?;
+    let _bitrate_min = reader.read_u32().await?;
 
     // Next, blocksize_0 and blocksize_1 are packed into a single byte.
-    let block_sizes = reader.read_u8()?;
+    let block_sizes = reader.read_u8().await?;
 
     let bs0_exp = (block_sizes & 0x0f) >> 0;
     let bs1_exp = (block_sizes & 0xf0) >> 4;
@@ -464,7 +466,7 @@ fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
     }
 
     // Framing flag must be set.
-    if reader.read_u8()? != 0x1 {
+    if reader.read_u8().await? != 0x1 {
         return decode_error("vorbis: ident header framing flag unset");
     }
 
@@ -479,9 +481,9 @@ struct Setup {
     modes: Vec<Mode>,
 }
 
-fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Setup> {
+async fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Setup> {
     // The packet type must be an setup header.
-    let packet_type = reader.read_u8()?;
+    let packet_type = reader.read_u8().await?;
 
     if packet_type != VORBIS_PACKET_TYPE_SETUP {
         return decode_error("vorbis: invalid packet type for setup header");
@@ -489,7 +491,7 @@ fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Setup> 
 
     // Next, the setup packet signature must be correct.
     let mut packet_sig_buf = [0; 6];
-    reader.read_buf_exact(&mut packet_sig_buf)?;
+    reader.read_buf_exact(&mut packet_sig_buf).await?;
 
     if packet_sig_buf != VORBIS_HEADER_PACKET_SIGNATURE {
         return decode_error("vorbis: invalid setup header signature");
@@ -499,26 +501,26 @@ fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Setup> 
     let mut bs = BitReaderRtl::new(reader.read_buf_bytes_available_ref());
 
     // Read codebooks.
-    let codebooks = read_codebooks(&mut bs)?;
+    let codebooks = read_codebooks(&mut bs).await?;
 
     // Read time-domain transforms (placeholders in Vorbis 1).
-    read_time_domain_transforms(&mut bs)?;
+    read_time_domain_transforms(&mut bs).await?;
 
     // Read floors.
-    let floors = read_floors(&mut bs, ident.bs0_exp, ident.bs1_exp, codebooks.len() as u8)?;
+    let floors = read_floors(&mut bs, ident.bs0_exp, ident.bs1_exp, codebooks.len() as u8).await?;
 
     // Read residues.
-    let residues = read_residues(&mut bs, codebooks.len() as u8)?;
+    let residues = read_residues(&mut bs, codebooks.len() as u8).await?;
 
     // Read channel mappings.
     let mappings =
-        read_mappings(&mut bs, ident.n_channels, floors.len() as u8, residues.len() as u8)?;
+        read_mappings(&mut bs, ident.n_channels, floors.len() as u8, residues.len() as u8).await?;
 
     // Read modes.
-    let modes = read_modes(&mut bs, mappings.len() as u8)?;
+    let modes = read_modes(&mut bs, mappings.len() as u8).await?;
 
     // Framing flag must be set.
-    if !bs.read_bool()? {
+    if !bs.read_bool().await? {
         return decode_error("vorbis: setup header framing flag unset");
     }
 
@@ -529,17 +531,23 @@ fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Setup> 
     Ok(Setup { codebooks, floors, residues, mappings, modes })
 }
 
-fn read_codebooks(bs: &mut BitReaderRtl<'_>) -> Result<Vec<VorbisCodebook>> {
-    let count = bs.read_bits_leq32(8)? + 1;
-    (0..count).map(|_| VorbisCodebook::read(bs)).collect()
+async fn read_codebooks(bs: &mut BitReaderRtl<'_>) -> Result<Vec<VorbisCodebook>> {
+    let count = bs.read_bits_leq32(8).await? + 1;
+    let mut codebooks = Vec::with_capacity(count as usize);
+    
+    for _ in 0..count {
+        codebooks.push(VorbisCodebook::read(bs).await?);
+    }
+
+    Ok(codebooks)
 }
 
-fn read_time_domain_transforms(bs: &mut BitReaderRtl<'_>) -> Result<()> {
-    let count = bs.read_bits_leq32(6)? + 1;
+async fn read_time_domain_transforms(bs: &mut BitReaderRtl<'_>) -> Result<()> {
+    let count = bs.read_bits_leq32(6).await? + 1;
 
     for _ in 0..count {
         // All these values are placeholders and must be 0.
-        if bs.read_bits_leq32(16)? != 0 {
+        if bs.read_bits_leq32(16).await? != 0 {
             return decode_error("vorbis: invalid time domain tranform");
         }
     }
@@ -547,72 +555,96 @@ fn read_time_domain_transforms(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     Ok(())
 }
 
-fn read_floors(
+async fn read_floors(
     bs: &mut BitReaderRtl<'_>,
     bs0_exp: u8,
     bs1_exp: u8,
     max_codebook: u8,
 ) -> Result<Vec<Box<dyn Floor>>> {
-    let count = bs.read_bits_leq32(6)? + 1;
-    (0..count).map(|_| read_floor(bs, bs0_exp, bs1_exp, max_codebook)).collect()
+    let count = bs.read_bits_leq32(6).await? + 1;
+    let mut floors = Vec::with_capacity(count as usize);
+    
+    for _ in 0..count {
+        floors.push(read_floor(bs, bs0_exp, bs1_exp, max_codebook).await?);
+    }
+
+    Ok(floors)
 }
 
-fn read_floor(
+async fn read_floor(
     bs: &mut BitReaderRtl<'_>,
     bs0_exp: u8,
     bs1_exp: u8,
     max_codebook: u8,
 ) -> Result<Box<dyn Floor>> {
-    let floor_type = bs.read_bits_leq32(16)?;
+    let floor_type = bs.read_bits_leq32(16).await?;
 
     match floor_type {
-        0 => Floor0::try_read(bs, bs0_exp, bs1_exp, max_codebook),
-        1 => Floor1::try_read(bs, max_codebook),
+        0 => Floor0::try_read(bs, bs0_exp, bs1_exp, max_codebook).await,
+        1 => Floor1::try_read(bs, max_codebook).await,
         _ => decode_error("vorbis: invalid floor type"),
     }
 }
 
-fn read_residues(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Vec<Residue>> {
-    let count = bs.read_bits_leq32(6)? + 1;
-    (0..count).map(|_| read_residue(bs, max_codebook)).collect()
+async fn read_residues(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Vec<Residue>> {
+    let count = bs.read_bits_leq32(6).await? + 1;
+    let mut residues = Vec::with_capacity(count as usize);
+    
+    for _ in 0..count {
+        residues.push(read_residue(bs, max_codebook).await?);
+    }
+
+    Ok(residues)
 }
 
-fn read_residue(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Residue> {
-    let residue_type = bs.read_bits_leq32(16)? as u16;
+async fn read_residue(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Residue> {
+    let residue_type = bs.read_bits_leq32(16).await? as u16;
 
     match residue_type {
-        0..=2 => Residue::try_read(bs, residue_type, max_codebook),
+        0..=2 => Residue::try_read(bs, residue_type, max_codebook).await,
         _ => decode_error("vorbis: invalid residue type"),
     }
 }
 
-fn read_mappings(
+async fn read_mappings(
     bs: &mut BitReaderRtl<'_>,
     audio_channels: u8,
     max_floor: u8,
     max_residue: u8,
 ) -> Result<Vec<Mapping>> {
-    let count = bs.read_bits_leq32(6)? + 1;
-    (0..count).map(|_| read_mapping(bs, audio_channels, max_floor, max_residue)).collect()
+    let count = bs.read_bits_leq32(6).await? + 1;
+    let mut mappings = Vec::with_capacity(count as usize);
+    
+    for _ in 0..count {
+        mappings.push(read_mapping(bs, audio_channels, max_floor, max_residue).await?);
+    }
+
+    Ok(mappings)
 }
 
-fn read_mapping(
+async fn read_mapping(
     bs: &mut BitReaderRtl<'_>,
     audio_channels: u8,
     max_floor: u8,
     max_residue: u8,
 ) -> Result<Mapping> {
-    let mapping_type = bs.read_bits_leq32(16)?;
+    let mapping_type = bs.read_bits_leq32(16).await?;
 
     match mapping_type {
-        0 => read_mapping_type0(bs, audio_channels, max_floor, max_residue),
+        0 => read_mapping_type0(bs, audio_channels, max_floor, max_residue).await,
         _ => decode_error("vorbis: invalid mapping type"),
     }
 }
 
-fn read_modes(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Vec<Mode>> {
-    let count = bs.read_bits_leq32(6)? + 1;
-    (0..count).map(|_| read_mode(bs, max_mapping)).collect()
+async fn read_modes(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Vec<Mode>> {
+    let count = bs.read_bits_leq32(6).await? + 1;
+    let mut modes = Vec::with_capacity(count as usize);
+
+    for _ in 0..count {
+        modes.push(read_mode(bs, max_mapping).await?);
+    }
+
+    Ok(modes)
 }
 
 #[derive(Debug)]
@@ -634,19 +666,19 @@ struct Mapping {
     submaps: Vec<SubMap>,
 }
 
-fn read_mapping_type0(
+async fn read_mapping_type0(
     bs: &mut BitReaderRtl<'_>,
     audio_channels: u8,
     max_floor: u8,
     max_residue: u8,
 ) -> Result<Mapping> {
-    let num_submaps = if bs.read_bool()? { bs.read_bits_leq32(4)? as u8 + 1 } else { 1 };
+    let num_submaps = if bs.read_bool().await? { bs.read_bits_leq32(4).await? as u8 + 1 } else { 1 };
 
     let mut couplings = Vec::new();
 
-    if bs.read_bool()? {
+    if bs.read_bool().await? {
         // Number of channel couplings (up-to 256).
-        let coupling_steps = bs.read_bits_leq32(8)? as u16 + 1;
+        let coupling_steps = bs.read_bits_leq32(8).await? as u16 + 1;
 
         // Reserve space.
         couplings.reserve_exact(usize::from(coupling_steps));
@@ -660,8 +692,8 @@ fn read_mapping_type0(
 
         // Read each channel coupling.
         for _ in 0..coupling_steps {
-            let magnitude_ch = bs.read_bits_leq32(coupling_bits)? as u8;
-            let angle_ch = bs.read_bits_leq32(coupling_bits)? as u8;
+            let magnitude_ch = bs.read_bits_leq32(coupling_bits).await? as u8;
+            let angle_ch = bs.read_bits_leq32(coupling_bits).await? as u8;
 
             // Ensure the channels to be coupled are not the same, and that neither channel number
             // exceeds the maximum channel in the stream.
@@ -673,7 +705,7 @@ fn read_mapping_type0(
         }
     }
 
-    if bs.read_bits_leq32(2)? != 0 {
+    if bs.read_bits_leq32(2).await? != 0 {
         return decode_error("vorbis: reserved mapping bits non-zero");
     }
 
@@ -683,7 +715,7 @@ fn read_mapping_type0(
     // they're all 0.
     if num_submaps > 1 {
         for _ in 0..audio_channels {
-            let mux = bs.read_bits_leq32(4)? as u8;
+            let mux = bs.read_bits_leq32(4).await? as u8;
 
             if mux >= num_submaps {
                 return decode_error("vorbis: invalid channel multiplex");
@@ -700,17 +732,17 @@ fn read_mapping_type0(
 
     for _ in 0..num_submaps {
         // Unused.
-        let _ = bs.read_bits_leq32(8)?;
+        let _ = bs.read_bits_leq32(8).await?;
 
         // The floor to use.
-        let floor = bs.read_bits_leq32(8)? as u8;
+        let floor = bs.read_bits_leq32(8).await? as u8;
 
         if floor >= max_floor {
             return decode_error("vorbis: invalid floor for mapping");
         }
 
         // The residue to use.
-        let residue = bs.read_bits_leq32(8)? as u8;
+        let residue = bs.read_bits_leq32(8).await? as u8;
 
         if residue >= max_residue {
             return decode_error("vorbis: invalid residue for mapping");
@@ -730,11 +762,11 @@ struct Mode {
     mapping: u8,
 }
 
-fn read_mode(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Mode> {
-    let block_flag = bs.read_bool()?;
-    let window_type = bs.read_bits_leq32(16)? as u16;
-    let transform_type = bs.read_bits_leq32(16)? as u16;
-    let mapping = bs.read_bits_leq32(8)? as u8;
+async fn read_mode(bs: &mut BitReaderRtl<'_>, max_mapping: u8) -> Result<Mode> {
+    let block_flag = bs.read_bool().await?;
+    let window_type = bs.read_bits_leq32(16).await? as u16;
+    let transform_type = bs.read_bits_leq32(16).await? as u16;
+    let mapping = bs.read_bits_leq32(8).await? as u8;
 
     // Only window type 0 is allowed in Vorbis 1 (section 4.2.4).
     if window_type != 0 {
