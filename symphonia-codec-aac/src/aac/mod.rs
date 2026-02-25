@@ -24,7 +24,7 @@ use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioC
 use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 use symphonia_core::packet::Packet;
-use symphonia_core::{codec_profile, support_audio_codec};
+use symphonia_core::{async_trait, codec_profile, support_audio_codec};
 
 mod codebooks;
 mod common;
@@ -59,49 +59,48 @@ impl M4AInfo {
         }
     }
 
-    fn read_object_type<B: ReadBitsLtr>(bs: &mut B) -> Result<M4AType> {
-        let otypeidx = match bs.read_bits_leq32(5)? {
+    async fn read_object_type<B: ReadBitsLtr>(bs: &mut B) -> Result<M4AType> {
+        let otypeidx = match bs.read_bits_leq32(5).await? {
             idx if idx < 31 => idx as usize,
-            31 => (bs.read_bits_leq32(6)? + 32) as usize,
+            31 => (bs.read_bits_leq32(6).await? + 32) as usize,
             _ => unreachable!(),
         };
 
         if otypeidx >= M4A_TYPES.len() { Ok(M4AType::Unknown) } else { Ok(M4A_TYPES[otypeidx]) }
     }
 
-    fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
-        match bs.read_bits_leq32(4)? {
+    async fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
+        match bs.read_bits_leq32(4).await? {
             idx if idx < 15 => Ok(AAC_SAMPLE_RATES[idx as usize]),
             _ => {
-                let srate = (0xf << 20) & bs.read_bits_leq32(20)?;
+                let srate = (0xf << 20) & bs.read_bits_leq32(20).await?;
                 Ok(srate)
             }
         }
     }
 
-    fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<usize> {
-        let chidx = bs.read_bits_leq32(4)? as usize;
+    async fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<usize> {
+        let chidx = bs.read_bits_leq32(4).await? as usize;
         if chidx < AAC_CHANNELS.len() { Ok(AAC_CHANNELS[chidx]) } else { Ok(chidx) }
     }
 
-    fn read(&mut self, buf: &[u8]) -> Result<()> {
+    async fn read(&mut self, buf: &[u8]) -> Result<()> {
         let mut bs = BitReaderLtr::new(buf);
 
-        self.otype = Self::read_object_type(&mut bs)?;
-        self.srate = Self::read_sampling_frequency(&mut bs)?;
+        self.otype = Self::read_object_type(&mut bs).await?;
+        self.srate = Self::read_sampling_frequency(&mut bs).await?;
 
         validate!(self.srate > 0);
 
-        self.channels = Self::read_channel_config(&mut bs)?;
+        self.channels = Self::read_channel_config(&mut bs).await?;
 
         if (self.otype == M4AType::Sbr) || (self.otype == M4AType::PS) {
-            let ext_srate = Self::read_sampling_frequency(&mut bs)?;
-            self.otype = Self::read_object_type(&mut bs)?;
+            let ext_srate = Self::read_sampling_frequency(&mut bs).await?;
+            self.otype = Self::read_object_type(&mut bs).await?;
 
             let ext_chans = if self.otype == M4AType::ER_BSAC {
-                Self::read_channel_config(&mut bs)?
-            }
-            else {
+                Self::read_channel_config(&mut bs).await?
+            } else {
                 0
             };
 
@@ -121,30 +120,30 @@ impl M4AInfo {
             | M4AType::ER_BSAC
             | M4AType::ER_AAC_LD => {
                 // GASpecificConfig
-                let short_frame = bs.read_bool()?;
+                let short_frame = bs.read_bool().await?;
 
                 self.samples = if short_frame { 960 } else { 1024 };
 
-                let depends_on_core = bs.read_bool()?;
+                let depends_on_core = bs.read_bool().await?;
 
                 if depends_on_core {
-                    let _delay = bs.read_bits_leq32(14)?;
+                    let _delay = bs.read_bits_leq32(14).await?;
                 }
 
-                let extension_flag = bs.read_bool()?;
+                let extension_flag = bs.read_bool().await?;
 
                 if self.channels == 0 {
                     return unsupported_error("aac: program config element");
                 }
 
                 if (self.otype == M4AType::Scalable) || (self.otype == M4AType::ER_AAC_Scalable) {
-                    let _layer = bs.read_bits_leq32(3)?;
+                    let _layer = bs.read_bits_leq32(3).await?;
                 }
 
                 if extension_flag {
                     if self.otype == M4AType::ER_BSAC {
-                        let _num_subframes = bs.read_bits_leq32(5)? as usize;
-                        let _layer_length = bs.read_bits_leq32(11)?;
+                        let _num_subframes = bs.read_bits_leq32(5).await? as usize;
+                        let _layer_length = bs.read_bits_leq32(11).await?;
                     }
 
                     if (self.otype == M4AType::ER_AAC_LC)
@@ -152,12 +151,12 @@ impl M4AInfo {
                         || (self.otype == M4AType::ER_AAC_Scalable)
                         || (self.otype == M4AType::ER_AAC_LD)
                     {
-                        let _section_data_resilience = bs.read_bool()?;
-                        let _scalefactors_resilience = bs.read_bool()?;
-                        let _spectral_data_resilience = bs.read_bool()?;
+                        let _section_data_resilience = bs.read_bool().await?;
+                        let _scalefactors_resilience = bs.read_bool().await?;
+                        let _spectral_data_resilience = bs.read_bool().await?;
                     }
 
-                    let extension_flag3 = bs.read_bool()?;
+                    let extension_flag3 = bs.read_bool().await?;
 
                     if extension_flag3 {
                         return unsupported_error("aac: version3 extensions");
@@ -192,7 +191,7 @@ impl M4AInfo {
                 return unsupported_error("aac: SSC config");
             }
             M4AType::MPEGSurround => {
-                // bs.ignore_bits(1)?; // sacPayloadEmbedding
+                // bs.ignore_bits(1).await?; // sacPayloadEmbedding
                 return unsupported_error("aac: MPEG Surround config");
             }
             M4AType::Layer1 | M4AType::Layer2 | M4AType::Layer3 => {
@@ -202,7 +201,7 @@ impl M4AInfo {
                 return unsupported_error("aac: DST config");
             }
             M4AType::Als => {
-                // bs.ignore_bits(5)?; // fillBits
+                // bs.ignore_bits(5).await?; // fillBits
                 return unsupported_error("aac: ALS config");
             }
             M4AType::Sls | M4AType::SLSNonCore => {
@@ -229,13 +228,13 @@ impl M4AInfo {
             | M4AType::ER_HILN
             | M4AType::ER_Parametric
             | M4AType::ER_AAC_ELD => {
-                let ep_config = bs.read_bits_leq32(2)?;
+                let ep_config = bs.read_bits_leq32(2).await?;
 
                 if (ep_config == 2) || (ep_config == 3) {
                     return unsupported_error("aac: error protection config");
                 }
                 // if ep_config == 3 {
-                //     let direct_mapping = bs.read_bit()?;
+                //     let direct_mapping = bs.read_bit().await?;
                 //     validate!(direct_mapping);
                 // }
             }
@@ -243,28 +242,28 @@ impl M4AInfo {
         };
 
         if self.sbr_ps_info.is_some() && (bs.bits_left() >= 16) {
-            let sync = bs.read_bits_leq32(11)?;
+            let sync = bs.read_bits_leq32(11).await?;
 
             if sync == 0x2B7 {
-                let ext_otype = Self::read_object_type(&mut bs)?;
+                let ext_otype = Self::read_object_type(&mut bs).await?;
                 if ext_otype == M4AType::Sbr {
-                    self.sbr_present = bs.read_bool()?;
+                    self.sbr_present = bs.read_bool().await?;
                     if self.sbr_present {
-                        let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
+                        let _ext_srate = Self::read_sampling_frequency(&mut bs).await?;
                         if bs.bits_left() >= 12 {
-                            let sync = bs.read_bits_leq32(11)?;
+                            let sync = bs.read_bits_leq32(11).await?;
                             if sync == 0x548 {
-                                self.ps_present = bs.read_bool()?;
+                                self.ps_present = bs.read_bool().await?;
                             }
                         }
                     }
                 }
                 if ext_otype == M4AType::PS {
-                    self.sbr_present = bs.read_bool()?;
+                    self.sbr_present = bs.read_bool().await?;
                     if self.sbr_present {
-                        let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
+                        let _ext_srate = Self::read_sampling_frequency(&mut bs).await?;
                     }
-                    let _ext_channels = bs.read_bits_leq32(4)?;
+                    let _ext_channels = bs.read_bits_leq32(4).await?;
                 }
             }
         }
@@ -298,7 +297,7 @@ pub struct AacDecoder {
 }
 
 impl AacDecoder {
-    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+    pub async fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
         // This decoder only supports AAC.
         if params.codec != CODEC_ID_AAC {
             return unsupported_error("aac: invalid codec");
@@ -309,9 +308,8 @@ impl AacDecoder {
         // If extra data present, parse the audio specific config
         if let Some(extra_data_buf) = &params.extra_data {
             validate!(extra_data_buf.len() >= 2);
-            m4ainfo.read(extra_data_buf)?;
-        }
-        else {
+            m4ainfo.read(extra_data_buf).await?;
+        } else {
             // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
             m4ainfo.otype = M4AType::Lc;
             m4ainfo.samples = 1024;
@@ -323,8 +321,7 @@ impl AacDecoder {
 
             m4ainfo.channels = if let Some(channels) = &params.channels {
                 channels.count()
-            }
-            else {
+            } else {
                 return unsupported_error("aac: channels or channel layout is required");
             };
         }
@@ -357,8 +354,7 @@ impl AacDecoder {
     fn set_pair(&mut self, pair_no: usize, channel: usize, pair: bool) -> Result<()> {
         if self.pairs.len() <= pair_no {
             self.pairs.push(cpe::ChannelPair::new(pair, channel, self.sbinfo));
-        }
-        else {
+        } else {
             validate!(self.pairs[pair_no].channel == channel);
             validate!(self.pairs[pair_no].is_pair == pair);
         }
@@ -366,26 +362,26 @@ impl AacDecoder {
         Ok(())
     }
 
-    fn decode_ga<B: ReadBitsLtr + FiniteBitStream>(&mut self, bs: &mut B) -> Result<()> {
+    async fn decode_ga<B: ReadBitsLtr + FiniteBitStream>(&mut self, bs: &mut B) -> Result<()> {
         let mut cur_pair = 0;
         let mut cur_ch = 0;
         while bs.bits_left() > 3 {
-            let id = bs.read_bits_leq32(3)?;
+            let id = bs.read_bits_leq32(3).await?;
 
             match id {
                 0 => {
                     // ID_SCE
-                    let _tag = bs.read_bits_leq32(4)?;
+                    let _tag = bs.read_bits_leq32(4).await?;
                     self.set_pair(cur_pair, cur_ch, false)?;
-                    self.pairs[cur_pair].decode_ga_sce(bs, self.m4ainfo.otype)?;
+                    self.pairs[cur_pair].decode_ga_sce(bs, self.m4ainfo.otype).await?;
                     cur_pair += 1;
                     cur_ch += 1;
                 }
                 1 => {
                     // ID_CPE
-                    let _tag = bs.read_bits_leq32(4)?;
+                    let _tag = bs.read_bits_leq32(4).await?;
                     self.set_pair(cur_pair, cur_ch, true)?;
-                    self.pairs[cur_pair].decode_ga_cpe(bs, self.m4ainfo.otype)?;
+                    self.pairs[cur_pair].decode_ga_cpe(bs, self.m4ainfo.otype).await?;
                     cur_pair += 1;
                     cur_ch += 2;
                 }
@@ -395,24 +391,24 @@ impl AacDecoder {
                 }
                 3 => {
                     // ID_LFE
-                    let _tag = bs.read_bits_leq32(4)?;
+                    let _tag = bs.read_bits_leq32(4).await?;
                     self.set_pair(cur_pair, cur_ch, false)?;
-                    self.pairs[cur_pair].decode_ga_sce(bs, self.m4ainfo.otype)?;
+                    self.pairs[cur_pair].decode_ga_sce(bs, self.m4ainfo.otype).await?;
                     cur_pair += 1;
                     cur_ch += 1;
                 }
                 4 => {
                     // ID_DSE
-                    let _id = bs.read_bits_leq32(4)?;
-                    let align = bs.read_bool()?;
-                    let mut count = bs.read_bits_leq32(8)?;
+                    let _id = bs.read_bits_leq32(4).await?;
+                    let align = bs.read_bool().await?;
+                    let mut count = bs.read_bits_leq32(8).await?;
                     if count == 255 {
-                        count += bs.read_bits_leq32(8)?;
+                        count += bs.read_bits_leq32(8).await?;
                     }
                     if align {
                         bs.realign(); // ????
                     }
-                    bs.ignore_bits(count * 8)?; // no SBR payload or such
+                    bs.ignore_bits(count * 8).await?; // no SBR payload or such
                 }
                 5 => {
                     // ID_PCE
@@ -420,16 +416,16 @@ impl AacDecoder {
                 }
                 6 => {
                     // ID_FIL
-                    let mut count = bs.read_bits_leq32(4)? as usize;
+                    let mut count = bs.read_bits_leq32(4).await? as usize;
                     if count == 15 {
-                        count += bs.read_bits_leq32(8)? as usize;
+                        count += bs.read_bits_leq32(8).await? as usize;
                         count -= 1;
                     }
 
                     // Check if the ID_FIL element contains SBR data. Note that ID_FIL elements with
                     // SBR data may not contain other extension payloads.
                     if count > 0 {
-                        let ext_type = bs.read_bits_leq32(4)?;
+                        let ext_type = bs.read_bits_leq32(4).await?;
 
                         match ext_type {
                             // EXT_SBR_DATA (0xd)
@@ -444,9 +440,9 @@ impl AacDecoder {
                         }
 
                         // Ignore extension payload(s).
-                        bs.ignore_bits(4)?;
+                        bs.ignore_bits(4).await?;
                         for _ in 0..count - 1 {
-                            bs.ignore_bits(8)?;
+                            bs.ignore_bits(8).await?;
                         }
                     }
                 }
@@ -471,7 +467,7 @@ impl AacDecoder {
     //     }
     // }
 
-    fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
+    async fn decode_inner(&mut self, packet: &Packet) -> Result<()> {
         // Clear the audio output buffer.
         self.buf.clear();
         self.buf.render_uninit(None);
@@ -480,7 +476,7 @@ impl AacDecoder {
 
         // Choose decode step based on the object type.
         match self.m4ainfo.otype {
-            M4AType::Lc => self.decode_ga(&mut bs)?,
+            M4AType::Lc => self.decode_ga(&mut bs).await?,
             _ => return unsupported_error("aac: object type"),
         }
 
@@ -488,6 +484,7 @@ impl AacDecoder {
     }
 }
 
+#[async_trait]
 impl AudioDecoder for AacDecoder {
     fn reset(&mut self) {
         for pair in self.pairs.iter_mut() {
@@ -504,12 +501,11 @@ impl AudioDecoder for AacDecoder {
         &self.params
     }
 
-    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
-        if let Err(e) = self.decode_inner(packet) {
+    async fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+        if let Err(e) = self.decode_inner(packet).await {
             self.buf.clear();
             Err(e)
-        }
-        else {
+        } else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
@@ -523,15 +519,16 @@ impl AudioDecoder for AacDecoder {
     }
 }
 
+#[async_trait]
 impl RegisterableAudioDecoder for AacDecoder {
-    fn try_registry_new(
+    async fn try_registry_new(
         params: &AudioCodecParameters,
         opts: &AudioDecoderOptions,
     ) -> Result<Box<dyn AudioDecoder>>
     where
         Self: Sized,
     {
-        Ok(Box::new(AacDecoder::try_new(params, opts)?))
+        Ok(Box::new(AacDecoder::try_new(params, opts).await?))
     }
 
     fn supported_codecs() -> &'static [SupportedAudioCodec] {

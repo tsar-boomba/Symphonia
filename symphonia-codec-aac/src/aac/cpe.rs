@@ -49,21 +49,21 @@ impl ChannelPair {
         self.ics1.reset();
     }
 
-    pub fn decode_ga_sce<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
-        self.ics0.decode(bs, &mut self.lcg, m4atype, false)?;
+    pub async fn decode_ga_sce<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
+        self.ics0.decode(bs, &mut self.lcg, m4atype, false).await?;
         Ok(())
     }
 
-    pub fn decode_ga_cpe<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
-        let common_window = bs.read_bool()?;
+    pub async fn decode_ga_cpe<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
+        let common_window = bs.read_bool().await?;
 
         if common_window {
             // Decode the common ICS info block into the first channel.
-            // do not call self.ics0.info.decode() as it will skip required validations present in self.ics0.decode_info()
-            self.ics0.decode_info(bs)?;
+            // do not call self.ics0.info.decode() as it will skip required validations present in self.ics0.decode_info().await
+            self.ics0.decode_info(bs).await?;
 
             // Mid-side stereo mask decoding.
-            self.ms_mask_present = bs.read_bits_leq32(2)? as u8;
+            self.ms_mask_present = bs.read_bits_leq32(2).await? as u8;
 
             match self.ms_mask_present {
                 0 | 2 => {
@@ -82,7 +82,7 @@ impl ChannelPair {
                     // the band uses mid-side coding.
                     for g in 0..self.ics0.info.window_groups {
                         for sfb in 0..self.ics0.info.max_sfb {
-                            self.ms_used[g][sfb] = bs.read_bool()?;
+                            self.ms_used[g][sfb] = bs.read_bool().await?;
                         }
                     }
                 }
@@ -94,8 +94,8 @@ impl ChannelPair {
             self.ics1.info.copy_from_common(&self.ics0.info);
         }
 
-        self.ics0.decode(bs, &mut self.lcg, m4atype, common_window)?;
-        self.ics1.decode(bs, &mut self.lcg, m4atype, common_window)?;
+        self.ics0.decode(bs, &mut self.lcg, m4atype, common_window).await?;
+        self.ics1.decode(bs, &mut self.lcg, m4atype, common_window).await?;
 
         // Joint-stereo decoding
         if common_window {
@@ -127,12 +127,10 @@ impl ChannelPair {
                         for (l, r) in left.iter().zip(right) {
                             *r = scale * l;
                         }
-                    }
-                    else if self.ics0.is_noise(g, sfb) || self.ics1.is_noise(g, sfb) {
+                    } else if self.ics0.is_noise(g, sfb) || self.ics1.is_noise(g, sfb) {
                         // Perceptual noise substitution, do not do joint-stereo decoding.
                         // Section 4.6.13.3
-                    }
-                    else if self.ms_used[g][sfb] {
+                    } else if self.ms_used[g][sfb] {
                         // Mid-side stereo.
                         let mid = &mut self.ics0.coeffs[start..end];
                         let side = &mut self.ics1.coeffs[start..end];

@@ -21,15 +21,15 @@ pub struct GainControl {
 }
 
 impl GainControl {
-    pub fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
-        let gain_control_data_present = bs.read_bool()?;
+    pub async fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
+        let gain_control_data_present = bs.read_bool().await?;
 
         if !gain_control_data_present {
             return Ok(None);
         }
 
         /*
-        self.max_band = bs.read_bits_leq32(2)? as u8;
+        self.max_band = bs.read_bits_leq32(2).await? as u8;
         if window_sequence == ONLY_LONG_SEQUENCE {
             for bd in 0..max_band
             ...

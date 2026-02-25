@@ -36,22 +36,22 @@ impl TnsCoeffs {
         Self { length: 0, order: 0, direction: false, coef: [0.0; TNS_MAX_ORDER + 1] }
     }
 
-    fn read<B: ReadBitsLtr>(
+    async fn read<B: ReadBitsLtr>(
         &mut self,
         bs: &mut B,
         long_win: bool,
         coef_res: bool,
         max_order: usize,
     ) -> Result<()> {
-        self.length = bs.read_bits_leq32(if long_win { 6 } else { 4 })? as usize;
-        self.order = bs.read_bits_leq32(if long_win { 5 } else { 3 })? as usize;
+        self.length = bs.read_bits_leq32(if long_win { 6 } else { 4 }).await? as usize;
+        self.order = bs.read_bits_leq32(if long_win { 5 } else { 3 }).await? as usize;
 
         validate!(self.order <= max_order);
 
         if self.order > 0 {
-            self.direction = bs.read_bool()?;
+            self.direction = bs.read_bool().await?;
 
-            let coef_compress = bs.read_bool()?;
+            let coef_compress = bs.read_bool().await?;
 
             // If coef_res is true, then the transmitted resolution of the filter coefficients
             // is 4 bits, otherwise it's 3 (4.6.9.2).
@@ -75,7 +75,7 @@ impl TnsCoeffs {
             let mut tmp: [f32; TNS_MAX_ORDER] = [0.0; TNS_MAX_ORDER];
 
             for el in tmp[..self.order].iter_mut() {
-                let val = bs.read_bits_leq32(coef_res_bits)? as u8;
+                let val = bs.read_bits_leq32(coef_res_bits).await? as u8;
 
                 // Convert to signed integer.
                 let c = f32::from(if (val & sign_mask) != 0 {
@@ -112,8 +112,8 @@ pub struct Tns {
 }
 
 impl Tns {
-    pub fn read<B: ReadBitsLtr>(bs: &mut B, info: &IcsInfo, is_lc: bool) -> Result<Option<Self>> {
-        let tns_data_present = bs.read_bool()?;
+    pub async fn read<B: ReadBitsLtr>(bs: &mut B, info: &IcsInfo, is_lc: bool) -> Result<Option<Self>> {
+        let tns_data_present = bs.read_bool().await?;
 
         if !tns_data_present {
             return Ok(None);
@@ -134,12 +134,12 @@ impl Tns {
         let mut coeffs: [[TnsCoeffs; 4]; MAX_WINDOWS] = [[TnsCoeffs::new(); 4]; MAX_WINDOWS];
 
         for w in 0..info.num_windows {
-            n_filt[w] = bs.read_bits_leq32(if info.long_win { 2 } else { 1 })? as usize;
+            n_filt[w] = bs.read_bits_leq32(if info.long_win { 2 } else { 1 }).await? as usize;
 
-            let coef_res = if n_filt[w] != 0 { bs.read_bool()? } else { false };
+            let coef_res = if n_filt[w] != 0 { bs.read_bool().await? } else { false };
 
             for filt in 0..n_filt[w] {
-                coeffs[w][filt].read(bs, info.long_win, coef_res, max_order)?;
+                coeffs[w][filt].read(bs, info.long_win, coef_res, max_order).await?;
             }
         }
 

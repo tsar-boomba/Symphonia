@@ -15,5 +15,8 @@ version.workspace = true
 
 [dependencies]
 log = "0.4"
-
 symphonia-core = { version = "0.6.0", path = "../symphonia-core" }
+lazy_static = "1.4.0"
+
+[dev-dependencies]
+futures-test = "0.3"

@@ -101,15 +101,15 @@ impl IcsInfo {
     }
 
     /// this method should be called from Ics::decode_info() which will perform additional validations for max_sfb
-    pub fn decode<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
+    pub async fn decode<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         self.prev_window_sequence = self.window_sequence;
         self.prev_window_shape = self.window_shape;
 
-        if bs.read_bool()? {
+        if bs.read_bool().await? {
             return decode_error("aac: ics reserved bit set");
         }
 
-        self.window_sequence = bs.read_bits_leq32(2)? as u8;
+        self.window_sequence = bs.read_bits_leq32(2).await? as u8;
 
         match self.prev_window_sequence {
             ONLY_LONG_SEQUENCE | LONG_STOP_SEQUENCE => {
@@ -129,16 +129,16 @@ impl IcsInfo {
             _ => {}
         };
 
-        self.window_shape = bs.read_bool()?;
+        self.window_shape = bs.read_bool().await?;
         self.window_groups = 1;
 
         if self.window_sequence == EIGHT_SHORT_SEQUENCE {
             self.long_win = false;
             self.num_windows = 8;
-            self.max_sfb = bs.read_bits_leq32(4)? as usize;
+            self.max_sfb = bs.read_bits_leq32(4).await? as usize;
 
             for i in 0..MAX_WINDOWS - 1 {
-                self.scale_factor_grouping[i] = bs.read_bool()?;
+                self.scale_factor_grouping[i] = bs.read_bool().await?;
 
                 if !self.scale_factor_grouping[i] {
                     self.group_start[self.window_groups] = i + 1;
@@ -148,8 +148,8 @@ impl IcsInfo {
         } else {
             self.long_win = true;
             self.num_windows = 1;
-            self.max_sfb = bs.read_bits_leq32(6)? as usize;
-            self.ltp = ltp::LtpData::read(bs)?;
+            self.max_sfb = bs.read_bits_leq32(6).await? as usize;
+            self.ltp = ltp::LtpData::read(bs).await?;
         }
         Ok(())
     }
@@ -217,7 +217,7 @@ impl Ics {
         self.delay = [0.0; 1024];
     }
 
-    fn decode_section_data<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
+    async fn decode_section_data<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         let sect_bits = if self.info.long_win { 5 } else { 3 };
         let sect_esc_val = (1 << sect_bits) - 1;
 
@@ -226,7 +226,7 @@ impl Ics {
             let mut l = 0;
 
             while k < self.info.max_sfb {
-                self.sect_cb[g][l] = bs.read_bits_leq32(4)? as u8;
+                self.sect_cb[g][l] = bs.read_bits_leq32(4).await? as u8;
                 self.sect_len[g][l] = 0;
 
                 if self.sect_cb[g][l] == RESERVED_HCB {
@@ -234,7 +234,7 @@ impl Ics {
                 }
 
                 loop {
-                    let sect_len_incr = bs.read_bits_leq32(sect_bits)? as usize;
+                    let sect_len_incr = bs.read_bits_leq32(sect_bits).await? as usize;
 
                     self.sect_len[g][l] += sect_len_incr;
 
@@ -278,8 +278,8 @@ impl Ics {
         self.sfb_cb[g][sfb] == INTENSITY_HCB
     }
 
-    pub fn decode_info<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
-        self.info.decode(bs)?;
+    pub async fn decode_info<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
+        self.info.decode(bs).await?;
 
         // validate info.max_sfb - it should not be bigger than bands array len - 1
         if self.info.max_sfb + 1 > self.get_bands().len() {
@@ -288,7 +288,7 @@ impl Ics {
         Ok(())
     }
 
-    fn decode_scale_factor_data<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
+    async fn decode_scale_factor_data<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
         let mut noise_pcm_flag = true;
         let mut scf_intensity = -INTENSITY_SCALE_MIN;
         let mut scf_noise = i16::from(self.global_gain) - 90 - NORMAL_SCALE_MIN;
@@ -313,7 +313,7 @@ impl Ics {
                 } else if self.is_noise(g, sfb) {
                     if noise_pcm_flag {
                         noise_pcm_flag = false;
-                        scf_noise += (bs.read_bits_leq32(9)? as i16) - 256;
+                        scf_noise += (bs.read_bits_leq32(9).await? as i16) - 256;
                     } else {
                         scf_noise += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
                     }
@@ -339,7 +339,7 @@ impl Ics {
         if self.info.long_win { self.sbinfo.long_bands } else { self.sbinfo.short_bands }
     }
 
-    fn decode_spectrum<B: ReadBitsLtr>(&mut self, bs: &mut B, lcg: &mut Lcg) -> Result<()> {
+    async fn decode_spectrum<B: ReadBitsLtr>(&mut self, bs: &mut B, lcg: &mut Lcg) -> Result<()> {
         // Zero all spectral coefficients.
         self.coeffs.fill(0.0);
 
@@ -367,15 +367,15 @@ impl Ics {
                         INTENSITY_HCB => (),
                         1 => decode_quads_signed(bs, &codebooks::QUADS[0], scale, dst)?,
                         2 => decode_quads_signed(bs, &codebooks::QUADS[1], scale, dst)?,
-                        3 => decode_quads_unsigned(bs, &codebooks::QUADS[2], scale, dst)?,
-                        4 => decode_quads_unsigned(bs, &codebooks::QUADS[3], scale, dst)?,
+                        3 => decode_quads_unsigned(bs, &codebooks::QUADS[2], scale, dst).await?,
+                        4 => decode_quads_unsigned(bs, &codebooks::QUADS[3], scale, dst).await?,
                         5 => decode_pairs_signed(bs, &codebooks::PAIRS[0], scale, dst)?,
                         6 => decode_pairs_signed(bs, &codebooks::PAIRS[1], scale, dst)?,
-                        7 => decode_pairs_unsigned(bs, &codebooks::PAIRS[2], scale, dst)?,
-                        8 => decode_pairs_unsigned(bs, &codebooks::PAIRS[3], scale, dst)?,
-                        9 => decode_pairs_unsigned(bs, &codebooks::PAIRS[4], scale, dst)?,
-                        10 => decode_pairs_unsigned(bs, &codebooks::PAIRS[5], scale, dst)?,
-                        11 => decode_pairs_unsigned_escape(bs, &codebooks::ESC, scale, dst)?,
+                        7 => decode_pairs_unsigned(bs, &codebooks::PAIRS[2], scale, dst).await?,
+                        8 => decode_pairs_unsigned(bs, &codebooks::PAIRS[3], scale, dst).await?,
+                        9 => decode_pairs_unsigned(bs, &codebooks::PAIRS[4], scale, dst).await?,
+                        10 => decode_pairs_unsigned(bs, &codebooks::PAIRS[5], scale, dst).await?,
+                        11 => decode_pairs_unsigned_escape(bs, &codebooks::ESC, scale, dst).await?,
                         _ => unreachable!(),
                     }
                 }
@@ -384,42 +384,42 @@ impl Ics {
         Ok(())
     }
 
-    pub fn decode<B: ReadBitsLtr>(
+    pub async fn decode<B: ReadBitsLtr>(
         &mut self,
         bs: &mut B,
         lcg: &mut Lcg,
         m4atype: M4AType,
         common_window: bool,
     ) -> Result<()> {
-        self.global_gain = bs.read_bits_leq32(8)? as u8;
+        self.global_gain = bs.read_bits_leq32(8).await? as u8;
 
         // If a common window is used, a common ICS info was decoded previously.
         if !common_window {
             // do not call self.info.decode() as it will skip required validations present in the decode_info()
-            self.decode_info(bs)?;
+            self.decode_info(bs).await?;
         }
 
-        self.decode_section_data(bs)?;
+        self.decode_section_data(bs).await?;
 
-        self.decode_scale_factor_data(bs)?;
+        self.decode_scale_factor_data(bs).await?;
 
-        self.pulse = pulse::Pulse::read(bs)?;
+        self.pulse = pulse::Pulse::read(bs).await?;
 
         validate!(self.pulse.is_none() || self.info.long_win);
 
         let is_aac_lc = m4atype == M4AType::Lc;
 
-        self.tns = tns::Tns::read(bs, &self.info, is_aac_lc)?;
+        self.tns = tns::Tns::read(bs, &self.info, is_aac_lc).await?;
 
         match m4atype {
-            M4AType::Ssr => self.gain = gain::GainControl::read(bs)?,
+            M4AType::Ssr => self.gain = gain::GainControl::read(bs).await?,
             _ => {
-                let gain_control_data_present = bs.read_bool()?;
+                let gain_control_data_present = bs.read_bool().await?;
                 validate!(!gain_control_data_present);
             }
         }
 
-        self.decode_spectrum(bs, lcg)?;
+        self.decode_spectrum(bs, lcg).await?;
         Ok(())
     }
 
@@ -468,7 +468,7 @@ fn decode_sign(val: u32) -> f32 {
     1.0 - 2.0 * val as f32
 }
 
-fn decode_quads_unsigned<B: ReadBitsLtr>(
+async fn decode_quads_unsigned<B: ReadBitsLtr>(
     bs: &mut B,
     cb: &codebooks::QuadsCodebook,
     scale: f32,
@@ -481,16 +481,16 @@ fn decode_quads_unsigned<B: ReadBitsLtr>(
         let (a, b, c, d) = cb.read_quant(bs)?;
 
         if a != 0 {
-            out[0] = decode_sign(bs.read_bit()?) * iquant[a as usize];
+            out[0] = decode_sign(bs.read_bit().await?) * iquant[a as usize];
         }
         if b != 0 {
-            out[1] = decode_sign(bs.read_bit()?) * iquant[b as usize];
+            out[1] = decode_sign(bs.read_bit().await?) * iquant[b as usize];
         }
         if c != 0 {
-            out[2] = decode_sign(bs.read_bit()?) * iquant[c as usize];
+            out[2] = decode_sign(bs.read_bit().await?) * iquant[c as usize];
         }
         if d != 0 {
-            out[3] = decode_sign(bs.read_bit()?) * iquant[d as usize];
+            out[3] = decode_sign(bs.read_bit().await?) * iquant[d as usize];
         }
     }
 
@@ -532,7 +532,7 @@ fn decode_pairs_signed<B: ReadBitsLtr>(
     Ok(())
 }
 
-fn decode_pairs_unsigned<B: ReadBitsLtr>(
+async fn decode_pairs_unsigned<B: ReadBitsLtr>(
     bs: &mut B,
     cb: &codebooks::PairsCodebook,
     scale: f32,
@@ -541,8 +541,8 @@ fn decode_pairs_unsigned<B: ReadBitsLtr>(
     for out in dst.chunks_exact_mut(2) {
         let (x, y) = cb.read_dequant(bs)?;
 
-        let sign_x = if x != 0.0 { decode_sign(bs.read_bit()?) } else { 1.0 };
-        let sign_y = if y != 0.0 { decode_sign(bs.read_bit()?) } else { 1.0 };
+        let sign_x = if x != 0.0 { decode_sign(bs.read_bit().await?) } else { 1.0 };
+        let sign_y = if y != 0.0 { decode_sign(bs.read_bit().await?) } else { 1.0 };
 
         out[0] = sign_x * x * scale;
         out[1] = sign_y * y * scale;
@@ -551,7 +551,7 @@ fn decode_pairs_unsigned<B: ReadBitsLtr>(
     Ok(())
 }
 
-fn decode_pairs_unsigned_escape<B: ReadBitsLtr>(
+async fn decode_pairs_unsigned_escape<B: ReadBitsLtr>(
     bs: &mut B,
     cb: &codebooks::EscapeCodebook,
     scale: f32,
@@ -563,11 +563,11 @@ fn decode_pairs_unsigned_escape<B: ReadBitsLtr>(
         let (a, b) = cb.read_quant(bs)?;
 
         // Read the signs of the dequantized samples.
-        let sign_x = if a != 0 { decode_sign(bs.read_bit()?) } else { 1.0 };
-        let sign_y = if b != 0 { decode_sign(bs.read_bit()?) } else { 1.0 };
+        let sign_x = if a != 0 { decode_sign(bs.read_bit().await?) } else { 1.0 };
+        let sign_y = if b != 0 { decode_sign(bs.read_bit().await?) } else { 1.0 };
 
-        let x = iquant[if a == 16 { read_escape(bs)? } else { a } as usize];
-        let y = iquant[if b == 16 { read_escape(bs)? } else { b } as usize];
+        let x = iquant[if a == 16 { read_escape(bs).await? } else { a } as usize];
+        let y = iquant[if b == 16 { read_escape(bs).await? } else { b } as usize];
 
         out[0] = sign_x * x * scale;
         out[1] = sign_y * y * scale;
@@ -575,13 +575,13 @@ fn decode_pairs_unsigned_escape<B: ReadBitsLtr>(
     Ok(())
 }
 
-fn read_escape<B: ReadBitsLtr>(bs: &mut B) -> Result<u16> {
-    let n = bs.read_unary_ones()?;
+async fn read_escape<B: ReadBitsLtr>(bs: &mut B) -> Result<u16> {
+    let n = bs.read_unary_ones().await?;
 
     validate!(n < 9);
 
     // The escape word is added to 2^(n + 4) to yield the unsigned value.
-    let word = (1 << (n + 4)) + bs.read_bits_leq32(n + 4)? as u16;
+    let word = (1 << (n + 4)) + bs.read_bits_leq32(n + 4).await? as u16;
 
     Ok(word)
 }
