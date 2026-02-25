@@ -379,8 +379,7 @@ impl Probe {
     }
 
     /// Register the parameterized metadata reader at a specific tier.
-    pub fn register_metadata_at_tier<P: ProbeableMetadata>(&mut self, tier: Tier)
-    {
+    pub fn register_metadata_at_tier<P: ProbeableMetadata>(&mut self, tier: Tier) {
         for data in P::probe_data() {
             // Build a generic metadata probe candidate.
             let candidate = GenericProbeMatch {
@@ -578,7 +577,8 @@ impl Probe {
 
         if count < self.opts.max_probe_depth {
             error!("probe reached EOF at {count} bytes");
-        } else {
+        }
+        else {
             // Could not find any marker within the probe limit.
             error!("reached probe limit of {} bytes", self.opts.max_probe_depth);
         }

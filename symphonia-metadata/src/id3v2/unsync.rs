@@ -110,7 +110,12 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
     }
 
     async fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
-        Ok([self.read_byte().await?, self.read_byte().await?, self.read_byte().await?, self.read_byte().await?])
+        Ok([
+            self.read_byte().await?,
+            self.read_byte().await?,
+            self.read_byte().await?,
+            self.read_byte().await?,
+        ])
     }
 
     async fn read_buf(&mut self, _: &mut [u8]) -> io::Result<usize> {

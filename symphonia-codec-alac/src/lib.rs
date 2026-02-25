@@ -208,7 +208,8 @@ impl MagicCookie {
             }
 
             layout_channels
-        } else {
+        }
+        else {
             // If extra channel information is not provided, use the number of channels to assign
             // a channel layout.
             //
@@ -295,7 +296,8 @@ impl ElementChannel {
 
             if val > 0xffff {
                 mb = 0xffff;
-            } else {
+            }
+            else {
                 // Order is important here.
                 mb -= (self.pb_factor * mb) >> 9;
                 mb += self.pb_factor * val;
@@ -402,7 +404,8 @@ impl ElementChannel {
                             break;
                         }
                     }
-                } else {
+                }
+                else {
                     // Negative residual case.
                     for (j, (coeff, &sample)) in iter {
                         let val = past0 - sample;
@@ -438,7 +441,10 @@ pub struct AlacDecoder {
 }
 
 impl AlacDecoder {
-    pub async fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+    pub async fn try_new(
+        params: &AudioCodecParameters,
+        _opts: &AudioDecoderOptions,
+    ) -> Result<Self> {
         // Verify codec ID.
         if params.codec != CODEC_ID_ALAC {
             return unsupported_error("alac: invalid codec");
@@ -447,7 +453,8 @@ impl AlacDecoder {
         // Read the config (magic cookie).
         let config = if let Some(extra_data) = &params.extra_data {
             MagicCookie::try_parse(extra_data).await?
-        } else {
+        }
+        else {
             return unsupported_error("alac: missing extra data");
         };
 
@@ -482,7 +489,8 @@ impl AlacDecoder {
                         .expect("invalid channel map");
 
                     num_frames =
-                        decode_sce_or_cpe(&self.config, &mut bs, &mut self.tail_bits, out0, None).await?;
+                        decode_sce_or_cpe(&self.config, &mut bs, &mut self.tail_bits, out0, None)
+                            .await?;
 
                     next_channel += 1;
                 }
@@ -507,7 +515,8 @@ impl AlacDecoder {
                         &mut self.tail_bits,
                         out0,
                         Some(out1),
-                    ).await?;
+                    )
+                    .await?;
 
                     next_channel += 2;
                 }
@@ -584,7 +593,8 @@ impl AudioDecoder for AlacDecoder {
         if let Err(e) = self.decode_inner(packet).await {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
@@ -668,8 +678,12 @@ async fn decode_sce_or_cpe<B: ReadBitsLtr>(
 
         // Read the headers for each channel in the element.
         let mut elem0 = ElementChannel::try_read(bs, config, pred_bits).await?;
-        let mut elem1 =
-            if is_cpe { Some(ElementChannel::try_read(bs, config, pred_bits).await?) } else { None };
+        let mut elem1 = if is_cpe {
+            Some(ElementChannel::try_read(bs, config, pred_bits).await?)
+        }
+        else {
+            None
+        };
 
         // If there is a shift, read and save the "tail" bits that will be appended to the predicted
         // samples.
@@ -714,7 +728,8 @@ async fn decode_sce_or_cpe<B: ReadBitsLtr>(
                     *s0 = (*s0 << shift) | vals[0] as i32;
                     *s1 = (*s1 << shift) | vals[1] as i32;
                 }
-            } else {
+            }
+            else {
                 let tail_iter = tail_bits[..num_samples].iter();
 
                 for (s0, &val) in out0_iter.zip(tail_iter) {
@@ -722,7 +737,8 @@ async fn decode_sce_or_cpe<B: ReadBitsLtr>(
                 }
             }
         }
-    } else {
+    }
+    else {
         // Read uncompressed samples directly from the bitstream.
         if let Some(out1) = out1.as_mut() {
             // For a CPE, the samples are interleaved.
@@ -730,7 +746,8 @@ async fn decode_sce_or_cpe<B: ReadBitsLtr>(
                 *s0 = bs.read_bits_leq32_signed(u32::from(config.bit_depth)).await?;
                 *s1 = bs.read_bits_leq32_signed(u32::from(config.bit_depth)).await?;
             }
-        } else {
+        }
+        else {
             for s0 in out0[..num_samples].iter_mut() {
                 *s0 = bs.read_bits_leq32_signed(u32::from(config.bit_depth)).await?;
             }
@@ -753,7 +770,8 @@ async fn read_rice_code<B: ReadBitsLtr>(bs: &mut B, k: u32, kb: u32) -> Result<u
     // If the prefix is > 8, the value is read as an arbitrary width unsigned integer.
     let value = if prefix > 8 {
         bs.read_bits_leq32(kb).await?
-    } else if k > 1 {
+    }
+    else if k > 1 {
         // The reference decoder specifies prefix to be multiplied by a parameter `m`. The parameter
         // `m` is always `(1<<k)-1` which is `2^k - 1`. This can be rewritten using a bit-shift.
         let value = (prefix << k) - prefix;
@@ -768,12 +786,15 @@ async fn read_rice_code<B: ReadBitsLtr>(bs: &mut B, k: u32, kb: u32) -> Result<u
         if suffix > 0 {
             // Shift suffix left by 1 because it is missing its LSb, and then read the missing bit.
             value + (suffix << 1) + bs.read_bit().await? - 1
-        } else {
+        }
+        else {
             value
         }
-    } else if k == 1 {
+    }
+    else if k == 1 {
         prefix
-    } else {
+    }
+    else {
         0
     };
 

@@ -49,12 +49,20 @@ impl ChannelPair {
         self.ics1.reset();
     }
 
-    pub async fn decode_ga_sce<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
+    pub async fn decode_ga_sce<B: ReadBitsLtr>(
+        &mut self,
+        bs: &mut B,
+        m4atype: M4AType,
+    ) -> Result<()> {
         self.ics0.decode(bs, &mut self.lcg, m4atype, false).await?;
         Ok(())
     }
 
-    pub async fn decode_ga_cpe<B: ReadBitsLtr>(&mut self, bs: &mut B, m4atype: M4AType) -> Result<()> {
+    pub async fn decode_ga_cpe<B: ReadBitsLtr>(
+        &mut self,
+        bs: &mut B,
+        m4atype: M4AType,
+    ) -> Result<()> {
         let common_window = bs.read_bool().await?;
 
         if common_window {
@@ -127,10 +135,12 @@ impl ChannelPair {
                         for (l, r) in left.iter().zip(right) {
                             *r = scale * l;
                         }
-                    } else if self.ics0.is_noise(g, sfb) || self.ics1.is_noise(g, sfb) {
+                    }
+                    else if self.ics0.is_noise(g, sfb) || self.ics1.is_noise(g, sfb) {
                         // Perceptual noise substitution, do not do joint-stereo decoding.
                         // Section 4.6.13.3
-                    } else if self.ms_used[g][sfb] {
+                    }
+                    else if self.ms_used[g][sfb] {
                         // Mid-side stereo.
                         let mid = &mut self.ics0.coeffs[start..end];
                         let side = &mut self.ics1.coeffs[start..end];

@@ -20,12 +20,14 @@ use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia_core::{async_trait, support_audio_codec};
 
+use symphonia_core::audio::conv::IntoSample;
+use symphonia_core::audio::sample::SampleFormat;
 use symphonia_core::audio::{
-    Audio, AudioMut, AsGenericAudioBufferRef, AudioSpec, GenericAudioBuffer, GenericAudioBufferRef,
+    AsGenericAudioBufferRef, Audio, AudioMut, AudioSpec, GenericAudioBuffer, GenericAudioBufferRef,
 };
-use symphonia_core::codecs::audio::{
-    AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions, FinalizeResult,
-};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE};
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S8, CODEC_ID_PCM_S16LE};
 use symphonia_core::codecs::audio::well_known::{
     CODEC_ID_PCM_S16BE, CODEC_ID_PCM_S24BE, CODEC_ID_PCM_S32BE,
@@ -36,11 +38,9 @@ use symphonia_core::codecs::audio::well_known::{
     CODEC_ID_PCM_U16BE, CODEC_ID_PCM_U24BE, CODEC_ID_PCM_U32BE,
 };
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_U24LE, CODEC_ID_PCM_U32LE};
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE};
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE};
-use symphonia_core::audio::conv::IntoSample;
-use symphonia_core::audio::sample::SampleFormat;
-use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW};
+use symphonia_core::codecs::audio::{
+    AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions, FinalizeResult,
+};
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::packet::Packet;
@@ -56,8 +56,7 @@ macro_rules! decode_pcm_signed {
                     for ch in 0..num_channels {
                         let raw = $reader.$read_fn().await?;
                         // SAFETY: resize_uninit guarantees the index is valid.
-                        buf.plane_mut(ch).unwrap()[frame] =
-                            (raw << ($shift as u32)).into_sample();
+                        buf.plane_mut(ch).unwrap()[frame] = (raw << ($shift as u32)).into_sample();
                     }
                 }
                 Result::<()>::Ok(())
@@ -80,8 +79,7 @@ macro_rules! decode_pcm_signed_24 {
                         // read_i24 / read_be_i24 return the value in the low 24 bits of an i32.
                         // Shift left by 8 to occupy the full i32 range, then apply extra_shift.
                         let raw = $reader.$read_fn().await? << 8i32;
-                        buf.plane_mut(ch).unwrap()[frame] =
-                            (raw << extra_shift).into_sample();
+                        buf.plane_mut(ch).unwrap()[frame] = (raw << extra_shift).into_sample();
                     }
                 }
                 Result::<()>::Ok(())
@@ -101,8 +99,7 @@ macro_rules! decode_pcm_unsigned {
                 for frame in 0..num_frames {
                     for ch in 0..num_channels {
                         let raw = $reader.$read_fn().await?;
-                        buf.plane_mut(ch).unwrap()[frame] =
-                            (raw << ($shift as u32)).into_sample();
+                        buf.plane_mut(ch).unwrap()[frame] = (raw << ($shift as u32)).into_sample();
                     }
                 }
                 Result::<()>::Ok(())
@@ -123,8 +120,7 @@ macro_rules! decode_pcm_unsigned_24 {
                 for frame in 0..num_frames {
                     for ch in 0..num_channels {
                         let raw = $reader.$read_fn().await? << 8u32;
-                        buf.plane_mut(ch).unwrap()[frame] =
-                            (raw << extra_shift).into_sample();
+                        buf.plane_mut(ch).unwrap()[frame] = (raw << extra_shift).into_sample();
                     }
                 }
                 Result::<()>::Ok(())
@@ -255,7 +251,8 @@ impl PcmDecoder {
                 return unsupported_error("pcm: number of channels cannot be 0");
             }
             AudioSpec::new(rate, channels.clone())
-        } else {
+        }
+        else {
             return unsupported_error("pcm: channels or channel_layout is required");
         };
 
@@ -263,14 +260,14 @@ impl PcmDecoder {
             CODEC_ID_PCM_S32LE | CODEC_ID_PCM_S32BE => (SampleFormat::S32, 32),
             CODEC_ID_PCM_S24LE | CODEC_ID_PCM_S24BE => (SampleFormat::S24, 24),
             CODEC_ID_PCM_S16LE | CODEC_ID_PCM_S16BE => (SampleFormat::S16, 16),
-            CODEC_ID_PCM_S8                          => (SampleFormat::S8,   8),
+            CODEC_ID_PCM_S8 => (SampleFormat::S8, 8),
             CODEC_ID_PCM_U32LE | CODEC_ID_PCM_U32BE => (SampleFormat::U32, 32),
             CODEC_ID_PCM_U24LE | CODEC_ID_PCM_U24BE => (SampleFormat::U24, 24),
             CODEC_ID_PCM_U16LE | CODEC_ID_PCM_U16BE => (SampleFormat::U16, 16),
-            CODEC_ID_PCM_U8                          => (SampleFormat::U8,   8),
+            CODEC_ID_PCM_U8 => (SampleFormat::U8, 8),
             CODEC_ID_PCM_F32LE | CODEC_ID_PCM_F32BE => (SampleFormat::F32, 32),
             CODEC_ID_PCM_F64LE | CODEC_ID_PCM_F64BE => (SampleFormat::F64, 64),
-            CODEC_ID_PCM_ALAW  | CODEC_ID_PCM_MULAW => (SampleFormat::S16, 16),
+            CODEC_ID_PCM_ALAW | CODEC_ID_PCM_MULAW => (SampleFormat::S16, 16),
             _ => unreachable!(),
         };
 
@@ -281,10 +278,11 @@ impl PcmDecoder {
             match params.codec {
                 CODEC_ID_PCM_F32LE | CODEC_ID_PCM_F32BE => (),
                 CODEC_ID_PCM_F64LE | CODEC_ID_PCM_F64BE => (),
-                CODEC_ID_PCM_ALAW  | CODEC_ID_PCM_MULAW => (),
+                CODEC_ID_PCM_ALAW | CODEC_ID_PCM_MULAW => (),
                 _ => return unsupported_error("pcm: unknown bits per (coded) sample"),
             }
-        } else if coded_width > sample_format_width {
+        }
+        else if coded_width > sample_format_width {
             return decode_error("pcm: coded bits per sample is greater than the sample format");
         }
 
@@ -377,11 +375,7 @@ impl AudioDecoder for PcmDecoder {
     }
 
     fn codec_info(&self) -> &CodecInfo {
-        &Self::supported_codecs()
-            .iter()
-            .find(|desc| desc.id == self.params.codec)
-            .unwrap()
-            .info
+        &Self::supported_codecs().iter().find(|desc| desc.id == self.params.codec).unwrap().info
     }
 
     fn codec_params(&self) -> &AudioCodecParameters {
@@ -392,7 +386,8 @@ impl AudioDecoder for PcmDecoder {
         if let Err(e) = self.decode_inner(packet).await {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
@@ -420,25 +415,89 @@ impl RegisterableAudioDecoder for PcmDecoder {
 
     fn supported_codecs() -> &'static [SupportedAudioCodec] {
         &[
-            support_audio_codec!(CODEC_ID_PCM_S32LE, "pcm_s32le", "PCM Signed 32-bit Little-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_S32BE, "pcm_s32be", "PCM Signed 32-bit Big-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_S24LE, "pcm_s24le", "PCM Signed 24-bit Little-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_S24BE, "pcm_s24be", "PCM Signed 24-bit Big-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_S16LE, "pcm_s16le", "PCM Signed 16-bit Little-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_S16BE, "pcm_s16be", "PCM Signed 16-bit Big-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_S8,    "pcm_s8",    "PCM Signed 8-bit Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_U32LE, "pcm_u32le", "PCM Unsigned 32-bit Little-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_U32BE, "pcm_u32be", "PCM Unsigned 32-bit Big-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_U24LE, "pcm_u24le", "PCM Unsigned 24-bit Little-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_U24BE, "pcm_u24be", "PCM Unsigned 24-bit Big-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_U16LE, "pcm_u16le", "PCM Unsigned 16-bit Little-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_U16BE, "pcm_u16be", "PCM Unsigned 16-bit Big-Endian Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_U8,    "pcm_u8",    "PCM Unsigned 8-bit Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_F32LE, "pcm_f32le", "PCM 32-bit Little-Endian Floating Point Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_F32BE, "pcm_f32be", "PCM 32-bit Big-Endian Floating Point Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_F64LE, "pcm_f64le", "PCM 64-bit Little-Endian Floating Point Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_F64BE, "pcm_f64be", "PCM 64-bit Big-Endian Floating Point Interleaved"),
-            support_audio_codec!(CODEC_ID_PCM_ALAW,  "pcm_alaw",  "PCM A-law"),
+            support_audio_codec!(
+                CODEC_ID_PCM_S32LE,
+                "pcm_s32le",
+                "PCM Signed 32-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_S32BE,
+                "pcm_s32be",
+                "PCM Signed 32-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_S24LE,
+                "pcm_s24le",
+                "PCM Signed 24-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_S24BE,
+                "pcm_s24be",
+                "PCM Signed 24-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_S16LE,
+                "pcm_s16le",
+                "PCM Signed 16-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_S16BE,
+                "pcm_s16be",
+                "PCM Signed 16-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(CODEC_ID_PCM_S8, "pcm_s8", "PCM Signed 8-bit Interleaved"),
+            support_audio_codec!(
+                CODEC_ID_PCM_U32LE,
+                "pcm_u32le",
+                "PCM Unsigned 32-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_U32BE,
+                "pcm_u32be",
+                "PCM Unsigned 32-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_U24LE,
+                "pcm_u24le",
+                "PCM Unsigned 24-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_U24BE,
+                "pcm_u24be",
+                "PCM Unsigned 24-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_U16LE,
+                "pcm_u16le",
+                "PCM Unsigned 16-bit Little-Endian Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_U16BE,
+                "pcm_u16be",
+                "PCM Unsigned 16-bit Big-Endian Interleaved"
+            ),
+            support_audio_codec!(CODEC_ID_PCM_U8, "pcm_u8", "PCM Unsigned 8-bit Interleaved"),
+            support_audio_codec!(
+                CODEC_ID_PCM_F32LE,
+                "pcm_f32le",
+                "PCM 32-bit Little-Endian Floating Point Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_F32BE,
+                "pcm_f32be",
+                "PCM 32-bit Big-Endian Floating Point Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_F64LE,
+                "pcm_f64le",
+                "PCM 64-bit Little-Endian Floating Point Interleaved"
+            ),
+            support_audio_codec!(
+                CODEC_ID_PCM_F64BE,
+                "pcm_f64be",
+                "PCM 64-bit Big-Endian Floating Point Interleaved"
+            ),
+            support_audio_codec!(CODEC_ID_PCM_ALAW, "pcm_alaw", "PCM A-law"),
             support_audio_codec!(CODEC_ID_PCM_MULAW, "pcm_mulaw", "PCM Mu-law"),
         ]
     }

@@ -345,7 +345,8 @@ impl CodecRegistry {
     ) -> Result<Box<dyn AudioDecoder>> {
         if let Some(codec) = self.get_audio_decoder(params.codec) {
             Ok((codec.factory)(params, opts).await?)
-        } else {
+        }
+        else {
             unsupported_error("core (codec): unsupported audio codec")
         }
     }
@@ -364,7 +365,8 @@ impl CodecRegistry {
     ) -> Result<Box<dyn VideoDecoder>> {
         if let Some(codec) = self.get_video_decoder(params.codec) {
             Ok((codec.factory)(params, opts)?)
-        } else {
+        }
+        else {
             unsupported_error("core (codec): unsupported video codec")
         }
     }
@@ -383,7 +385,8 @@ impl CodecRegistry {
     ) -> Result<Box<dyn SubtitleDecoder>> {
         if let Some(codec) = self.get_subtitle_decoder(params.codec) {
             Ok((codec.factory)(params, opts)?)
-        } else {
+        }
+        else {
             unsupported_error("core (codec): unsupported subtitle codec")
         }
     }

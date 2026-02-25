@@ -33,7 +33,9 @@ use symphonia_core::io::{BufReader, ReadBytes};
 use crate::lacing::read_xiph_sizes;
 use crate::segment::TrackElement;
 
-pub(crate) async fn make_track_codec_params(track: TrackElement) -> Result<Option<CodecParameters>> {
+pub(crate) async fn make_track_codec_params(
+    track: TrackElement,
+) -> Result<Option<CodecParameters>> {
     // Get the codec ID for the track.
     let codec_id = get_codec_id(&track);
     let (profile, level) = get_codec_profile_and_level(&track).await;
@@ -370,7 +372,8 @@ async fn get_codec_profile_and_level(track: &TrackElement) -> (Option<CodecProfi
                     .ok()
                     .map(|cfg| (Some(cfg.profile), Some(cfg.level)))
                     .unwrap_or_else(|| (None, None))
-            } else {
+            }
+            else {
                 (None, None)
             }
         }
@@ -382,7 +385,8 @@ async fn get_codec_profile_and_level(track: &TrackElement) -> (Option<CodecProfi
                     .ok()
                     .map(|cfg| (Some(cfg.profile), Some(cfg.level)))
                     .unwrap_or_else(|| (None, None))
-            } else {
+            }
+            else {
                 (None, None)
             }
         }

@@ -97,7 +97,8 @@ impl Chunk {
             b"kuki" => {
                 if let Ok(chunk_size) = usize::try_from(chunk_size) {
                     Chunk::MagicCookie(reader.read_boxed_slice_exact(chunk_size).await?)
-                } else {
+                }
+                else {
                     return invalid_chunk_size_error("Magic Cookie", chunk_size);
                 }
             }
@@ -115,7 +116,8 @@ impl Chunk {
                 if chunk_size >= 0 {
                     reader.ignore_bytes(chunk_size as u64).await?;
                     return Ok(None);
-                } else {
+                }
+                else {
                     return invalid_chunk_size_error("unsupported", chunk_size);
                 }
             }
@@ -185,7 +187,8 @@ impl AudioDescription {
                             return unsupported_error("caf: unsupported bits per channel");
                         }
                     }
-                } else {
+                }
+                else {
                     match (self.bits_per_channel, *little_endian) {
                         (16, true) => CODEC_ID_PCM_S16LE,
                         (16, false) => CODEC_ID_PCM_S16BE,

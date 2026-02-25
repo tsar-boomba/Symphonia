@@ -77,7 +77,10 @@ pub struct VorbisDecoder {
 }
 
 impl VorbisDecoder {
-    pub async fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+    pub async fn try_new(
+        params: &AudioCodecParameters,
+        _opts: &AudioDecoderOptions,
+    ) -> Result<Self> {
         // This decoder only supports Vorbis.
         if params.codec != CODEC_ID_VORBIS {
             return unsupported_error("vorbis: invalid codec");
@@ -231,13 +234,15 @@ impl VorbisDecoder {
 
             let residue = &mut self.residues[submap.residue as usize];
 
-            residue.read_residue(
-                &mut bs,
-                bs_exp,
-                &self.codebooks,
-                &residue_channels,
-                &mut self.dsp.channels,
-            ).await?;
+            residue
+                .read_residue(
+                    &mut bs,
+                    bs_exp,
+                    &self.codebooks,
+                    &residue_channels,
+                    &mut self.dsp.channels,
+                )
+                .await?;
         }
 
         // Section 4.3.5 - Inverse Coupling
@@ -534,7 +539,7 @@ async fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<S
 async fn read_codebooks(bs: &mut BitReaderRtl<'_>) -> Result<Vec<VorbisCodebook>> {
     let count = bs.read_bits_leq32(8).await? + 1;
     let mut codebooks = Vec::with_capacity(count as usize);
-    
+
     for _ in 0..count {
         codebooks.push(VorbisCodebook::read(bs).await?);
     }
@@ -563,7 +568,7 @@ async fn read_floors(
 ) -> Result<Vec<Box<dyn Floor>>> {
     let count = bs.read_bits_leq32(6).await? + 1;
     let mut floors = Vec::with_capacity(count as usize);
-    
+
     for _ in 0..count {
         floors.push(read_floor(bs, bs0_exp, bs1_exp, max_codebook).await?);
     }
@@ -589,7 +594,7 @@ async fn read_floor(
 async fn read_residues(bs: &mut BitReaderRtl<'_>, max_codebook: u8) -> Result<Vec<Residue>> {
     let count = bs.read_bits_leq32(6).await? + 1;
     let mut residues = Vec::with_capacity(count as usize);
-    
+
     for _ in 0..count {
         residues.push(read_residue(bs, max_codebook).await?);
     }
@@ -614,7 +619,7 @@ async fn read_mappings(
 ) -> Result<Vec<Mapping>> {
     let count = bs.read_bits_leq32(6).await? + 1;
     let mut mappings = Vec::with_capacity(count as usize);
-    
+
     for _ in 0..count {
         mappings.push(read_mapping(bs, audio_channels, max_floor, max_residue).await?);
     }
@@ -672,7 +677,8 @@ async fn read_mapping_type0(
     max_floor: u8,
     max_residue: u8,
 ) -> Result<Mapping> {
-    let num_submaps = if bs.read_bool().await? { bs.read_bits_leq32(4).await? as u8 + 1 } else { 1 };
+    let num_submaps =
+        if bs.read_bool().await? { bs.read_bits_leq32(4).await? as u8 + 1 } else { 1 };
 
     let mut couplings = Vec::new();
 

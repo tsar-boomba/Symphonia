@@ -46,13 +46,17 @@ pub async fn try_get_image_info(buf: &[u8]) -> Option<ImageInfo> {
     debug!("detecting format of image starting with: {:02x?}", &buf[..8.min(buf.len())]);
     if buf.starts_with(BITMAP_MARKER) {
         parse_bitmap(BufReader::new(&buf[BITMAP_MARKER.len()..])).await.ok()
-    } else if buf.starts_with(JPEG_MARKER) {
+    }
+    else if buf.starts_with(JPEG_MARKER) {
         parse_jpeg(BufReader::new(&buf[JPEG_MARKER.len()..])).await.ok()
-    } else if buf.starts_with(GIF_MARKER_1) || buf.starts_with(GIF_MARKER_2) {
+    }
+    else if buf.starts_with(GIF_MARKER_1) || buf.starts_with(GIF_MARKER_2) {
         parse_gif(BufReader::new(&buf[GIF_MARKER_1.len()..])).await.ok()
-    } else if buf.starts_with(PNG_MARKER) {
+    }
+    else if buf.starts_with(PNG_MARKER) {
         parse_png(BufReader::new(&buf[BITMAP_MARKER.len()..])).await.ok()
-    } else {
+    }
+    else {
         None
     }
 }
@@ -212,13 +216,16 @@ async fn parse_bitmap(mut reader: BufReader<'_>) -> Result<ImageInfo> {
                     bits_per_pixel: non_zero(bit_count as u8),
                     color_model: ColorModel::RGB(non_zero(8)),
                 })
-            } else if bit_count == 16 {
+            }
+            else if bit_count == 16 {
                 // With 16bpp, R5G5B5 is used.
                 ColorMode::Direct(ColorModel::RGB(non_zero(5)))
-            } else if bit_count == 24 || bit_count == 32 {
+            }
+            else if bit_count == 24 || bit_count == 32 {
                 // With 24bpp or 32bpp, R8G8B8(A8) is used.
                 ColorMode::Direct(ColorModel::RGB(non_zero(8)))
-            } else {
+            }
+            else {
                 return decode_error("meta (bmp): invalid bit count");
             }
         }
@@ -273,7 +280,8 @@ async fn parse_gif(mut reader: BufReader<'_>) -> Result<ImageInfo> {
             bits_per_pixel: non_zero(bpp),
             color_model: ColorModel::RGB(non_zero(8)),
         })
-    } else {
+    }
+    else {
         // No GCT.
         return unsupported_error("meta (gif): local color tables are unsupported");
     };

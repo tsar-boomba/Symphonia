@@ -348,7 +348,8 @@ fn run_test(path: &str, opts: &TestOptions, result: &mut TestResult) -> Result<(
     let mut ref_process = RefProcess::try_spawn(opts.ref_decoder, opts.gapless, path)?;
 
     // 2. Instantiate a Symphonia decoder for the reference process output.
-    let ref_ms = Box::new(ReadOnlySource::new(FromStd::new(ref_process.child.stdout.take().unwrap())));
+    let ref_ms =
+        Box::new(ReadOnlySource::new(FromStd::new(ref_process.child.stdout.take().unwrap())));
     let ref_mss = MediaSourceStream::new(ref_ms, Default::default());
 
     let mut ref_inst = DecoderInstance::try_open(ref_mss, Default::default())?;

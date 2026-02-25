@@ -5,11 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use super::{Read, Seek, SeekFrom};
 use alloc::{boxed::Box, vec};
 use async_trait::async_trait;
 use core::cmp;
 use core::ops::Sub;
-use super::{Read, Seek, SeekFrom};
 
 use super::SeekBuffered;
 use super::{MediaSource, ReadBytes};
@@ -74,7 +74,10 @@ impl<'s> MediaSourceStream<'s> {
     const MIN_BLOCK_LEN: usize = 1 * 1024;
     const MAX_BLOCK_LEN: usize = 32 * 1024;
 
-    pub fn new(source: Box<dyn MediaSource<Error = super::Error> + 's>, options: MediaSourceStreamOptions) -> Self {
+    pub fn new(
+        source: Box<dyn MediaSource<Error = super::Error> + 's>,
+        options: MediaSourceStreamOptions,
+    ) -> Self {
         // The buffer length must be a power of 2, and > the maximum read block length.
         assert!(options.buffer_len.count_ones() == 1);
         assert!(options.buffer_len > Self::MAX_BLOCK_LEN);
@@ -116,7 +119,8 @@ impl<'s> MediaSourceStream<'s> {
                 // Otherwise, perform a vectored read into the two contiguous region slices.
                 let rem = self.read_block_len - vec0.len();
 
-                let ring_vectors = &mut [super::IoSliceMut::new(vec0), super::IoSliceMut::new(&mut vec1[..rem])];
+                let ring_vectors =
+                    &mut [super::IoSliceMut::new(vec0), super::IoSliceMut::new(&mut vec1[..rem])];
 
                 self.inner.read_vectored(ring_vectors).await?
             };

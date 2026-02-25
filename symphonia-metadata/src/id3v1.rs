@@ -24,8 +24,8 @@ use symphonia_core::meta::{
     MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, StandardTag,
     Tag,
 };
-use symphonia_core::{async_trait, support_metadata};
 use symphonia_core::util::text;
+use symphonia_core::{async_trait, support_metadata};
 
 use crate::utils::id3v1::get_genre_name;
 
@@ -73,7 +73,8 @@ async fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder)
         builder.add_tag(Tag::new_from_parts("TRACK", track, Some(StandardTag::TrackNumber(track))));
 
         decode_iso8859_buf(&buf[94..122])
-    } else {
+    }
+    else {
         decode_iso8859_buf(&buf[94..124])
     };
 
@@ -121,8 +122,8 @@ pub struct Id3v1Format;
 impl Scoreable for Id3v1Format {
     fn score<'a, 'b>(
         _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
-    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>>  {
-        Box::pin(async {Ok(Score::Supported(255))})
+    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
+        Box::pin(async { Ok(Score::Supported(255)) })
     }
 }
 

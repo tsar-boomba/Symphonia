@@ -42,7 +42,8 @@ impl StscAtom {
 
             if entry.first_sample < sample_num {
                 left = mid + 1;
-            } else {
+            }
+            else {
                 right = mid;
             }
         }

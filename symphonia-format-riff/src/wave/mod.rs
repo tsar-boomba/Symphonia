@@ -17,10 +17,10 @@ use symphonia_core::errors::{decode_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_WAVE;
-use symphonia_core::{async_trait, io::*};
 use symphonia_core::meta::well_known::METADATA_ID_WAVE;
 use symphonia_core::meta::{Metadata, MetadataInfo, MetadataLog};
 use symphonia_core::support_format;
+use symphonia_core::{async_trait, io::*};
 
 use log::{debug, error};
 
@@ -150,7 +150,8 @@ impl<'s> WavReader<'s> {
 
                     track.with_codec_params(CodecParameters::Audio(codec_params));
 
-                    let Some(packet_info) = packet_info else {
+                    let Some(packet_info) = packet_info
+                    else {
                         return decode_error("wav: missing format chunk");
                     };
 
@@ -237,7 +238,8 @@ impl FormatReader for WavReader<'_> {
             &self.tracks,
             self.data_start_pos,
             self.data_end_pos.unwrap_or(u64::MAX),
-        ).await
+        )
+        .await
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -310,7 +312,8 @@ impl FormatReader for WavReader<'_> {
             let current_pos = self.reader.pos();
             if seek_pos >= current_pos {
                 self.reader.ignore_bytes(seek_pos - current_pos).await?;
-            } else {
+            }
+            else {
                 return seek_error(SeekErrorKind::ForwardOnly);
             }
         }

@@ -20,11 +20,11 @@ fn end_of_bitstream_error<T>() -> super::Result<T> {
 pub mod vlc {
     //! The `vlc` module provides support for decoding variable-length codes (VLC).
 
+    use crate::io;
     use alloc::{
         collections::{BTreeMap, VecDeque},
         vec::Vec,
     };
-    use crate::io;
     use core::num::NonZero;
 
     fn codebook_error<T>(desc: &'static str) -> io::Result<T> {
@@ -1397,8 +1397,8 @@ impl FiniteBitStream for BitReaderRtl<'_> {
 
 #[cfg(test)]
 mod tests {
-    use rand::{RngCore, SeedableRng};
     use alloc::vec::Vec;
+    use rand::{RngCore, SeedableRng};
 
     use super::vlc::{BitOrder, Codebook, CodebookBuilder, Entry8x8};
     use super::{BitReaderLtr, ReadBitsLtr};

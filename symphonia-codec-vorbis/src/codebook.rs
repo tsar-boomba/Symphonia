@@ -181,7 +181,8 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
             // as a prefix, move it to the next branch.
             if *next == codeword << i {
                 *next = branch << i;
-            } else {
+            }
+            else {
                 break;
             }
         }
@@ -244,7 +245,8 @@ impl VorbisCodebook {
                         code_values.push(entry);
                     }
                 }
-            } else {
+            }
+            else {
                 // Densely packed codeword entry list.
                 for _ in 0..codebook_entries {
                     let code_len = bs.read_bits_leq32(5).await? as u8 + 1;
@@ -254,7 +256,8 @@ impl VorbisCodebook {
                 // The codeword list is not sparse. Populate all values.
                 code_values.extend(0..codebook_entries);
             }
-        } else {
+        }
+        else {
             // Codeword list is length ordered.
             let mut cur_entry = 0;
             let mut cur_len = bs.read_bits_leq32(5).await? + 1;
@@ -262,7 +265,8 @@ impl VorbisCodebook {
             loop {
                 let num_bits = if codebook_entries > cur_entry {
                     ilog(codebook_entries - cur_entry)
-                } else {
+                }
+                else {
                     0
                 };
 
@@ -378,7 +382,8 @@ impl VorbisCodebook {
             let start = dim * entry as usize;
 
             Ok(&vq[start..start + dim])
-        } else {
+        }
+        else {
             decode_error("vorbis: not a vq codebook")
         }
     }

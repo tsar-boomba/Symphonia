@@ -149,7 +149,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
 
     // If the path string is '-' then read from standard input.
     let source = if path.as_os_str() == "-" {
-        Box::new(ReadOnlySource::new(FromStd::new(std::io::stdin()))) as Box<dyn MediaSource<Error = symphonia::core::io::Error>>
+        Box::new(ReadOnlySource::new(FromStd::new(std::io::stdin())))
+            as Box<dyn MediaSource<Error = symphonia::core::io::Error>>
     }
     else {
         // Othwerise, get a Path from the path string.

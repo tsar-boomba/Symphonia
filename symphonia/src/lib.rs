@@ -182,17 +182,17 @@ pub mod default {
         //! The `meta` module re-exports all enabled Symphonia metadata readers.
 
         #[cfg(feature = "ape")]
-        pub use symphonia_metadata::ape::ApeReader;
-        #[cfg(feature = "ape")]
         pub use symphonia_metadata::ape::ApeFormat;
-        #[cfg(feature = "id3v1")]
-        pub use symphonia_metadata::id3v1::Id3v1Reader;
+        #[cfg(feature = "ape")]
+        pub use symphonia_metadata::ape::ApeReader;
         #[cfg(feature = "id3v1")]
         pub use symphonia_metadata::id3v1::Id3v1Format;
-        #[cfg(feature = "id3v2")]
-        pub use symphonia_metadata::id3v2::Id3v2Reader;
+        #[cfg(feature = "id3v1")]
+        pub use symphonia_metadata::id3v1::Id3v1Reader;
         #[cfg(feature = "id3v2")]
         pub use symphonia_metadata::id3v2::Id3v2Format;
+        #[cfg(feature = "id3v2")]
+        pub use symphonia_metadata::id3v2::Id3v2Reader;
 
         pub use symphonia_metadata::embedded;
     }

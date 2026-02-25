@@ -8,7 +8,7 @@ pub use io_slice::IoSliceMut;
 #[cfg(feature = "std")]
 pub use std::io::IoSliceMut;
 
-use alloc::{vec::Vec, boxed::Box};
+use alloc::{boxed::Box, vec::Vec};
 use core::{
     fmt::{Debug, Formatter},
     mem::MaybeUninit,
@@ -98,7 +98,10 @@ mod from_std {
             }
         }
 
-        async fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize, Self::Error> {
+        async fn read_vectored(
+            &mut self,
+            bufs: &mut [IoSliceMut<'_>],
+        ) -> Result<usize, Self::Error> {
             self.inner.read_vectored(bufs).map_err(Into::into)
         }
 
@@ -829,7 +832,8 @@ where
 
         if bytes_read < buf_len {
             consecutive_short_reads += 1;
-        } else {
+        }
+        else {
             consecutive_short_reads = 0;
         }
 

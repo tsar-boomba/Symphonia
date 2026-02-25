@@ -40,7 +40,8 @@ async fn read_ebml_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Resu
         if let Some(last_size) = sizes.last().copied() {
             let delta = read_signed_vint(&mut reader).await?;
             sizes.push((last_size as i64 + delta) as u64)
-        } else {
+        }
+        else {
             let size = read_unsigned_vint(&mut reader).await?;
             sizes.push(size);
         }
@@ -49,14 +50,18 @@ async fn read_ebml_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Resu
     Ok(sizes)
 }
 
-pub(crate) async fn read_xiph_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Result<Vec<u64>> {
+pub(crate) async fn read_xiph_sizes<R: ReadBytes>(
+    mut reader: R,
+    num_frames: usize,
+) -> Result<Vec<u64>> {
     let mut sizes = Vec::with_capacity(num_frames);
     let mut prefixes = 0;
     while sizes.len() < num_frames {
         let byte = reader.read_byte().await? as u64;
         if byte == 255 {
             prefixes += 1;
-        } else {
+        }
+        else {
             let size = prefixes * 255 + byte;
             prefixes = 0;
             sizes.push(size);

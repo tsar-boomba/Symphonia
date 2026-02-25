@@ -23,8 +23,8 @@ use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioC
 use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr};
 use symphonia_core::packet::Packet;
-use symphonia_core::{async_trait, support_audio_codec};
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
+use symphonia_core::{async_trait, support_audio_codec};
 
 use log::{debug, log_enabled, warn};
 
@@ -92,7 +92,10 @@ pub struct FlacDecoder {
 }
 
 impl FlacDecoder {
-    pub async fn try_new(params: &AudioCodecParameters, options: &AudioDecoderOptions) -> Result<Self> {
+    pub async fn try_new(
+        params: &AudioCodecParameters,
+        options: &AudioDecoderOptions,
+    ) -> Result<Self> {
         // This decoder only supports FLAC.
         if params.codec != CODEC_ID_FLAC {
             return unsupported_error("flac: invalid codec");
@@ -149,9 +152,11 @@ impl FlacDecoder {
         // the stream information if provided. If neither are available, return an error.
         let bits_per_sample = if let Some(bps) = header.bits_per_sample {
             bps
-        } else if let Some(bps) = self.params.bits_per_sample {
+        }
+        else if let Some(bps) = self.params.bits_per_sample {
             bps
-        } else {
+        }
+        else {
             return decode_error("flac: bits per sample not provided");
         };
         if bits_per_sample > u32::BITS {
@@ -187,7 +192,8 @@ impl FlacDecoder {
                             self.buf
                                 .plane_mut(i)
                                 .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?,
-                        ).await?;
+                        )
+                        .await?;
                     }
                 }
                 // For Left/Side, Mid/Side, and Right/Side channel configurations, the Side
@@ -264,7 +270,8 @@ impl AudioDecoder for FlacDecoder {
         if let Err(e) = self.decode_inner(packet).await {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
@@ -294,7 +301,8 @@ impl AudioDecoder for FlacDecoder {
                 }
 
                 result.verify_ok = Some(decoded == expected)
-            } else {
+            }
+            else {
                 warn!("verification requested but the expected md5 checksum was not provided");
             }
         }
@@ -448,7 +456,12 @@ async fn decode_fixed_linear<B: ReadBitsLtr>(
     Ok(())
 }
 
-async fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]) -> Result<()> {
+async fn decode_linear<B: ReadBitsLtr>(
+    bs: &mut B,
+    bps: u32,
+    order: u32,
+    buf: &mut [i32],
+) -> Result<()> {
     if order as usize > buf.len() {
         return decode_error("flac: predictor order is greater than the block size");
     }
@@ -498,7 +511,8 @@ async fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &m
             11..=12 => lpc::<12>(order, &qlp_coeffs, qlp_coeff_shift, buf),
             _ => lpc::<32>(order, &qlp_coeffs, qlp_coeff_shift, buf),
         };
-    } else {
+    }
+    else {
         return unsupported_error("flac: lpc shifts less than 0 are not supported");
     }
 
@@ -559,7 +573,8 @@ async fn decode_residual<B: ReadBitsLtr>(
         bs,
         param_bit_width,
         &mut buf[n_prelude_samples as usize..n_partition_samples],
-    ).await?;
+    )
+    .await?;
 
     // Decode the remaining partitions.
     for buf_chunk in buf[n_partition_samples..].chunks_mut(n_partition_samples) {
@@ -590,7 +605,8 @@ async fn decode_rice_partition<B: ReadBitsLtr>(
             let r = bs.read_bits_leq32(rice_param).await?;
             *sample = rice_signed_to_i32((q << rice_param) | r);
         }
-    } else {
+    }
+    else {
         let residual_bits = bs.read_bits_leq32(5).await?;
 
         // trace!(

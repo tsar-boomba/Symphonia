@@ -46,7 +46,8 @@ async fn main_fut() {
     // Create a decoder for the track.
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(track.codec_params.as_ref().unwrap().audio().unwrap(), &dec_opts)
-        .await.unwrap();
+        .await
+        .unwrap();
 
     // Store the track identifier, we'll use it to filter packets.
     let track_id = track.id;

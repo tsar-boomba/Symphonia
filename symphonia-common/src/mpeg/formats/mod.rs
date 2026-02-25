@@ -30,7 +30,9 @@ pub enum ClassTag {
 }
 
 /// Read an ISO/IEC 14496-1 Object Descriptor header and return the class tag and size.
-pub async fn read_object_descriptor_header<B: ReadBytes>(reader: &mut B) -> Result<(ClassTag, u64)> {
+pub async fn read_object_descriptor_header<B: ReadBytes>(
+    reader: &mut B,
+) -> Result<(ClassTag, u64)> {
     let tag = match reader.read_u8().await? {
         0x0 | 0xff => return decode_error("common (mpeg): forbidden object descriptor tag"),
         0x1 => ClassTag::ObjectDescriptor,
@@ -279,7 +281,8 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
 
             match tag {
                 ClassTag::DecoderSpecificInfo => {
-                    dec_specific_config = Some(DecoderSpecificInfo::read(&mut scoped, desc_len).await?);
+                    dec_specific_config =
+                        Some(DecoderSpecificInfo::read(&mut scoped, desc_len).await?);
                 }
                 other => {
                     debug!("skipping {other:?} object in decoder config descriptor");

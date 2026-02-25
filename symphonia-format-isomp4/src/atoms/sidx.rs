@@ -53,7 +53,10 @@ impl Atom for SidxAtom {
             .ok_or(Error::DecodeError("isomp4 (sidx): expected atom size to be known"))?;
 
         let (earliest_pts, first_offset) = match version {
-            0 => (u64::from(reader.read_be_u32().await?), anchor + u64::from(reader.read_be_u32().await?)),
+            0 => (
+                u64::from(reader.read_be_u32().await?),
+                anchor + u64::from(reader.read_be_u32().await?),
+            ),
             1 => (reader.read_be_u64().await?, anchor + reader.read_be_u64().await?),
             _ => {
                 return decode_error("isomp4: invalid sidx version");

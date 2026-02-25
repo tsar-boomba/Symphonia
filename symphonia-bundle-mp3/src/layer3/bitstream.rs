@@ -71,7 +71,8 @@ async fn read_granule_channel_side_info<B: ReadBitsLtr>(
     channel.global_gain = bs.read_bits_leq32(8).await? as u8;
 
     channel.scalefac_compress =
-        if header.is_mpeg1() { bs.read_bits_leq32(4) .await} else { bs.read_bits_leq32(9) .await}? as u16;
+        if header.is_mpeg1() { bs.read_bits_leq32(4).await } else { bs.read_bits_leq32(9).await }?
+            as u16;
 
     let window_switching = bs.read_bool().await?;
 

@@ -112,7 +112,11 @@ pub struct Tns {
 }
 
 impl Tns {
-    pub async fn read<B: ReadBitsLtr>(bs: &mut B, info: &IcsInfo, is_lc: bool) -> Result<Option<Self>> {
+    pub async fn read<B: ReadBitsLtr>(
+        bs: &mut B,
+        info: &IcsInfo,
+        is_lc: bool,
+    ) -> Result<Option<Self>> {
         let tns_data_present = bs.read_bool().await?;
 
         if !tns_data_present {

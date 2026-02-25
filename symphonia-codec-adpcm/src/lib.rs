@@ -123,7 +123,8 @@ impl AdpcmDecoder {
             }
 
             AudioSpec::new(rate, channels.clone())
-        } else {
+        }
+        else {
             return unsupported_error("adpcm: channels or channel_layout is required");
         };
 
@@ -169,7 +170,9 @@ impl AdpcmDecoder {
                     let buffer_range = offset..(offset + frames_per_block);
                     let buffers =
                         [&mut buffers.0[buffer_range.clone()], &mut buffers.1[buffer_range]];
-                    self.inner_decoder.decode_stereo(&mut stream, buffers, frames_per_block).await?;
+                    self.inner_decoder
+                        .decode_stereo(&mut stream, buffers, frames_per_block)
+                        .await?;
                 }
             }
             _ => unreachable!(),
@@ -198,7 +201,8 @@ impl AudioDecoder for AdpcmDecoder {
         if let Err(e) = self.decode_inner(packet).await {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }

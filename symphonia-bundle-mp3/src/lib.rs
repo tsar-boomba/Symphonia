@@ -45,8 +45,8 @@ mod layer3;
 
 #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
 pub use decoder::MpaDecoder;
-pub use demuxer::MpaReader;
 pub use demuxer::MpaFormat;
+pub use demuxer::MpaReader;
 
 // For SemVer compatibility in v0.5.x series.
 #[deprecated = "use `symphonia_bundle_mp3::MpaDecoder` instead"]

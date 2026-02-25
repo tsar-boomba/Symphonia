@@ -25,5 +25,5 @@ mod mappings;
 mod page;
 mod physical;
 
-pub use demuxer::OggReader;
 pub use demuxer::OggFormat;
+pub use demuxer::OggReader;

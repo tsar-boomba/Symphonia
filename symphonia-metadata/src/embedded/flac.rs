@@ -7,8 +7,8 @@
 
 //! FLAC metadata block reading.
 
+use alloc::{string::String, sync::Arc, vec::Vec};
 use core::num::NonZeroU8;
-use alloc::{sync::Arc, string::String, vec::Vec};
 
 use log::warn;
 use symphonia_core::errors::{Result, decode_error};
@@ -321,7 +321,8 @@ async fn read_flac_cuesheet_track<B: ReadBytes>(
 
         // Add each index as a chapter.
         for _ in 0..n_indicies {
-            let index = read_flac_cuesheet_track_index(reader, is_cdda, n_offset_samples, tb).await?;
+            let index =
+                read_flac_cuesheet_track_index(reader, is_cdda, n_offset_samples, tb).await?;
 
             group.items.push(ChapterGroupItem::Chapter(index));
         }
