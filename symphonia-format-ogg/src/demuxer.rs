@@ -440,7 +440,9 @@ impl<'s> OggReader<'s> {
     }
 }
 
-impl Scoreable for OggReader<'_> {
+pub struct OggFormat;
+
+impl Scoreable for OggFormat {
     fn score<'a, 'b>(
         _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
@@ -449,8 +451,8 @@ impl Scoreable for OggReader<'_> {
 }
 
 #[async_trait]
-impl<'s> ProbeableFormat<'s> for OggReader<'s> {
-    async fn try_probe_new(
+impl ProbeableFormat for OggFormat {
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: FormatOptions,
     ) -> Result<Box<dyn FormatReader + 's>> {

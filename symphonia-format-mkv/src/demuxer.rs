@@ -552,9 +552,19 @@ impl<'s> MkvReader<'s> {
     }
 }
 
+pub struct MkvFormat;
+
+impl Scoreable for MkvFormat {
+    fn score<'a, 'b>(
+        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
+        Box::pin(async { Ok(Score::Supported(255)) })
+    }
+}
+
 #[async_trait]
-impl<'s> ProbeableFormat<'s> for MkvReader<'s> {
-    async fn try_probe_new(
+impl ProbeableFormat for MkvFormat {
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: FormatOptions,
     ) -> Result<Box<dyn FormatReader + 's>>
@@ -658,14 +668,6 @@ impl FormatReader for MkvReader<'_> {
         Self: 's,
     {
         self.iter.into_inner()
-    }
-}
-
-impl Scoreable for MkvReader<'_> {
-    fn score<'a, 'b>(
-        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
-    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
-        Box::pin(async { Ok(Score::Supported(255)) })
     }
 }
 

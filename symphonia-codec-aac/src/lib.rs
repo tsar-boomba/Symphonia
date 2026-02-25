@@ -25,3 +25,4 @@ mod adts;
 
 pub use aac::AacDecoder;
 pub use adts::AdtsReader;
+pub use adts::AdtsFormat;

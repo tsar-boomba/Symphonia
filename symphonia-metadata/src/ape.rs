@@ -297,7 +297,9 @@ impl<'s> ApeReader<'s> {
     }
 }
 
-impl Scoreable for ApeReader<'_> {
+pub struct ApeFormat;
+
+impl Scoreable for ApeFormat {
     fn score<'a, 'b>(
         _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
@@ -306,8 +308,8 @@ impl Scoreable for ApeReader<'_> {
 }
 
 #[async_trait]
-impl<'s> ProbeableMetadata<'s> for ApeReader<'s> {
-    async fn try_probe_new(
+impl ProbeableMetadata for ApeFormat {
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: MetadataOptions,
     ) -> Result<Box<dyn MetadataReader + 's>>

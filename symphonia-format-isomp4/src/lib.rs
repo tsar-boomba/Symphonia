@@ -23,3 +23,4 @@ mod fp;
 mod stream;
 
 pub use demuxer::IsoMp4Reader;
+pub use demuxer::IsoMp4Format;

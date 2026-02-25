@@ -1,4 +1,4 @@
-use symphonia_codec_aac::{AacDecoder, AdtsReader};
+use symphonia_codec_aac::{AacDecoder, AdtsFormat, AdtsReader};
 use symphonia_core::codecs::audio::{
     AudioCodecParameters, AudioDecoder, AudioDecoderOptions, well_known::CODEC_ID_AAC,
 };
@@ -11,7 +11,7 @@ async fn test_decode(data: Vec<u8>) -> symphonia_core::errors::Result<()> {
 
     let mss = MediaSourceStream::new(Box::new(data), Default::default());
 
-    let mut reader = AdtsReader::try_probe_new(mss, Default::default()).await?;
+    let mut reader = AdtsFormat::try_probe_new(mss, Default::default()).await?;
 
     let mut decoder = AacDecoder::try_new(
         AudioCodecParameters::new().for_codec(CODEC_ID_AAC),

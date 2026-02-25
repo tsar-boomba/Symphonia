@@ -27,5 +27,10 @@ mod wave;
 
 #[cfg(feature = "aiff")]
 pub use aiff::AiffReader;
+#[cfg(feature = "aiff")]
+pub use aiff::AiffFormat;
+
 #[cfg(feature = "wav")]
 pub use wave::WavReader;
+#[cfg(feature = "wav")]
+pub use wave::WavFormat;
