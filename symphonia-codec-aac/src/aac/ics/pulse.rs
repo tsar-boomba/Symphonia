@@ -11,6 +11,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_core::Float;
 use symphonia_core::errors::Result;
 use symphonia_core::io::ReadBitsLtr;
 
@@ -40,22 +41,22 @@ pub struct Pulse {
 }
 
 impl Pulse {
-    pub fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
-        let pulse_data_present = bs.read_bool()?;
+    pub async fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
+        let pulse_data_present = bs.read_bool().await?;
 
         if !pulse_data_present {
             return Ok(None);
         }
 
-        let number_pulse = bs.read_bits_leq32(2)? as usize + 1;
-        let pulse_start_sfb = bs.read_bits_leq32(6)? as usize;
+        let number_pulse = bs.read_bits_leq32(2).await? as usize + 1;
+        let pulse_start_sfb = bs.read_bits_leq32(6).await? as usize;
 
         let mut pulse_offset: [u8; 4] = [0; 4];
         let mut pulse_amp: [u8; 4] = [0; 4];
 
         for i in 0..number_pulse {
-            pulse_offset[i] = bs.read_bits_leq32(5)? as u8;
-            pulse_amp[i] = bs.read_bits_leq32(4)? as u8;
+            pulse_offset[i] = bs.read_bits_leq32(5).await? as u8;
+            pulse_amp[i] = bs.read_bits_leq32(4).await? as u8;
         }
 
         Ok(Some(Self { number_pulse, pulse_start_sfb, pulse_offset, pulse_amp }))

@@ -7,7 +7,7 @@
 
 use alloc::{boxed::Box, vec::Vec};
 use symphonia_core::{
-    Lazy,
+    Float, Lazy,
     io::{ReadBitsLtr, vlc::*},
 };
 
