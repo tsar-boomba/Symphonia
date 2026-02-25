@@ -308,7 +308,9 @@ fn process_markers(
     }
 }
 
-impl Scoreable for AiffReader<'_> {
+pub struct AiffFormat;
+
+impl Scoreable for AiffFormat {
     fn score<'a, 'b>(
         mut src: ScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
@@ -333,8 +335,8 @@ impl Scoreable for AiffReader<'_> {
 }
 
 #[async_trait]
-impl<'s> ProbeableFormat<'s> for AiffReader<'s> {
-    async fn try_probe_new(
+impl ProbeableFormat for AiffFormat {
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: FormatOptions,
     ) -> Result<Box<dyn FormatReader + 's>> {

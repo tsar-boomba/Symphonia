@@ -180,7 +180,9 @@ impl<'s> WavReader<'s> {
     }
 }
 
-impl Scoreable for WavReader<'_> {
+pub struct WavFormat;
+
+impl Scoreable for WavFormat {
     fn score<'a, 'b>(
         mut src: ScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
@@ -201,8 +203,8 @@ impl Scoreable for WavReader<'_> {
 }
 
 #[async_trait]
-impl<'s> ProbeableFormat<'s> for WavReader<'s> {
-    async fn try_probe_new(
+impl ProbeableFormat for WavFormat {
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: FormatOptions,
     ) -> Result<Box<dyn FormatReader + 's>> {

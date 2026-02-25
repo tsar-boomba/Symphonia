@@ -196,7 +196,9 @@ impl<'s> FlacReader<'s> {
     }
 }
 
-impl Scoreable for FlacReader<'_> {
+pub struct FlacFormat;
+
+impl Scoreable for FlacFormat {
     fn score<'a, 'b>(
         _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
@@ -205,8 +207,8 @@ impl Scoreable for FlacReader<'_> {
 }
 
 #[async_trait]
-impl<'s> ProbeableFormat<'s> for FlacReader<'s> {
-    async fn try_probe_new(
+impl ProbeableFormat for FlacFormat {
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: FormatOptions,
     ) -> Result<Box<dyn FormatReader + 's>> {

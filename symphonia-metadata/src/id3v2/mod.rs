@@ -552,7 +552,9 @@ impl<'s> Id3v2Reader<'s> {
     }
 }
 
-impl Scoreable for Id3v2Reader<'_> {
+pub struct Id3v2Format;
+
+impl Scoreable for Id3v2Format {
     fn score<'a, 'b>(
         _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
@@ -561,8 +563,8 @@ impl Scoreable for Id3v2Reader<'_> {
 }
 
 #[async_trait]
-impl<'s> ProbeableMetadata<'s> for Id3v2Reader<'s> {
-    async fn try_probe_new(
+impl ProbeableMetadata for Id3v2Format {
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: MetadataOptions,
     ) -> Result<Box<dyn MetadataReader + 's>>

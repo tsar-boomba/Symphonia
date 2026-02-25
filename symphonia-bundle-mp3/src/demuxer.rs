@@ -49,7 +49,9 @@ pub struct MpaReader<'s> {
     next_packet_ts: Timestamp,
 }
 
-impl Scoreable for MpaReader<'_> {
+pub struct MpaFormat;
+
+impl Scoreable for MpaFormat {
     fn score<'a, 'b>(
         mut src: ScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
@@ -86,8 +88,8 @@ impl Scoreable for MpaReader<'_> {
 }
 
 #[async_trait]
-impl<'s> ProbeableFormat<'s> for MpaReader<'s> {
-    async fn try_probe_new(
+impl ProbeableFormat for MpaFormat {
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: FormatOptions,
     ) -> Result<Box<dyn FormatReader + 's>> {

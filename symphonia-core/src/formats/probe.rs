@@ -152,8 +152,10 @@ pub type FormatFactoryFn = for<'s> fn(
 >;
 
 /// `MetadataReader` probe factory function. Creates a boxed `MetadataReader`.
-pub type MetadataFactoryFn =
-    for<'s> fn(MediaSourceStream<'s>, MetadataOptions) -> Pin<
+pub type MetadataFactoryFn = for<'s> fn(
+    MediaSourceStream<'s>,
+    MetadataOptions,
+) -> Pin<
     Box<dyn Future<Output = Result<Box<dyn MetadataReader + 's>>> + Send + 's>,
 >;
 
@@ -238,9 +240,9 @@ pub trait Scoreable {
 
 /// To support probing, a `FormatReader` must implement the `ProbeableFormat` trait.
 #[async_trait]
-pub trait ProbeableFormat<'s>: FormatReader + Scoreable {
+pub trait ProbeableFormat: Scoreable + 'static {
     /// Create an instance of the format reader.
-    async fn try_probe_new(
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: FormatOptions,
     ) -> Result<Box<dyn FormatReader + 's>>
@@ -254,9 +256,9 @@ pub trait ProbeableFormat<'s>: FormatReader + Scoreable {
 
 /// To support probing, a `MetadataReader` must implement the `ProbeableMetadata` trait.
 #[async_trait]
-pub trait ProbeableMetadata<'s>: MetadataReader + Scoreable {
+pub trait ProbeableMetadata: Scoreable + 'static {
     /// Create an instance of the metadata reader.
-    async fn try_probe_new(
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: MetadataOptions,
     ) -> Result<Box<dyn MetadataReader + 's>>
@@ -349,26 +351,17 @@ impl Probe {
     }
 
     /// Register the parameterized format reader at the standard tier.
-    pub fn register_format<P>(&mut self)
-    where
-        for<'a> P: ProbeableFormat<'a> + 'static,
-    {
+    pub fn register_format<P: ProbeableFormat>(&mut self) {
         self.register_format_at_tier::<P>(Tier::Standard);
     }
 
     /// Register the parameterized metadata reader at the standard tier.
-    pub fn register_metadata<P>(&mut self)
-    where
-        for<'a> P: ProbeableMetadata<'a> + 'static,
-    {
+    pub fn register_metadata<P: ProbeableMetadata>(&mut self) {
         self.register_metadata_at_tier::<P>(Tier::Standard);
     }
 
     /// Register the parameterized format reader at a specific tier.
-    pub fn register_format_at_tier<P>(&mut self, tier: Tier)
-    where
-        for<'a> P: ProbeableFormat<'a> + 'static,
-    {
+    pub fn register_format_at_tier<P: ProbeableFormat>(&mut self, tier: Tier) {
         for data in P::probe_data() {
             // Build a generic format probe candidate.
             let candidate = GenericProbeMatch {
@@ -386,9 +379,7 @@ impl Probe {
     }
 
     /// Register the parameterized metadata reader at a specific tier.
-    pub fn register_metadata_at_tier<P>(&mut self, tier: Tier)
-    where
-        for<'a> P: ProbeableMetadata<'a> + 'static,
+    pub fn register_metadata_at_tier<P: ProbeableMetadata>(&mut self, tier: Tier)
     {
         for data in P::probe_data() {
             // Build a generic metadata probe candidate.

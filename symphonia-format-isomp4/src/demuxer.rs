@@ -489,7 +489,9 @@ impl<'s> IsoMp4Reader<'s> {
     }
 }
 
-impl Scoreable for IsoMp4Reader<'_> {
+pub struct IsoMp4Format;
+
+impl Scoreable for IsoMp4Format {
     fn score<'a, 'b>(
         _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
@@ -498,8 +500,8 @@ impl Scoreable for IsoMp4Reader<'_> {
 }
 
 #[async_trait]
-impl<'s> ProbeableFormat<'s> for IsoMp4Reader<'s> {
-    async fn try_probe_new(
+impl ProbeableFormat for IsoMp4Format {
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: FormatOptions,
     ) -> Result<Box<dyn FormatReader + 's>> {

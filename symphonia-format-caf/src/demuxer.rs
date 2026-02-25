@@ -61,7 +61,9 @@ enum PacketInfo {
     },
 }
 
-impl Scoreable for CafReader<'_> {
+pub struct CafFormat;
+
+impl Scoreable for CafFormat {
     fn score<'a, 'b>(
         _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
@@ -70,8 +72,8 @@ impl Scoreable for CafReader<'_> {
 }
 
 #[async_trait]
-impl<'s> ProbeableFormat<'s> for CafReader<'s> {
-    async fn try_probe_new(
+impl ProbeableFormat for CafFormat {
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: FormatOptions,
     ) -> Result<Box<dyn FormatReader + 's>> {

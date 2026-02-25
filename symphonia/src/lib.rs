@@ -155,27 +155,27 @@ pub mod default {
         //! The `formats` module re-exports all enabled Symphonia format readers.
 
         #[cfg(feature = "flac")]
-        pub use symphonia_bundle_flac::FlacReader;
+        pub use symphonia_bundle_flac::FlacFormat;
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
-        pub use symphonia_bundle_mp3::MpaReader;
+        pub use symphonia_bundle_mp3::MpaFormat;
         #[cfg(feature = "aac")]
-        pub use symphonia_codec_aac::AdtsReader;
+        pub use symphonia_codec_aac::AdtsFormat;
         #[cfg(feature = "caf")]
-        pub use symphonia_format_caf::CafReader;
+        pub use symphonia_format_caf::CafFormat;
         #[cfg(feature = "isomp4")]
-        pub use symphonia_format_isomp4::IsoMp4Reader;
+        pub use symphonia_format_isomp4::IsoMp4Format;
         #[cfg(feature = "mkv")]
-        pub use symphonia_format_mkv::MkvReader;
+        pub use symphonia_format_mkv::MkvFormat;
         #[cfg(feature = "ogg")]
-        pub use symphonia_format_ogg::OggReader;
+        pub use symphonia_format_ogg::OggFormat;
         #[cfg(feature = "aiff")]
-        pub use symphonia_format_riff::AiffReader;
+        pub use symphonia_format_riff::AiffFormat;
         #[cfg(feature = "wav")]
-        pub use symphonia_format_riff::WavReader;
+        pub use symphonia_format_riff::WavFormat;
 
         #[deprecated = "use `default::formats::MpaReader` instead"]
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
-        pub type Mp3Reader<'s> = MpaReader<'s>;
+        pub type Mp3Reader = MpaFormat;
     }
 
     pub mod meta {
@@ -183,10 +183,16 @@ pub mod default {
 
         #[cfg(feature = "ape")]
         pub use symphonia_metadata::ape::ApeReader;
+        #[cfg(feature = "ape")]
+        pub use symphonia_metadata::ape::ApeFormat;
         #[cfg(feature = "id3v1")]
         pub use symphonia_metadata::id3v1::Id3v1Reader;
+        #[cfg(feature = "id3v1")]
+        pub use symphonia_metadata::id3v1::Id3v1Format;
         #[cfg(feature = "id3v2")]
         pub use symphonia_metadata::id3v2::Id3v2Reader;
+        #[cfg(feature = "id3v2")]
+        pub use symphonia_metadata::id3v2::Id3v2Format;
 
         pub use symphonia_metadata::embedded;
     }
@@ -263,41 +269,41 @@ pub mod default {
     pub fn register_enabled_formats(probe: &mut Probe) {
         // Formats
         #[cfg(feature = "aac")]
-        probe.register_format::<formats::AdtsReader<'_>>();
+        probe.register_format::<formats::AdtsFormat>();
 
         #[cfg(feature = "caf")]
-        probe.register_format::<formats::CafReader<'_>>();
+        probe.register_format::<formats::CafFormat>();
 
         #[cfg(feature = "flac")]
-        probe.register_format::<formats::FlacReader<'_>>();
+        probe.register_format::<formats::FlacFormat>();
 
         #[cfg(feature = "isomp4")]
-        probe.register_format::<formats::IsoMp4Reader<'_>>();
+        probe.register_format::<formats::IsoMp4Format>();
 
         #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
-        probe.register_format::<formats::MpaReader<'_>>();
+        probe.register_format::<formats::MpaFormat>();
 
         #[cfg(feature = "aiff")]
-        probe.register_format::<formats::AiffReader<'_>>();
+        probe.register_format::<formats::AiffFormat>();
 
         #[cfg(feature = "wav")]
-        probe.register_format::<formats::WavReader<'_>>();
+        probe.register_format::<formats::WavFormat>();
 
         #[cfg(feature = "ogg")]
-        probe.register_format::<formats::OggReader<'_>>();
+        probe.register_format::<formats::OggFormat>();
 
         #[cfg(feature = "mkv")]
-        probe.register_format::<formats::MkvReader<'_>>();
+        probe.register_format::<formats::MkvFormat>();
 
         // Metadata
         #[cfg(feature = "ape")]
-        probe.register_metadata::<meta::ApeReader<'_>>();
+        probe.register_metadata::<meta::ApeFormat>();
 
         #[cfg(feature = "id3v1")]
-        probe.register_metadata::<meta::Id3v1Reader<'_>>();
+        probe.register_metadata::<meta::Id3v1Format>();
 
         #[cfg(feature = "id3v2")]
-        probe.register_metadata::<meta::Id3v2Reader<'_>>();
+        probe.register_metadata::<meta::Id3v2Format>();
     }
 }
 

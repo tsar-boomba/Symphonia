@@ -85,7 +85,9 @@ impl<'s> AdtsReader<'s> {
     }
 }
 
-impl Scoreable for AdtsReader<'_> {
+pub struct AdtsFormat;
+
+impl Scoreable for AdtsFormat {
     fn score<'a, 'b>(
         mut src: ScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
@@ -245,8 +247,8 @@ impl AdtsHeader {
 }
 
 #[async_trait]
-impl<'s> ProbeableFormat<'s> for AdtsReader<'s> {
-    async fn try_probe_new(
+impl ProbeableFormat for AdtsFormat {
+    async fn try_probe_new<'s>(
         mss: MediaSourceStream<'s>,
         opts: FormatOptions,
     ) -> Result<Box<dyn FormatReader + 's>> {
