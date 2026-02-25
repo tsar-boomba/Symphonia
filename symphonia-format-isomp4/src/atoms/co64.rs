@@ -17,10 +17,10 @@ pub struct Co64Atom {
 }
 
 impl Atom for Co64Atom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (_, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header().await?;
 
-        let entry_count = it.read_u32()?;
+        let entry_count = it.read_u32().await?;
 
         // Limit the maximum initial capacity to prevent malicious files from using all the
         // available memory.
@@ -28,7 +28,7 @@ impl Atom for Co64Atom {
             Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(entry_count as usize));
 
         for _ in 0..entry_count {
-            chunk_offsets.push(it.read_u64()?);
+            chunk_offsets.push(it.read_u64().await?);
         }
 
         Ok(Co64Atom { chunk_offsets })

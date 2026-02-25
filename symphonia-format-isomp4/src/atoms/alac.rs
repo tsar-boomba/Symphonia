@@ -23,8 +23,8 @@ pub struct AlacAtom {
 }
 
 impl Atom for AlacAtom {
-    fn read<B: ReadAtom>(it: &mut AtomIterator<B>, _header: &AtomHeader) -> Result<Self> {
-        let (version, flags) = it.read_extended_header()?;
+    async fn read<B: ReadAtom>(it: &mut AtomIterator<B>, _header: &AtomHeader) -> Result<Self> {
+        let (version, flags) = it.read_extended_header().await?;
 
         if version != 0 {
             return unsupported_error("isomp4 (alac): unsupported alac version");
@@ -44,18 +44,18 @@ impl Atom for AlacAtom {
         };
 
         // Read the magic cookie.
-        let extra_data = it.read_boxed_slice_exact(magic_len)?;
+        let extra_data = it.read_boxed_slice_exact(magic_len).await?;
 
         Ok(AlacAtom { extra_data })
     }
 }
 
 impl AlacAtom {
-    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
+    pub async fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
         entry.codec_id = CODEC_ID_ALAC;
 
         // Try to parse the magic cookie.
-        if let Ok(cookie) = MagicCookie::read(&self.extra_data) {
+        if let Ok(cookie) = MagicCookie::read(&self.extra_data).await {
             entry.channels = Some(cookie.channels);
             entry.sample_rate = f64::from(cookie.sample_rate);
         }

@@ -29,14 +29,14 @@ pub struct ElstAtom {
 }
 
 impl Atom for ElstAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (version, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (version, _) = it.read_extended_header().await?;
 
         if version > 1 {
             return decode_error("isomp4 (elst): invalid tkhd version");
         }
 
-        let entry_count = it.read_u32()?;
+        let entry_count = it.read_u32().await?;
 
         // Limit the maximum initial capacity to prevent malicious files from using all the
         // available memory.
@@ -45,15 +45,15 @@ impl Atom for ElstAtom {
         for _ in 0..entry_count {
             let (segment_duration, media_time) = match version {
                 0 => (
-                    u64::from(it.read_u32()?),
-                    i64::from(bits::sign_extend_leq32_to_i32(it.read_u32()?, 32)),
+                    u64::from(it.read_u32().await?),
+                    i64::from(bits::sign_extend_leq32_to_i32(it.read_u32().await?, 32)),
                 ),
-                1 => (it.read_u64()?, bits::sign_extend_leq64_to_i64(it.read_u64()?, 64)),
+                1 => (it.read_u64().await?, bits::sign_extend_leq64_to_i64(it.read_u64().await?, 64)),
                 _ => unreachable!(),
             };
 
-            let media_rate_int = bits::sign_extend_leq16_to_i16(it.read_u16()?, 16);
-            let media_rate_frac = bits::sign_extend_leq16_to_i16(it.read_u16()?, 16);
+            let media_rate_int = bits::sign_extend_leq16_to_i16(it.read_u16().await?, 16);
+            let media_rate_frac = bits::sign_extend_leq16_to_i16(it.read_u16().await?, 16);
 
             entries.push(ElstEntry {
                 segment_duration,

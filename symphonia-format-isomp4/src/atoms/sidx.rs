@@ -42,11 +42,11 @@ pub struct SidxAtom {
 }
 
 impl Atom for SidxAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
-        let (version, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+        let (version, _) = it.read_extended_header().await?;
 
-        let reference_id = it.read_u32()?;
-        let timescale = NonZero::new(it.read_u32()?)
+        let reference_id = it.read_u32().await?;
+        let timescale = NonZero::new(it.read_u32().await?)
             .ok_or(Error::DecodeError("isomp4 (sidx): timescale is zero"))?;
 
         // The anchor point for segment offsets is the first byte after this atom.
@@ -56,20 +56,20 @@ impl Atom for SidxAtom {
             .ok_or(Error::DecodeError("isomp4 (sidx): expected atom size to be known"))?;
 
         let (earliest_pts, first_offset) = match version {
-            0 => (u64::from(it.read_u32()?), anchor + u64::from(it.read_u32()?)),
-            1 => (it.read_u64()?, anchor + it.read_u64()?),
+            0 => (u64::from(it.read_u32().await?), anchor + u64::from(it.read_u32().await?)),
+            1 => (it.read_u64().await?, anchor + it.read_u64().await?),
             _ => return decode_error("isomp4 (sidx): invalid version"),
         };
 
-        let _reserved = it.read_u16()?;
-        let reference_count = it.read_u16()?;
+        let _reserved = it.read_u16().await?;
+        let reference_count = it.read_u16().await?;
 
         let mut references = Vec::new();
         let mut total_duration = 0u64;
 
         for _ in 0..reference_count {
-            let reference = it.read_u32()?;
-            let subsegment_duration = it.read_u32()?;
+            let reference = it.read_u32().await?;
+            let subsegment_duration = it.read_u32().await?;
 
             total_duration = total_duration
                 .checked_add(u64::from(subsegment_duration))
@@ -83,7 +83,7 @@ impl Atom for SidxAtom {
             let reference_size = reference & !0x8000_0000;
 
             // Ignore SAP
-            let _ = it.read_u32()?;
+            let _ = it.read_u32().await?;
 
             references.push(SidxReference { reference_type, reference_size, subsegment_duration });
         }

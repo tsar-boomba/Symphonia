@@ -27,8 +27,8 @@ pub struct FlacAtom {
 }
 
 impl Atom for FlacAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (version, flags) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (version, flags) = it.read_extended_header().await?;
 
         if version != 0 {
             return unsupported_error("isomp4 (flac): unsupported flac version");
@@ -39,7 +39,7 @@ impl Atom for FlacAtom {
         }
 
         // The first block must be the stream information block.
-        let block_header = MetadataBlockHeader::read(&mut BufReader::new(&it.read_quad_bytes()?))?;
+        let block_header = MetadataBlockHeader::read(&mut BufReader::new(&it.read_quad_bytes().await?)).await?;
 
         if block_header.block_type != MetadataBlockType::StreamInfo {
             return decode_error("isomp4 (flac): first block is not stream info");
@@ -51,8 +51,8 @@ impl Atom for FlacAtom {
             return decode_error("isomp4 (flac): invalid stream info block length");
         }
 
-        let extra_data = it.read_boxed_slice_exact(block_header.block_len as usize)?;
-        let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
+        let extra_data = it.read_boxed_slice_exact(block_header.block_len as usize).await?;
+        let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data)).await?;
 
         Ok(FlacAtom { stream_info, extra_data })
     }

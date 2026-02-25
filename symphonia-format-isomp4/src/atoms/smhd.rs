@@ -17,14 +17,14 @@ pub struct SmhdAtom {
 }
 
 impl Atom for SmhdAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (_, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header().await?;
 
         // Stereo balance
-        let balance = FpI8::parse_raw(it.read_u16()? as i16);
+        let balance = FpI8::parse_raw(it.read_u16().await? as i16);
 
         // Reserved.
-        let _ = it.read_u16()?;
+        let _ = it.read_u16().await?;
 
         Ok(SmhdAtom { balance })
     }

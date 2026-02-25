@@ -170,7 +170,7 @@ impl WaveFormatChunk {
                 // WAVEFORMATEXTENSIBLE is used for formats having more than two channels
                 // or higher sample resolutions than allowed by WAVEFORMATEX but for now
                 // we just ignore it
-                let _ = reader.ignore_bytes(40 - 16);
+                let _ = reader.ignore_bytes(40 - 16).await;
             }
             _ => return decode_error("wav: malformed fmt_ieee chunk"),
         }

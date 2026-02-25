@@ -18,7 +18,7 @@ pub struct Dec3Atom {
 }
 
 impl Atom for Dec3Atom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         // TODO: Validate.
         const MAX_DEC3_ATOM_SIZE: u64 = 4 * 1024;
 
@@ -29,7 +29,7 @@ impl Atom for Dec3Atom {
             None => return decode_error("isomp4 (dec3): expected atom size to be known"),
         };
 
-        let extra_data = it.read_boxed_slice_exact(len)?;
+        let extra_data = it.read_boxed_slice_exact(len).await?;
 
         Ok(Dec3Atom { extra_data })
     }

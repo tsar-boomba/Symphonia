@@ -16,10 +16,10 @@ pub struct MfhdAtom {
 }
 
 impl Atom for MfhdAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (_, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header().await?;
 
-        let sequence_number = it.read_u32()?;
+        let sequence_number = it.read_u32().await?;
 
         Ok(MfhdAtom { sequence_number })
     }

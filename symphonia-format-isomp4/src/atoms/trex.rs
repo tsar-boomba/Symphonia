@@ -24,15 +24,15 @@ pub struct TrexAtom {
 }
 
 impl Atom for TrexAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (_, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header().await?;
 
         Ok(TrexAtom {
-            track_id: it.read_u32()?,
-            default_sample_desc_idx: it.read_u32()?,
-            default_sample_duration: it.read_u32()?,
-            default_sample_size: it.read_u32()?,
-            default_sample_flags: it.read_u32()?,
+            track_id: it.read_u32().await?,
+            default_sample_desc_idx: it.read_u32().await?,
+            default_sample_duration: it.read_u32().await?,
+            default_sample_size: it.read_u32().await?,
+            default_sample_flags: it.read_u32().await?,
         })
     }
 }

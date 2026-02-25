@@ -24,17 +24,17 @@ pub struct MoofAtom {
 }
 
 impl Atom for MoofAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         let mut mfhd = None;
         let mut trafs = Vec::new();
 
-        while let Some(header) = it.next_header()? {
+        while let Some(header) = it.next_header().await? {
             match header.atom_type {
                 AtomType::MovieFragmentHeader => {
-                    mfhd = Some(it.read_atom::<MfhdAtom>()?);
+                    mfhd = Some(it.read_atom::<MfhdAtom>().await?);
                 }
                 AtomType::TrackFragment => {
-                    let traf = it.read_atom::<TrafAtom>()?;
+                    let traf = it.read_atom::<TrafAtom>().await?;
                     trafs.push(traf);
                 }
                 _ => (),

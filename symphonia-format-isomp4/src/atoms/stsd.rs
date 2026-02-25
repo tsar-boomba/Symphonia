@@ -46,10 +46,10 @@ pub struct StsdAtom {
 }
 
 impl Atom for StsdAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (_, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header().await?;
 
-        let num_entries = it.read_u32()?;
+        let num_entries = it.read_u32().await?;
 
         if num_entries == 0 {
             return decode_error("isomp4 (stsd): missing sample entry");
@@ -60,7 +60,7 @@ impl Atom for StsdAtom {
         }
 
         // Read exactly one sample entry atom.
-        let header = match it.next_header()? {
+        let header = match it.next_header().await? {
             Some(header) => header,
             _ => return decode_error("isomp4 (stsd): missing expected sample entry"),
         };
@@ -84,7 +84,7 @@ impl Atom for StsdAtom {
             | AtomType::AudioSampleEntryS32
             | AtomType::AudioSampleEntryF32
             | AtomType::AudioSampleEntryF64 => {
-                let entry = it.read_atom::<AudioSampleEntry>()?;
+                let entry = it.read_atom::<AudioSampleEntry>().await?;
                 SampleEntry::Audio(entry)
             }
             AtomType::VisualSampleEntryAv1
@@ -96,13 +96,13 @@ impl Atom for StsdAtom {
             | AtomType::VisualSampleEntryMp4v
             | AtomType::VisualSampleEntryVp8
             | AtomType::VisualSampleEntryVp9 => {
-                let entry = it.read_atom::<VisualSampleEntry>()?;
+                let entry = it.read_atom::<VisualSampleEntry>().await?;
                 SampleEntry::Visual(entry)
             }
             AtomType::SubtitleSampleEntryText
             | AtomType::SubtitleSampleEntryTimedText
             | AtomType::SubtitleSampleEntryXml => {
-                let entry = it.read_atom::<SubtitleSampleEntry>()?;
+                let entry = it.read_atom::<SubtitleSampleEntry>().await?;
                 SampleEntry::Subtitle(entry)
             }
             _ => {
@@ -174,7 +174,7 @@ impl AudioSampleEntry {
 }
 
 impl Atom for AudioSampleEntry {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         // An audio sample entry atom is derived from a base sample entry atom. The audio sample
         // entry atom contains the fields of the base sample entry first, then the audio sample
         // entry fields next. After those fields, a number of other atoms are nested, including the
@@ -186,28 +186,28 @@ impl Atom for AudioSampleEntry {
         // SampleEntry portion
 
         // Reserved. All 0.
-        it.ignore_bytes(6)?;
+        it.ignore_bytes(6).await?;
 
         // Sample entry data reference.
-        let _ = it.read_u16()?;
+        let _ = it.read_u16().await?;
 
         // AudioSampleEntry(V1) portion
 
         let mut entry = AudioSampleEntry::default();
 
         // The version of the audio sample entry.
-        let version = it.read_u16()?;
+        let version = it.read_u16().await?;
 
         // Skip revision and vendor.
-        it.ignore_bytes(6)?;
+        it.ignore_bytes(6).await?;
 
-        entry.num_channels = u32::from(it.read_u16()?);
-        entry.sample_size = it.read_u16()?;
+        entry.num_channels = u32::from(it.read_u16().await?);
+        entry.sample_size = it.read_u16().await?;
 
         // Skip compression ID and packet size.
-        it.ignore_bytes(4)?;
+        it.ignore_bytes(4).await?;
 
-        entry.sample_rate = f64::from(FpU16::parse_raw(it.read_u32()?));
+        entry.sample_rate = f64::from(FpU16::parse_raw(it.read_u32().await?));
 
         let is_pcm_codec = is_pcm_codec(header.atom_type);
 
@@ -234,18 +234,18 @@ impl Atom for AudioSampleEntry {
 
                 // The number of frames (ISO/MP4 samples) per packet. For PCM codecs, this is
                 // always 1.
-                let _frames_per_packet = it.read_u32()?;
+                let _frames_per_packet = it.read_u32().await?;
 
                 // The number of bytes per PCM audio sample. This value supersedes sample_size. For
                 // non-PCM codecs, this value is not useful.
-                let bytes_per_audio_sample = it.read_u32()?;
+                let bytes_per_audio_sample = it.read_u32().await?;
 
                 // The number of bytes per PCM audio frame (ISO/MP4 sample). For non-PCM codecs,
                 // this value is not useful.
-                let _bytes_per_frame = it.read_u32()?;
+                let _bytes_per_frame = it.read_u32().await?;
 
                 // The next value, as defined, is seemingly non-sensical.
-                let _ = it.read_u32()?;
+                let _ = it.read_u32().await?;
 
                 if is_pcm_codec {
                     entry.codec_id = pcm_codec_id(header.atom_type);
@@ -267,22 +267,22 @@ impl Atom for AudioSampleEntry {
             }
             2 => {
                 // Version 2.
-                it.ignore_bytes(4)?;
+                it.ignore_bytes(4).await?;
 
-                entry.sample_rate = it.read_f64()?;
-                entry.num_channels = it.read_u32()?;
+                entry.sample_rate = it.read_f64().await?;
+                entry.num_channels = it.read_u32().await?;
 
-                if it.read_u32()? != 0x7f00_0000 {
+                if it.read_u32().await? != 0x7f00_0000 {
                     return decode_error(
                         "isomp4: audio sample entry v2 reserved must be 0x7f00_0000",
                     );
                 }
 
                 // The following fields are only useful for PCM codecs.
-                let bits_per_sample = it.read_u32()?;
-                let lpcm_flags = it.read_u32()?;
-                let _bytes_per_packet = it.read_u32()?;
-                let lpcm_frames_per_packet = it.read_u32()?;
+                let bits_per_sample = it.read_u32().await?;
+                let lpcm_flags = it.read_u32().await?;
+                let _bytes_per_packet = it.read_u32().await?;
+                let lpcm_frames_per_packet = it.read_u32().await?;
 
                 // This is only valid if this is a PCM codec.
                 entry.codec_id = lpcm_codec_id(bits_per_sample, lpcm_flags);
@@ -301,37 +301,37 @@ impl Atom for AudioSampleEntry {
             }
         };
 
-        while let Some(entry_header) = it.next_header()? {
+        while let Some(entry_header) = it.next_header().await? {
             match entry_header.atom_type {
                 AtomType::Esds => {
-                    let atom = it.read_atom::<EsdsAtom>()?;
-                    atom.fill_audio_sample_entry(&mut entry)?;
+                    let atom = it.read_atom::<EsdsAtom>().await?;
+                    atom.fill_audio_sample_entry(&mut entry).await?;
                 }
                 AtomType::Ac3Config => {
-                    let atom = it.read_atom::<Dac3Atom>()?;
+                    let atom = it.read_atom::<Dac3Atom>().await?;
                     atom.fill_audio_sample_entry(&mut entry);
                 }
                 AtomType::AudioSampleEntryAlac => {
-                    let atom = it.read_atom::<AlacAtom>()?;
-                    atom.fill_audio_sample_entry(&mut entry);
+                    let atom = it.read_atom::<AlacAtom>().await?;
+                    atom.fill_audio_sample_entry(&mut entry).await;
                 }
                 AtomType::Eac3Config => {
-                    let atom = it.read_atom::<Dec3Atom>()?;
+                    let atom = it.read_atom::<Dec3Atom>().await?;
                     atom.fill_audio_sample_entry(&mut entry);
                 }
                 AtomType::FlacDsConfig => {
-                    let atom = it.read_atom::<FlacAtom>()?;
+                    let atom = it.read_atom::<FlacAtom>().await?;
                     atom.fill_audio_sample_entry(&mut entry);
                 }
                 AtomType::OpusDsConfig => {
-                    let atom = it.read_atom::<OpusAtom>()?;
-                    atom.fill_audio_sample_entry(&mut entry);
+                    let atom = it.read_atom::<OpusAtom>().await?;
+                    atom.fill_audio_sample_entry(&mut entry).await;
                 }
                 AtomType::AudioSampleEntryQtWave => {
                     // The QuickTime WAVE (aka. siDecompressionParam) atom may contain many
                     // different types of sub-atoms to store decoder parameters.
-                    let atom = it.read_atom::<WaveAtom>()?;
-                    atom.fill_audio_sample_entry(&mut entry)?;
+                    let atom = it.read_atom::<WaveAtom>().await?;
+                    atom.fill_audio_sample_entry(&mut entry).await?;
                 }
                 _ => {
                     debug!("unknown audio sample entry sub-atom: {:?}.", entry_header.atom_type());
@@ -400,8 +400,7 @@ fn lpcm_codec_id(bits_per_sample: u32, lpcm_flags: u32) -> AudioCodecId {
             64 => CODEC_ID_PCM_F64LE,
             _ => CODEC_ID_NULL_AUDIO,
         }
-    }
-    else {
+    } else {
         // Integer sample format.
         if is_signed {
             // Signed-integer sample format.
@@ -415,8 +414,7 @@ fn lpcm_codec_id(bits_per_sample: u32, lpcm_flags: u32) -> AudioCodecId {
                 32 => CODEC_ID_PCM_S32LE,
                 _ => CODEC_ID_NULL_AUDIO,
             }
-        }
-        else {
+        } else {
             // Unsigned-integer sample format.
             match bits_per_sample {
                 8 => CODEC_ID_PCM_U8,
@@ -500,38 +498,38 @@ impl VisualSampleEntry {
 }
 
 impl Atom for VisualSampleEntry {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         // SampleEntry portion
 
         // Reserved. All 0.
-        it.ignore_bytes(6)?;
+        it.ignore_bytes(6).await?;
 
         // Sample entry data reference.
-        let _ = it.read_u16()?;
+        let _ = it.read_u16().await?;
 
         // VisualSampleEntry portion
 
         // Reserved.
-        it.ignore_bytes(16)?;
+        it.ignore_bytes(16).await?;
 
         let mut entry = VisualSampleEntry {
-            width: it.read_u16()?,
-            height: it.read_u16()?,
-            horiz_res: f64::from(FpU16::parse_raw(it.read_u32()?)),
-            vert_res: f64::from(FpU16::parse_raw(it.read_u32()?)),
+            width: it.read_u16().await?,
+            height: it.read_u16().await?,
+            horiz_res: f64::from(FpU16::parse_raw(it.read_u32().await?)),
+            vert_res: f64::from(FpU16::parse_raw(it.read_u32().await?)),
             ..Default::default()
         };
 
         // Reserved.
-        let _ = it.read_u32()?;
+        let _ = it.read_u32().await?;
 
-        entry.frame_count = it.read_u16()?;
+        entry.frame_count = it.read_u16().await?;
 
         entry.compressor = {
-            let len = usize::from(it.read_u8()?);
+            let len = usize::from(it.read_u8().await?);
 
             let mut name = [0u8; 31];
-            it.read_buf_exact(&mut name)?;
+            it.read_buf_exact(&mut name).await?;
 
             if len > 31 {
                 return decode_error("isomp4 (stsd): compressor name length exceeds 31 bytes");
@@ -543,27 +541,27 @@ impl Atom for VisualSampleEntry {
             }
         };
 
-        let _depth = it.read_u16()?;
+        let _depth = it.read_u16().await?;
 
         // Reserved.
-        it.read_u16()?;
+        it.read_u16().await?;
 
-        while let Some(entry_header) = it.next_header()? {
+        while let Some(entry_header) = it.next_header().await? {
             match entry_header.atom_type {
                 AtomType::Esds => {
-                    let atom = it.read_atom::<EsdsAtom>()?;
+                    let atom = it.read_atom::<EsdsAtom>().await?;
                     atom.fill_video_sample_entry(&mut entry)?;
                 }
                 AtomType::AvcConfiguration => {
-                    let atom = it.read_atom::<AvcCAtom>()?;
+                    let atom = it.read_atom::<AvcCAtom>().await?;
                     atom.fill_video_sample_entry(&mut entry);
                 }
                 AtomType::HevcConfiguration => {
-                    let atom = it.read_atom::<HvcCAtom>()?;
+                    let atom = it.read_atom::<HvcCAtom>().await?;
                     atom.fill_video_sample_entry(&mut entry);
                 }
                 AtomType::DolbyVisionConfiguration => {
-                    let atom = it.read_atom::<DoviAtom>()?;
+                    let atom = it.read_atom::<DoviAtom>().await?;
                     atom.fill_video_sample_entry(&mut entry);
                 }
                 _ => {
@@ -604,22 +602,22 @@ impl SubtitleSampleEntry {
 }
 
 impl Atom for SubtitleSampleEntry {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         // SampleEntry portion
 
         // Reserved. All 0.
-        it.ignore_bytes(6)?;
+        it.ignore_bytes(6).await?;
 
         // Sample entry data reference.
-        let _ = it.read_u16()?;
+        let _ = it.read_u16().await?;
 
         let mut codec_specific = None;
         // SubtitleSampleEntry portion
 
         match header.atom_type {
             AtomType::SubtitleSampleEntryText => {
-                let _encoding = it.read_null_terminated_utf8()?;
-                let _mime_type = it.read_null_terminated_utf8()?;
+                let _encoding = it.read_null_terminated_utf8().await?;
+                let _mime_type = it.read_null_terminated_utf8().await?;
             }
             AtomType::SubtitleSampleEntryTimedText => {
                 // Standard - 3GPP TS 26.245 - TextSampleEntry
@@ -629,14 +627,14 @@ impl Atom for SubtitleSampleEntry {
                 // background color rgba - 4 bytes
                 // box record - 8 bytes
                 // style record - 12 bytes
-                it.ignore_bytes(30)?;
+                it.ignore_bytes(30).await?;
 
                 codec_specific = Some(SubtitleCodecSpecific::TimedText);
             }
             AtomType::SubtitleSampleEntryXml => {
-                let _namespace = it.read_null_terminated_utf8()?;
-                let _schema_location = it.read_null_terminated_utf8()?;
-                let _auxiliary_mime_types = it.read_null_terminated_utf8()?;
+                let _namespace = it.read_null_terminated_utf8().await?;
+                let _schema_location = it.read_null_terminated_utf8().await?;
+                let _auxiliary_mime_types = it.read_null_terminated_utf8().await?;
             }
             _ => {}
         }
@@ -644,13 +642,13 @@ impl Atom for SubtitleSampleEntry {
         let mut btrt = None;
         let mut txtc = None;
 
-        while let Some(entry_header) = it.next_header()? {
+        while let Some(entry_header) = it.next_header().await? {
             match entry_header.atom_type {
                 AtomType::BitRate => {
-                    btrt = Some(it.read_atom::<BtrtAtom>()?);
+                    btrt = Some(it.read_atom::<BtrtAtom>().await?);
                 }
                 AtomType::TextConfig => {
-                    txtc = Some(it.read_atom::<TxtcAtom>()?);
+                    txtc = Some(it.read_atom::<TxtcAtom>().await?);
                 }
                 _ => {
                     debug!(
@@ -678,11 +676,11 @@ pub struct BtrtAtom {
 }
 
 impl Atom for BtrtAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         Ok(BtrtAtom {
-            buf_size_db: it.read_u32()?,
-            max_bitrate: it.read_u32()?,
-            avg_bitrate: it.read_u32()?,
+            buf_size_db: it.read_u32().await?,
+            max_bitrate: it.read_u32().await?,
+            avg_bitrate: it.read_u32().await?,
         })
     }
 }
@@ -696,9 +694,9 @@ pub struct TxtcAtom {
 }
 
 impl Atom for TxtcAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (_, _) = it.read_extended_header()?;
-        let text_config = it.read_null_terminated_utf8()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header().await?;
+        let text_config = it.read_null_terminated_utf8().await?;
         Ok(TxtcAtom { text_config })
     }
 }
@@ -712,8 +710,8 @@ pub struct ClapAtom {
 }
 
 impl Atom for ClapAtom {
-    fn read<R: ReadAtom>(reader: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        Ok(ClapAtom { h_spacing: reader.read_u32()?, v_spacing: reader.read_u32()? })
+    async fn read<R: ReadAtom>(reader: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        Ok(ClapAtom { h_spacing: reader.read_u32().await?, v_spacing: reader.read_u32().await? })
     }
 }
 
@@ -732,16 +730,16 @@ pub struct PaspAtom {
 }
 
 impl Atom for PaspAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         Ok(PaspAtom {
-            clean_aperture_width_n: it.read_u32()?,
-            clean_aperture_width_d: it.read_u32()?,
-            clean_aperture_height_n: it.read_u32()?,
-            clean_aperture_height_d: it.read_u32()?,
-            horiz_off_n: it.read_u32()?,
-            horiz_off_d: it.read_u32()?,
-            vert_off_n: it.read_u32()?,
-            vert_off_d: it.read_u32()?,
+            clean_aperture_width_n: it.read_u32().await?,
+            clean_aperture_width_d: it.read_u32().await?,
+            clean_aperture_height_n: it.read_u32().await?,
+            clean_aperture_height_d: it.read_u32().await?,
+            horiz_off_n: it.read_u32().await?,
+            horiz_off_d: it.read_u32().await?,
+            vert_off_n: it.read_u32().await?,
+            vert_off_d: it.read_u32().await?,
         })
     }
 }

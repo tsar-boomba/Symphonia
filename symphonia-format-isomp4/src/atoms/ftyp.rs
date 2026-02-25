@@ -22,7 +22,7 @@ pub struct FtypAtom {
 }
 
 impl Atom for FtypAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         // The Ftyp atom must be have a data length that is known, and it must be a multiple of 4
         // since it only stores FourCCs.
         let data_len = header
@@ -34,11 +34,11 @@ impl Atom for FtypAtom {
         }
 
         // Major
-        let major = FourCc::try_new(it.read_quad_bytes()?)
+        let major = FourCc::try_new(it.read_quad_bytes().await?)
             .ok_or(Error::DecodeError("isomp4 (ftyp): major brand contains non-ASCII bytes"))?;
 
         // Minor
-        let minor = it.read_quad_bytes()?;
+        let minor = it.read_quad_bytes().await?;
 
         // The remainder of the Ftyp atom contains the FourCCs of compatible brands.
         let n_brands = (data_len - 8) / 4;
@@ -48,7 +48,7 @@ impl Atom for FtypAtom {
         let mut compatible = Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(n_brands as usize));
 
         for _ in 0..n_brands {
-            let brand = it.read_quad_bytes()?;
+            let brand = it.read_quad_bytes().await?;
             if let Some(fourcc) = FourCc::try_new(brand) {
                 compatible.push(fourcc);
             }

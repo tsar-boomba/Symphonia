@@ -28,7 +28,7 @@ pub struct OpusAtom {
 }
 
 impl Atom for OpusAtom {
-    fn read<R: ReadAtom>(reader: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(reader: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         const MIN_OPUS_EXTRA_DATA_SIZE: usize = OPUS_MAGIC_LEN + 11;
         const MAX_OPUS_EXTRA_DATA_SIZE: usize = MIN_OPUS_EXTRA_DATA_SIZE + 257;
 
@@ -57,7 +57,7 @@ impl Atom for OpusAtom {
         extra_data[..OPUS_MAGIC_LEN].copy_from_slice(OPUS_MAGIC);
 
         // Read the extra data from the atom.
-        reader.read_buf_exact(&mut extra_data[OPUS_MAGIC_LEN..])?;
+        reader.read_buf_exact(&mut extra_data[OPUS_MAGIC_LEN..]).await?;
 
         // Verify the version number is 0.
         if extra_data[OPUS_EXTRADATA_VERSION_OFFSET] != 0 {
@@ -69,10 +69,10 @@ impl Atom for OpusAtom {
 }
 
 impl OpusAtom {
-    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
+    pub async fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
         let mut reader = BufReader::new(&self.extra_data);
 
-        if let Ok(opus_head) = opus::OpusHead::read(&mut reader, 0) {
+        if let Ok(opus_head) = opus::OpusHead::read(&mut reader, 0).await {
             entry.channels = Some(opus_head.channels);
             entry.sample_rate = 48_000.0;
         }

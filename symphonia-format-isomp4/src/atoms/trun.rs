@@ -241,19 +241,19 @@ impl TrunAtom {
 }
 
 impl Atom for TrunAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (_, flags) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, flags) = it.read_extended_header().await?;
 
-        let sample_count = it.read_u32()?;
+        let sample_count = it.read_u32().await?;
 
         let data_offset = match flags & TrunAtom::DATA_OFFSET_PRESENT {
             0 => None,
-            _ => Some(bits::sign_extend_leq32_to_i32(it.read_u32()?, 32)),
+            _ => Some(bits::sign_extend_leq32_to_i32(it.read_u32().await?, 32)),
         };
 
         let first_sample_flags = match flags & TrunAtom::FIRST_SAMPLE_FLAGS_PRESENT {
             0 => None,
-            _ => Some(it.read_u32()?),
+            _ => Some(it.read_u32().await?),
         };
 
         // If the first-sample-flags-present flag is set, then the sample-flags-present flag should
@@ -274,26 +274,26 @@ impl Atom for TrunAtom {
 
         for _ in 0..sample_count {
             if (flags & TrunAtom::SAMPLE_DURATION_PRESENT) != 0 {
-                let duration = it.read_u32()?;
+                let duration = it.read_u32().await?;
                 total_sample_duration += u64::from(duration);
                 sample_duration.push(duration);
             }
 
             if (flags & TrunAtom::SAMPLE_SIZE_PRESENT) != 0 {
-                let size = it.read_u32()?;
+                let size = it.read_u32().await?;
                 total_sample_size += u64::from(size);
                 sample_size.push(size);
             }
 
             if (flags & TrunAtom::SAMPLE_FLAGS_PRESENT) != 0 {
-                sample_flags.push(it.read_u32()?);
+                sample_flags.push(it.read_u32().await?);
             }
 
             // Ignoring composition time for now since it's a video thing...
             if (flags & TrunAtom::SAMPLE_COMPOSITION_TIME_OFFSETS_PRESENT) != 0 {
                 // For version 0, this is a u32.
                 // For version 1, this is a i32.
-                let _ = it.read_u32()?;
+                let _ = it.read_u32().await?;
             }
         }
 

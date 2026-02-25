@@ -15,12 +15,12 @@ pub struct WaveAtom {
 }
 
 impl Atom for WaveAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut esds = None;
 
-        while let Some(header) = it.next_header()? {
+        while let Some(header) = it.next_header().await? {
             if header.atom_type == AtomType::Esds {
-                esds = Some(it.read_atom::<EsdsAtom>()?);
+                esds = Some(it.read_atom::<EsdsAtom>().await?);
             }
         }
 
@@ -29,9 +29,9 @@ impl Atom for WaveAtom {
 }
 
 impl WaveAtom {
-    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) -> Result<()> {
+    pub async fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) -> Result<()> {
         if let Some(esds) = self.esds {
-            esds.fill_audio_sample_entry(entry)?;
+            esds.fill_audio_sample_entry(entry).await?;
         }
 
         Ok(())

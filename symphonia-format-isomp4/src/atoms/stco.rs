@@ -17,10 +17,10 @@ pub struct StcoAtom {
 }
 
 impl Atom for StcoAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (_, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header().await?;
 
-        let entry_count = it.read_u32()?;
+        let entry_count = it.read_u32().await?;
 
         // Limit the maximum initial capacity to prevent malicious files from using all the
         // available memory.
@@ -28,7 +28,7 @@ impl Atom for StcoAtom {
             Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(entry_count as usize));
 
         for _ in 0..entry_count {
-            chunk_offsets.push(it.read_u32()?);
+            chunk_offsets.push(it.read_u32().await?);
         }
 
         Ok(StcoAtom { chunk_offsets })

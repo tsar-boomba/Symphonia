@@ -32,8 +32,8 @@ pub struct MvhdAtom {
 }
 
 impl Atom for MvhdAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (version, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (version, _) = it.read_extended_header().await?;
 
         let mut mvhd = MvhdAtom {
             ctime: 0,
@@ -46,31 +46,31 @@ impl Atom for MvhdAtom {
         // Version 0 uses 32-bit time values, verion 1 used 64-bit values.
         match version {
             0 => {
-                mvhd.ctime = u64::from(it.read_u32()?);
-                mvhd.mtime = u64::from(it.read_u32()?);
-                mvhd.timescale = NonZero::new(it.read_u32()?)
+                mvhd.ctime = u64::from(it.read_u32().await?);
+                mvhd.mtime = u64::from(it.read_u32().await?);
+                mvhd.timescale = NonZero::new(it.read_u32().await?)
                     .ok_or(Error::DecodeError("isomp4 (mvhd): timescale is zero"))?;
                 // 0xffff_ffff is a special case.
-                mvhd.duration = match it.read_u32()? {
+                mvhd.duration = match it.read_u32().await? {
                     u32::MAX => u64::MAX,
                     duration => u64::from(duration),
                 };
             }
             1 => {
-                mvhd.ctime = it.read_u64()?;
-                mvhd.mtime = it.read_u64()?;
-                mvhd.timescale = NonZero::new(it.read_u32()?)
+                mvhd.ctime = it.read_u64().await?;
+                mvhd.mtime = it.read_u64().await?;
+                mvhd.timescale = NonZero::new(it.read_u32().await?)
                     .ok_or(Error::DecodeError("isomp4 (mvhd): timescale is zero"))?;
-                mvhd.duration = it.read_u64()?;
+                mvhd.duration = it.read_u64().await?;
             }
             _ => return decode_error("isomp4 (mvhd): invalid version"),
         }
 
         // Ignore the preferred playback rate.
-        let _ = it.read_u32()?;
+        let _ = it.read_u32().await?;
 
         // Preferred volume.
-        mvhd.volume = FpU8::parse_raw(it.read_u16()?);
+        mvhd.volume = FpU8::parse_raw(it.read_u16().await?);
 
         // Remaining fields are ignored.
 

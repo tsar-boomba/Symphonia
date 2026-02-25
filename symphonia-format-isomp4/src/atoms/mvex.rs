@@ -21,17 +21,17 @@ pub struct MvexAtom {
 }
 
 impl Atom for MvexAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut mehd = None;
         let mut trexs = Vec::new();
 
-        while let Some(header) = it.next_header()? {
+        while let Some(header) = it.next_header().await? {
             match header.atom_type {
                 AtomType::MovieExtendsHeader => {
-                    mehd = Some(it.read_atom::<MehdAtom>()?);
+                    mehd = Some(it.read_atom::<MehdAtom>().await?);
                 }
                 AtomType::TrackExtends => {
-                    let trex = it.read_atom::<TrexAtom>()?;
+                    let trex = it.read_atom::<TrexAtom>().await?;
                     trexs.push(trex);
                 }
                 _ => (),

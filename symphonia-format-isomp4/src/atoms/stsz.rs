@@ -26,11 +26,11 @@ pub struct StszAtom {
 }
 
 impl Atom for StszAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (_, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header().await?;
 
-        let sample_size = it.read_u32()?;
-        let sample_count = it.read_u32()?;
+        let sample_size = it.read_u32().await?;
+        let sample_count = it.read_u32().await?;
 
         let sample_sizes = if sample_size == 0 {
             // Limit the maximum initial capacity to prevent malicious files from using all the
@@ -39,7 +39,7 @@ impl Atom for StszAtom {
                 Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(sample_count as usize));
 
             for _ in 0..sample_count {
-                entries.push(it.read_u32()?);
+                entries.push(it.read_u32().await?);
             }
 
             SampleSize::Variable(entries)

@@ -74,10 +74,10 @@ impl SttsAtom {
 }
 
 impl Atom for SttsAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (_, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header().await?;
 
-        let entry_count = it.read_u32()?;
+        let entry_count = it.read_u32().await?;
 
         // Limit the maximum initial capacity to prevent malicious files from using all the
         // available memory.
@@ -86,8 +86,8 @@ impl Atom for SttsAtom {
         let mut total_duration: u64 = 0;
 
         for _ in 0..entry_count {
-            let sample_count = it.read_u32()?;
-            let sample_delta = it.read_u32()?;
+            let sample_count = it.read_u32().await?;
+            let sample_delta = it.read_u32().await?;
 
             let Some(next_duration) =
                 total_duration.checked_add(u64::from(sample_count) * u64::from(sample_delta))

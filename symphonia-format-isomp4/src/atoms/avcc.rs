@@ -23,7 +23,7 @@ pub struct AvcCAtom {
 }
 
 impl Atom for AvcCAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         // TODO: Validate.
         const MAX_AVCC_ATOM_SIZE: u64 = 1 * 1024;
 
@@ -41,10 +41,10 @@ impl Atom for AvcCAtom {
 
         let extra_data = VideoExtraData {
             id: VIDEO_EXTRA_DATA_ID_AVC_DECODER_CONFIG,
-            data: it.read_boxed_slice_exact(len)?,
+            data: it.read_boxed_slice_exact(len).await?,
         };
 
-        let avc_config = AVCDecoderConfigurationRecord::read(&extra_data.data)?;
+        let avc_config = AVCDecoderConfigurationRecord::read(&extra_data.data).await?;
 
         Ok(Self { extra_data, profile: avc_config.profile, level: avc_config.level })
     }

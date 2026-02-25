@@ -40,8 +40,7 @@ impl StscAtom {
 
             if entry.first_sample < sample_num {
                 left = mid + 1;
-            }
-            else {
+            } else {
                 right = mid;
             }
         }
@@ -55,17 +54,17 @@ impl StscAtom {
 }
 
 impl Atom for StscAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (_, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (_, _) = it.read_extended_header().await?;
 
-        let entry_count = it.read_u32()?;
+        let entry_count = it.read_u32().await?;
 
         // Limit the maximum initial capacity to prevent malicious files from using all the
         // available memory.
         let mut entries = Vec::with_capacity(MAX_TABLE_INITIAL_CAPACITY.min(entry_count as usize));
 
         for _ in 0..entry_count {
-            let first_chunk_raw = it.read_u32()?;
+            let first_chunk_raw = it.read_u32().await?;
 
             if first_chunk_raw == 0 {
                 return decode_error("isomp4 (stsc): first_chunk must be >= 1");
@@ -74,8 +73,8 @@ impl Atom for StscAtom {
             entries.push(StscEntry {
                 first_chunk: first_chunk_raw - 1,
                 first_sample: 0,
-                samples_per_chunk: it.read_u32()?,
-                sample_desc_index: it.read_u32()?,
+                samples_per_chunk: it.read_u32().await?,
+                sample_desc_index: it.read_u32().await?,
             });
         }
 

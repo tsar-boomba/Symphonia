@@ -26,13 +26,13 @@ impl UdtaAtom {
 
 impl Atom for UdtaAtom {
     #[allow(clippy::single_match)]
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut meta = None;
 
-        while let Some(header) = it.next_header()? {
+        while let Some(header) = it.next_header().await? {
             match header.atom_type {
                 AtomType::Meta => {
-                    meta = Some(it.read_atom::<MetaAtom>()?);
+                    meta = Some(it.read_atom::<MetaAtom>().await?);
                 }
                 // TODO: Support older QuickTime-style user data lists. Need sample files.
                 _ => (),

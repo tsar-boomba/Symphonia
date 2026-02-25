@@ -18,7 +18,7 @@ pub struct Dac3Atom {
 }
 
 impl Atom for Dac3Atom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         // TODO: Validate.
         const MAX_DAC3_ATOM_SIZE: u64 = 4 * 1024;
 
@@ -29,7 +29,7 @@ impl Atom for Dac3Atom {
             None => return decode_error("isomp4 (dac3): expected atom size to be known"),
         };
 
-        let extra_data = it.read_boxed_slice_exact(len)?;
+        let extra_data = it.read_boxed_slice_exact(len).await?;
 
         Ok(Dac3Atom { extra_data })
     }

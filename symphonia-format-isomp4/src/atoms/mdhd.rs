@@ -45,8 +45,8 @@ pub struct MdhdAtom {
 }
 
 impl Atom for MdhdAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
-        let (version, _) = it.read_extended_header()?;
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let (version, _) = it.read_extended_header().await?;
 
         let mut mdhd = MdhdAtom {
             ctime: 0,
@@ -58,32 +58,32 @@ impl Atom for MdhdAtom {
 
         match version {
             0 => {
-                mdhd.ctime = u64::from(it.read_u32()?);
-                mdhd.mtime = u64::from(it.read_u32()?);
-                mdhd.timescale = NonZero::new(it.read_u32()?)
+                mdhd.ctime = u64::from(it.read_u32().await?);
+                mdhd.mtime = u64::from(it.read_u32().await?);
+                mdhd.timescale = NonZero::new(it.read_u32().await?)
                     .ok_or(Error::DecodeError("isomp4 (mdhd): timescale is zero"))?;
                 // 0xffff_ffff is a special case.
-                mdhd.duration = match it.read_u32()? {
+                mdhd.duration = match it.read_u32().await? {
                     u32::MAX => u64::MAX,
                     duration => u64::from(duration),
                 };
             }
             1 => {
-                mdhd.ctime = it.read_u64()?;
-                mdhd.mtime = it.read_u64()?;
-                mdhd.timescale = NonZero::new(it.read_u32()?)
+                mdhd.ctime = it.read_u64().await?;
+                mdhd.mtime = it.read_u64().await?;
+                mdhd.timescale = NonZero::new(it.read_u32().await?)
                     .ok_or(Error::DecodeError("isomp4 (mdhd): timescale is zero"))?;
-                mdhd.duration = it.read_u64()?;
+                mdhd.duration = it.read_u64().await?;
             }
             _ => {
                 return decode_error("isomp4 (mdhd): invalid mdhd version");
             }
         }
 
-        mdhd.language = parse_language(it.read_u16()?);
+        mdhd.language = parse_language(it.read_u16().await?);
 
         // Quality
-        let _ = it.read_u16()?;
+        let _ = it.read_u16().await?;
 
         Ok(mdhd)
     }

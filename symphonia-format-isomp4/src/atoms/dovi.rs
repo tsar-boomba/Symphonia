@@ -19,7 +19,7 @@ pub struct DoviAtom {
 }
 
 impl Atom for DoviAtom {
-    fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, header: &AtomHeader) -> Result<Self> {
         // The Dolby Vision Configuration atom payload (dvvC and dvcC).
         // Contains DOVIDecoderConfigurationRecord, point 3.2 from
         // https://professional.dolby.com/siteassets/content-creation/dolby-vision-for-content-creators/dolby_vision_bitstreams_within_the_iso_base_media_file_format_dec2017.pdf
@@ -32,7 +32,7 @@ impl Atom for DoviAtom {
 
         let dovi_data = VideoExtraData {
             id: VIDEO_EXTRA_DATA_ID_DOLBY_VISION_CONFIG,
-            data: it.read_boxed_slice_exact(len)?,
+            data: it.read_boxed_slice_exact(len).await?,
         };
 
         Ok(Self { extra_data: dovi_data })
