@@ -7,6 +7,10 @@ use symphonia::core::io::{FromStd, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 
 fn main() {
+    futures_executor::block_on(main_fut())
+}
+
+async fn main_fut() {
     // Get the first command line argument.
     let args: Vec<String> = std::env::args().collect();
     let path = args.get(1).expect("file path not provided");
@@ -28,6 +32,7 @@ fn main() {
     // Probe the media source.
     let mut format = symphonia::default::get_probe()
         .probe(&hint, mss, fmt_opts, meta_opts)
+        .await
         .expect("unsupported format");
 
     // Find the first audio track with a known (decodeable) codec.
@@ -42,6 +47,7 @@ fn main() {
             track.codec_params.as_ref().expect("codec parameters missing").audio().unwrap(),
             &dec_opts,
         )
+        .await
         .expect("unsupported codec");
 
     // Store the track identifier, it will be used to filter packets.
@@ -50,7 +56,7 @@ fn main() {
     // The decode loop.
     loop {
         // Get the next packet from the media format.
-        let packet = match format.next_packet() {
+        let packet = match format.next_packet().await {
             Ok(Some(packet)) => packet,
             Ok(None) => {
                 // Reached the end of the stream.
@@ -83,7 +89,7 @@ fn main() {
         }
 
         // Decode the packet into audio samples.
-        match decoder.decode(&packet) {
+        match decoder.decode(&packet).await {
             Ok(_decoded) => {
                 // Consume the decoded audio samples (see below).
             }
