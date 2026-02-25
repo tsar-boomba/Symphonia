@@ -21,8 +21,8 @@ pub struct AlacAtom {
 }
 
 impl Atom for AlacAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (version, flags) = header.read_extended_header(reader)?;
+    async fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (version, flags) = header.read_extended_header(reader).await?;
 
         if version != 0 {
             return unsupported_error("isomp4 (alac): unsupported alac version");
@@ -40,7 +40,7 @@ impl Atom for AlacAtom {
         };
 
         // Read the magic cookie.
-        let extra_data = reader.read_boxed_slice_exact(magic_len)?;
+        let extra_data = reader.read_boxed_slice_exact(magic_len).await?;
 
         Ok(AlacAtom { extra_data })
     }

@@ -7,9 +7,10 @@
 
 use crate::chunks::*;
 use alloc::{boxed::Box, vec::Vec};
+use core::{num::NonZero, pin::Pin};
 use log::{debug, error, info, warn};
-use core::num::NonZero;
 use symphonia_core::{
+    async_trait,
     audio::{Channels, Position},
     codecs::{
         CodecParameters,
@@ -61,17 +62,20 @@ enum PacketInfo {
 }
 
 impl Scoreable for CafReader<'_> {
-    fn score(_src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-        Ok(Score::Supported(255))
+    fn score<'a, 'b>(
+        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+    ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
+        Box::pin(async { Ok(Score::Supported(255)) })
     }
 }
 
-impl ProbeableFormat<'_> for CafReader<'_> {
-    fn try_probe_new(
-        mss: MediaSourceStream<'_>,
+#[async_trait]
+impl<'s> ProbeableFormat<'s> for CafReader<'s> {
+    async fn try_probe_new(
+        mss: MediaSourceStream<'s>,
         opts: FormatOptions,
-    ) -> Result<Box<dyn FormatReader + '_>> {
-        Ok(Box::new(CafReader::try_new(mss, opts)?))
+    ) -> Result<Box<dyn FormatReader + 's>> {
+        Ok(Box::new(CafReader::try_new(mss, opts).await?))
     }
 
     fn probe_data() -> &'static [ProbeFormatData] {
@@ -79,12 +83,13 @@ impl ProbeableFormat<'_> for CafReader<'_> {
     }
 }
 
+#[async_trait]
 impl FormatReader for CafReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &CAF_FORMAT_INFO
     }
 
-    fn next_packet(&mut self) -> Result<Option<Packet>> {
+    async fn next_packet(&mut self) -> Result<Option<Packet>> {
         match &mut self.packet_info {
             PacketInfo::FixedAudioPacket { bytes_per_packet, frames_per_packet, start_pts } => {
                 let pos = self.reader.pos();
@@ -132,14 +137,14 @@ impl FormatReader for CafReader<'_> {
                     return Ok(None);
                 };
 
-                let buf = self.reader.read_boxed_slice(bytes_to_read as usize)?;
+                let buf = self.reader.read_boxed_slice(bytes_to_read as usize).await?;
 
                 Ok(Some(Packet::new(0, pts, dur, buf)))
             }
             PacketInfo::VariableAudioPacket { packets, current_packet_index } => {
                 if let Some(packet) = packets.get(*current_packet_index) {
                     *current_packet_index += 1;
-                    let buffer = self.reader.read_boxed_slice(packet.size as usize)?;
+                    let buffer = self.reader.read_boxed_slice(packet.size as usize).await?;
                     Ok(Some(Packet::new(0, packet.start_frame, packet.frames, buffer)))
                 } else if *current_packet_index == packets.len() {
                     Ok(None)
@@ -163,7 +168,7 @@ impl FormatReader for CafReader<'_> {
         &self.tracks
     }
 
-    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
+    async fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
         let required_ts = match to {
             SeekTo::TimeStamp { ts, .. } => ts,
             SeekTo::Time { time, .. } => {
@@ -220,11 +225,11 @@ impl FormatReader for CafReader<'_> {
                         / if is_uncompressed { 1 } else { frames_per_packet };
 
                 if self.reader.is_seekable() {
-                    self.reader.seek(SeekFrom::Start(seek_pos))?;
+                    self.reader.seek(SeekFrom::Start(seek_pos)).await?;
                 } else {
                     let current_pos = self.reader.pos();
                     if seek_pos >= current_pos {
-                        self.reader.ignore_bytes(seek_pos - current_pos)?;
+                        self.reader.ignore_bytes(seek_pos - current_pos).await?;
                     } else {
                         return seek_error(SeekErrorKind::ForwardOnly);
                     }
@@ -261,11 +266,11 @@ impl FormatReader for CafReader<'_> {
                 let seek_pos = self.data_start_pos + seek_packet.data_offset;
 
                 if self.reader.is_seekable() {
-                    self.reader.seek(SeekFrom::Start(seek_pos))?;
+                    self.reader.seek(SeekFrom::Start(seek_pos)).await?;
                 } else {
                     let current_pos = self.reader.pos();
                     if seek_pos >= current_pos {
-                        self.reader.ignore_bytes(seek_pos - current_pos)?;
+                        self.reader.ignore_bytes(seek_pos - current_pos).await?;
                     } else {
                         return seek_error(SeekErrorKind::ForwardOnly);
                     }
@@ -297,7 +302,7 @@ impl FormatReader for CafReader<'_> {
 }
 
 impl<'s> CafReader<'s> {
-    pub fn try_new(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
+    pub async fn try_new(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         let mut reader = Self {
             reader: mss,
             tracks: vec![],
@@ -308,8 +313,8 @@ impl<'s> CafReader<'s> {
             packet_info: PacketInfo::Unknown,
         };
 
-        reader.check_file_header()?;
-        let track = reader.read_chunks()?;
+        reader.check_file_header().await?;
+        let track = reader.read_chunks().await?;
 
         reader.tracks.push(track);
 
@@ -337,20 +342,20 @@ impl<'s> CafReader<'s> {
         Ok((min_ts, max_ts))
     }
 
-    fn check_file_header(&mut self) -> Result<()> {
-        let file_type = self.reader.read_quad_bytes()?;
+    async fn check_file_header(&mut self) -> Result<()> {
+        let file_type = self.reader.read_quad_bytes().await?;
         if file_type != *b"caff" {
             return unsupported_error("caf: missing 'caff' stream marker");
         }
 
-        let file_version = self.reader.read_be_u16()?;
+        let file_version = self.reader.read_be_u16().await?;
         if file_version != 1 {
             error!("unsupported file version ({file_version})");
             return unsupported_error("caf: unsupported file version");
         }
 
         // Ignored in CAF v1
-        let _file_flags = self.reader.read_be_u16()?;
+        let _file_flags = self.reader.read_be_u16().await?;
 
         Ok(())
     }
@@ -423,7 +428,7 @@ impl<'s> CafReader<'s> {
         Ok(())
     }
 
-    fn read_chunks(&mut self) -> Result<Track> {
+    async fn read_chunks(&mut self) -> Result<Track> {
         use Chunk::*;
 
         let mut track = Track::new(0);
@@ -432,7 +437,7 @@ impl<'s> CafReader<'s> {
         let mut num_frames = None;
 
         loop {
-            match Chunk::read(&mut self.reader, &audio_desc)? {
+            match Chunk::read(&mut self.reader, &audio_desc).await? {
                 Some(AudioDescription(desc)) => {
                     if audio_desc.is_some() {
                         return decode_error("caf: additional Audio Description chunk");
@@ -497,11 +502,12 @@ impl<'s> CafReader<'s> {
                             // decoder-specific information descriptor.
                             let mut reader = BufReader::new(&data);
 
-                            let (desc_tag, desc_len) = read_object_descriptor_header(&mut reader)?;
+                            let (desc_tag, desc_len) =
+                                read_object_descriptor_header(&mut reader).await?;
 
                             if desc_tag == ClassTag::EsDescriptor {
                                 // Parse the ES Descriptor.
-                                let desc = ESDescriptor::read(&mut reader, desc_len)?;
+                                let desc = ESDescriptor::read(&mut reader, desc_len).await?;
 
                                 // Attach the extra data stored in the decoder-specific
                                 // configuration.
@@ -529,7 +535,7 @@ impl<'s> CafReader<'s> {
                     // If we've reached the end of the file, then the Audio Data chunk should have
                     // had a defined size, and we should seek to the start of the audio data.
                     if self.data_len.is_some() {
-                        self.reader.seek(SeekFrom::Start(self.data_start_pos))?;
+                        self.reader.seek(SeekFrom::Start(self.data_start_pos)).await?;
                     }
                     break;
                 }

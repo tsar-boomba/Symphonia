@@ -24,8 +24,8 @@ pub struct EsdsAtom {
 }
 
 impl Atom for EsdsAtom {
-    fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
-        let (_, _) = header.read_extended_header(reader)?;
+    async fn read<B: ReadBytes>(reader: &mut B, mut header: AtomHeader) -> Result<Self> {
+        let (_, _) = header.read_extended_header(reader).await?;
 
         let ds_size = header
             .data_len()
@@ -36,11 +36,11 @@ impl Atom for EsdsAtom {
         // The ES descriptor occupies the rest of the atom.
         if ds_size > MIN_OBJECT_DESCRIPTOR_SIZE {
             // Read the object descriptor header.
-            let (desc_tag, desc_len) = read_object_descriptor_header(reader)?;
+            let (desc_tag, desc_len) = read_object_descriptor_header(reader).await?;
 
             // Read the ES descriptor.
             if desc_tag == ClassTag::EsDescriptor {
-                descriptor = Some(ESDescriptor::read(reader, desc_len)?);
+                descriptor = Some(ESDescriptor::read(reader, desc_len).await?);
             }
         }
 
