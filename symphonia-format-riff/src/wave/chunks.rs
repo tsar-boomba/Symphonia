@@ -412,7 +412,11 @@ impl WaveFormatChunk {
 }
 
 impl ParseChunk for WaveFormatChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<WaveFormatChunk> {
+    async fn parse<B: ReadBytes>(
+        reader: &mut B,
+        _tag: [u8; 4],
+        len: u32,
+    ) -> Result<WaveFormatChunk> {
         // WaveFormat has a minimal length of 16 bytes. This may be extended with format specific
         // data later.
         if len < 16 {
@@ -442,15 +446,17 @@ impl ParseChunk for WaveFormatChunk {
                 Self::read_pcm_fmt(reader, block_align, bits_per_sample, num_channels, len).await
             }
             // The Microsoft ADPCM Format
-            WAVE_FORMAT_ADPCM => Self::read_adpcm_fmt(
-                reader,
-                block_align,
-                bits_per_sample,
-                num_channels,
-                len,
-                CODEC_ID_ADPCM_MS,
-            )
-            .await,
+            WAVE_FORMAT_ADPCM => {
+                Self::read_adpcm_fmt(
+                    reader,
+                    block_align,
+                    bits_per_sample,
+                    num_channels,
+                    len,
+                    CODEC_ID_ADPCM_MS,
+                )
+                .await
+            }
             // The IEEE Float Wave Format
             WAVE_FORMAT_IEEE_FLOAT => {
                 Self::read_ieee_fmt(reader, bits_per_sample, num_channels, len).await
@@ -464,15 +470,17 @@ impl ParseChunk for WaveFormatChunk {
             // The MuLaw Wave Format.
             WAVE_FORMAT_MULAW => Self::read_mulaw_pcm_fmt(reader, num_channels, len).await,
             // The IMA ADPCM Format
-            WAVE_FORMAT_ADPCM_IMA => Self::read_adpcm_fmt(
-                reader,
-                block_align,
-                bits_per_sample,
-                num_channels,
-                len,
-                CODEC_ID_ADPCM_IMA_WAV,
-            )
-            .await,
+            WAVE_FORMAT_ADPCM_IMA => {
+                Self::read_adpcm_fmt(
+                    reader,
+                    block_align,
+                    bits_per_sample,
+                    num_channels,
+                    len,
+                    CODEC_ID_ADPCM_IMA_WAV,
+                )
+                .await
+            }
             // Unsupported format.
             _ => return unsupported_error("wav: unsupported wave format"),
         }?;
@@ -571,7 +579,9 @@ pub struct ListChunk {
 
 impl ListChunk {
     pub async fn skip<B: ReadBytes>(&self, reader: &mut B) -> Result<()> {
-        ChunksReader::<NullChunks>::new(Some(self.len), ByteOrder::LittleEndian).finish(reader).await
+        ChunksReader::<NullChunks>::new(Some(self.len), ByteOrder::LittleEndian)
+            .finish(reader)
+            .await
     }
 }
 
@@ -664,7 +674,10 @@ pub fn append_fact_params(track: &mut Track, fact: &FactChunk) {
     track.with_num_frames(u64::from(fact.num_frames));
 }
 
-pub async fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<MetadataRevision> {
+pub async fn read_info_chunk(
+    source: &mut MediaSourceStream<'_>,
+    len: u32,
+) -> Result<MetadataRevision> {
     let mut builder = MetadataBuilder::new(WAVE_METADATA_INFO);
 
     let mut list = ChunksReader::<RiffInfoListChunks>::new(Some(len), ByteOrder::LittleEndian);
@@ -693,7 +706,8 @@ fn fix_wave_channel_mask(mut channel_mask: u32, num_channels: u16) -> u32 {
         // Too few ones in mask so add extra ones above the most significant one
         let shift = 32 - (!channel_mask).leading_ones();
         channel_mask |= ((1 << channel_diff) - 1) << shift;
-    } else {
+    }
+    else {
         // Too many ones in mask so remove the most significant extra ones
         while channel_mask.count_ones() != num_channels as u32 {
             let highest_one = 31 - (!channel_mask).leading_ones();

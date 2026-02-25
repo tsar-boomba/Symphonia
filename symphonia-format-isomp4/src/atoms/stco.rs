@@ -5,9 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use alloc::vec::Vec;
 use crate::atoms::limits::*;
 use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
+use alloc::vec::Vec;
 
 /// Chunk offset atom (32-bit version).
 #[allow(dead_code)]

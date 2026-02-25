@@ -36,7 +36,7 @@ pub mod util;
 pub mod video;
 
 // Re-export for other crates so that all features are managed centrally
-pub use once_cell::sync::{OnceCell, Lazy};
+pub use once_cell::sync::{Lazy, OnceCell};
 
-pub use num_traits::Float;
 pub use async_trait::async_trait;
+pub use num_traits::Float;

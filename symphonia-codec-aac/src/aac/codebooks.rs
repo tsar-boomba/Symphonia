@@ -669,5 +669,7 @@ pub static SCALEFACTORS: Lazy<Codebook<Entry8x16>> = Lazy::new(|| {
     // Read in 8-bit blocks.
     builder.bits_per_read(8);
 
-    builder.make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values).expect("valid static codebook data")
+    builder
+        .make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values)
+        .expect("valid static codebook data")
 });

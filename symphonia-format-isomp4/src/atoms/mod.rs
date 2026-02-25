@@ -5,8 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use alloc::string::String;
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::num::NonZeroU64;
 
@@ -851,7 +851,11 @@ impl<R: ReadAtom> AtomIterator<R> {
     ///
     /// After this operation, it is only safe to make more raw read calls. To continue iteration,
     /// the iterator must be re-synchronized by calling `seek_atom_start` or `seek_atom_end`.
-    pub(crate) async fn read_raw_boxed_slice_exact(&mut self, pos: u64, len: usize) -> Result<Box<[u8]>>
+    pub(crate) async fn read_raw_boxed_slice_exact(
+        &mut self,
+        pos: u64,
+        len: usize,
+    ) -> Result<Box<[u8]>>
     where
         R: MediaSource<Error = symphonia_core::io::Error>,
     {

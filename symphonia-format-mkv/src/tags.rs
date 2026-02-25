@@ -5,10 +5,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use core::ops::Deref;
 use symphonia_core::Float;
-use core::{ops::Deref, };
 
-use alloc::{boxed::Box, rc::Rc, string::{String, ToString}, sync::Arc, vec::Vec};
+use alloc::{
+    boxed::Box,
+    rc::Rc,
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 use symphonia_core::meta::{RawTag, RawTagSubField, RawValue, StandardTag};
 
 use crate::{segment::SimpleTagElement, sub_fields::*};

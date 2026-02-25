@@ -48,7 +48,9 @@ impl Atom for ElstAtom {
                     u64::from(it.read_u32().await?),
                     i64::from(bits::sign_extend_leq32_to_i32(it.read_u32().await?, 32)),
                 ),
-                1 => (it.read_u64().await?, bits::sign_extend_leq64_to_i64(it.read_u64().await?, 64)),
+                1 => {
+                    (it.read_u64().await?, bits::sign_extend_leq64_to_i64(it.read_u64().await?, 64))
+                }
                 _ => unreachable!(),
             };
 

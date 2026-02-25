@@ -19,7 +19,8 @@ impl Read for &[u8] {
         // for a single byte the overhead is significant.
         if amt == 1 {
             buf[0] = a[0];
-        } else {
+        }
+        else {
             buf[..amt].copy_from_slice(a);
         }
 
@@ -98,4 +99,3 @@ impl<T: ?Sized + Seek + Send> Seek for Box<T> {
         T::stream_position(self).await
     }
 }
-

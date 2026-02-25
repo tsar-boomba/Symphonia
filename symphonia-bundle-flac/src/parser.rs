@@ -202,16 +202,19 @@ impl PacketBuilder {
                     self.get_max_avg_frame_size()
                 );
                 true
-            } else if first.state.total_len > self.get_max_avg_frame_size() {
+            }
+            else if first.state.total_len > self.get_max_avg_frame_size() {
                 warn!(
                     "dropping fragment: packet would exeed 4x average historical size of {} bytes",
                     self.get_max_avg_frame_size()
                 );
                 true
-            } else if self.frags.len() >= 4 {
+            }
+            else if self.frags.len() >= 4 {
                 warn!("dropping fragment: packet would exceed fragment count limit");
                 true
-            } else {
+            }
+            else {
                 false
             };
 
@@ -225,7 +228,11 @@ impl PacketBuilder {
         self.frags.push(frag);
     }
 
-    async fn try_build(&mut self, stream_info: &StreamInfo, frag: Fragment) -> Option<ParsedPacket> {
+    async fn try_build(
+        &mut self,
+        stream_info: &StreamInfo,
+        frag: Fragment,
+    ) -> Option<ParsedPacket> {
         let (header, data) = if frag.crc_match {
             // The fragment has a CRC that matches the expected CRC.
             (frag.parse_header().await?, frag.data)
@@ -363,7 +370,9 @@ impl PacketParser {
                 // frame header in its entirety.
                 if is_likely_frame_header(frame) {
                     // Parse the frame header from the frame buffer.
-                    if let Ok(header) = read_frame_header(&mut BufReader::new(&frame[2..]), sync).await {
+                    if let Ok(header) =
+                        read_frame_header(&mut BufReader::new(&frame[2..]), sync).await
+                    {
                         // Get the last header to check monotonicity in the strict header check.
                         let last_header = self.builder.last_header();
 

@@ -351,10 +351,11 @@ fn run_test(path: &Path, opts: &TestOptions, result: &mut TestResult) -> Result<
     let mut ref_process = RefProcess::try_spawn(opts.ref_decoder, opts.gapless, path)?;
 
     // 2. Instantiate a Symphonia decoder for the reference process output.
-    let ref_ms = Box::new(ReadOnlySource::new(FromStd::new(match ref_process.child.stdout.take() {
-        Some(s) => s,
-        None => return unsupported_error("reference decoder has no stdout"),
-    })));
+    let ref_ms =
+        Box::new(ReadOnlySource::new(FromStd::new(match ref_process.child.stdout.take() {
+            Some(s) => s,
+            None => return unsupported_error("reference decoder has no stdout"),
+        })));
     let ref_mss = MediaSourceStream::new(ref_ms, Default::default());
 
     let mut ref_inst = DecoderInstance::try_open(ref_mss, Default::default(), Default::default())?;

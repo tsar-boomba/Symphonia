@@ -5,7 +5,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::Float;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use extra_data::{
@@ -13,6 +12,7 @@ use extra_data::{
     VIDEO_EXTRA_DATA_ID_HEVC_DECODER_CONFIG, VIDEO_EXTRA_DATA_ID_VP9_DECODER_CONFIG,
 };
 use log::warn;
+use symphonia_core::Float;
 
 use symphonia_common::mpeg::video::{
     AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord,
@@ -34,7 +34,9 @@ use symphonia_core::io::{BufReader, ReadBytes};
 use crate::lacing::read_xiph_sizes;
 use crate::segment::TrackElement;
 
-pub(crate) async fn make_track_codec_params(track: TrackElement) -> Result<Option<CodecParameters>> {
+pub(crate) async fn make_track_codec_params(
+    track: TrackElement,
+) -> Result<Option<CodecParameters>> {
     // Get the codec ID for the track.
     let codec_id = get_codec_id(&track);
     let (profile, level) = get_codec_profile_and_level(&track).await;
@@ -378,7 +380,8 @@ async fn get_codec_profile_and_level(track: &TrackElement) -> (Option<CodecProfi
                     .ok()
                     .map(|cfg| (Some(cfg.profile), Some(cfg.level)))
                     .unwrap_or_else(|| (None, None))
-            } else {
+            }
+            else {
                 (None, None)
             }
         }
@@ -390,7 +393,8 @@ async fn get_codec_profile_and_level(track: &TrackElement) -> (Option<CodecProfi
                     .ok()
                     .map(|cfg| (Some(cfg.profile), Some(cfg.level)))
                     .unwrap_or_else(|| (None, None))
-            } else {
+            }
+            else {
                 (None, None)
             }
         }

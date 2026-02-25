@@ -247,7 +247,8 @@ impl ElementChannel {
                             break;
                         }
                     }
-                } else {
+                }
+                else {
                     // Negative residual case.
                     for (j, (coeff, &sample)) in iter {
                         let val = past0 - sample;
@@ -283,7 +284,10 @@ pub struct AlacDecoder {
 }
 
 impl AlacDecoder {
-    pub async fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+    pub async fn try_new(
+        params: &AudioCodecParameters,
+        _opts: &AudioDecoderOptions,
+    ) -> Result<Self> {
         // Verify codec ID.
         if params.codec != CODEC_ID_ALAC {
             return unsupported_error("alac: invalid codec");
@@ -340,7 +344,8 @@ impl AlacDecoder {
                         .expect("invalid channel map");
 
                     num_frames =
-                        decode_sce_or_cpe(&self.config, &mut bs, &mut self.tail_bits, out0, None).await?;
+                        decode_sce_or_cpe(&self.config, &mut bs, &mut self.tail_bits, out0, None)
+                            .await?;
 
                     next_channel += 1;
                 }
@@ -365,7 +370,8 @@ impl AlacDecoder {
                         &mut self.tail_bits,
                         out0,
                         Some(out1),
-                    ).await?;
+                    )
+                    .await?;
 
                     next_channel += 2;
                 }
@@ -442,7 +448,8 @@ impl AudioDecoder for AlacDecoder {
         if let Err(e) = self.decode_inner(packet).await {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
@@ -579,7 +586,8 @@ async fn decode_sce_or_cpe<B: ReadBitsLtr>(
                     *s0 = (*s0 << shift) | vals[0] as i32;
                     *s1 = (*s1 << shift) | vals[1] as i32;
                 }
-            } else {
+            }
+            else {
                 let tail_iter = tail_bits[..num_samples].iter();
 
                 for (s0, &val) in out0_iter.zip(tail_iter) {
@@ -587,7 +595,8 @@ async fn decode_sce_or_cpe<B: ReadBitsLtr>(
                 }
             }
         }
-    } else {
+    }
+    else {
         // Read uncompressed samples directly from the bitstream.
         if let Some(out1) = out1.as_mut() {
             // For a CPE, the samples are interleaved.
@@ -595,7 +604,8 @@ async fn decode_sce_or_cpe<B: ReadBitsLtr>(
                 *s0 = bs.read_bits_leq32_signed(u32::from(config.bit_depth)).await?;
                 *s1 = bs.read_bits_leq32_signed(u32::from(config.bit_depth)).await?;
             }
-        } else {
+        }
+        else {
             for s0 in out0[..num_samples].iter_mut() {
                 *s0 = bs.read_bits_leq32_signed(u32::from(config.bit_depth)).await?;
             }
@@ -634,12 +644,15 @@ async fn read_rice_code<B: ReadBitsLtr>(bs: &mut B, k: u32, bps: u32) -> Result<
         if suffix > 0 {
             // Shift suffix left by 1 because it is missing its LSb, and then read the missing bit.
             value + (suffix << 1) + bs.read_bit().await? - 1
-        } else {
+        }
+        else {
             value
         }
-    } else if k == 1 {
+    }
+    else if k == 1 {
         prefix
-    } else {
+    }
+    else {
         0
     };
 

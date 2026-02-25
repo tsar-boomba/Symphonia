@@ -26,8 +26,8 @@ mod schema;
 mod segment;
 mod tags;
 
-pub use demuxer::MkvReader;
 pub use demuxer::MkvFormat;
+pub use demuxer::MkvReader;
 
 pub mod sub_fields {
     //! Key name constants for sub-fields of MKV tags and chapters.

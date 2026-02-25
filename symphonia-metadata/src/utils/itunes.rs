@@ -49,14 +49,8 @@ static ITUNES_TAG_MAP: Lazy<RawTagParserMap> = Lazy::new(|| {
         "com.apple.itunes:musicbrainz original artist id",
         parse_musicbrainz_original_artist_id,
     );
-    m.insert(
-        "com.apple.itunes:musicbrainz release group id",
-        parse_musicbrainz_release_group_id,
-    );
-    m.insert(
-        "com.apple.itunes:musicbrainz release track id",
-        parse_musicbrainz_release_track_id,
-    );
+    m.insert("com.apple.itunes:musicbrainz release group id", parse_musicbrainz_release_group_id);
+    m.insert("com.apple.itunes:musicbrainz release track id", parse_musicbrainz_release_track_id);
     m.insert("com.apple.itunes:musicbrainz track id", parse_musicbrainz_track_id);
     m.insert("com.apple.itunes:musicbrainz trm id", parse_musicbrainz_trm_id);
     m.insert("com.apple.itunes:musicbrainz work id", parse_musicbrainz_work_id);
@@ -67,10 +61,7 @@ static ITUNES_TAG_MAP: Lazy<RawTagParserMap> = Lazy::new(|| {
     m.insert("com.apple.itunes:replaygain_album_gain", parse_replaygain_album_gain);
     m.insert("com.apple.itunes:replaygain_album_peak", parse_replaygain_album_peak);
     m.insert("com.apple.itunes:replaygain_album_range", parse_replaygain_album_range);
-    m.insert(
-        "com.apple.itunes:replaygain_reference_loudness",
-        parse_replaygain_reference_loudness,
-    );
+    m.insert("com.apple.itunes:replaygain_reference_loudness", parse_replaygain_reference_loudness);
     m.insert("com.apple.itunes:replaygain_track_gain", parse_replaygain_track_gain);
     m.insert("com.apple.itunes:replaygain_track_peak", parse_replaygain_track_peak);
     m.insert("com.apple.itunes:replaygain_track_range", parse_replaygain_track_range);

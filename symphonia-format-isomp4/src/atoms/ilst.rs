@@ -273,7 +273,8 @@ async fn add_generic_tag<R: ReadAtom>(
         if let Some(raw_value) = parse_tag_value(value_atom.data_type, &value_atom.data) {
             let std_tag = map(&raw_value);
             builder.add_tag(Tag::new_from_parts(raw_key, raw_value, std_tag));
-        } else {
+        }
+        else {
             warn!("unsupported data type {:?} for {:?} tag", value_atom.data_type, tag.atom_type);
         }
     }
@@ -403,7 +404,8 @@ async fn add_advisory_tag<R: ReadAtom>(
                     StandardTag::ContentAdvisory(advisory),
                 ));
             }
-        } else {
+        }
+        else {
             warn!("unsupported data type {:?} for {:?} tag", value_atom.data_type, tag.atom_type);
         }
     }
@@ -452,7 +454,8 @@ async fn add_media_type_tag<R: ReadAtom>(
                     StandardTag::MediaFormat(Arc::new(String::from(media_type))),
                 ));
             }
-        } else {
+        }
+        else {
             warn!("unsupported data type {:?} for {:?} tag", value_atom.data_type, tag.atom_type);
         }
     }
@@ -521,7 +524,8 @@ async fn add_rating_tag<R: ReadAtom>(
                     StandardTag::Rating(10_000 * rating),
                 ));
             }
-        } else {
+        }
+        else {
             warn!("unsupported data type {:?} for {:?} tag", value_atom.data_type, tag.atom_type);
         }
     }
@@ -787,12 +791,15 @@ impl Atom for IlstAtom {
                 AtomType::DescriptionTag => {
                     add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Description)).await?
                 }
-                AtomType::DiskNumberTag => add_pair_tag(
-                    it,
-                    &mut mb,
-                    map_std_uint!(StandardTag::DiscNumber),
-                    map_std_uint!(StandardTag::DiscTotal),
-                ).await?,
+                AtomType::DiskNumberTag => {
+                    add_pair_tag(
+                        it,
+                        &mut mb,
+                        map_std_uint!(StandardTag::DiscNumber),
+                        map_std_uint!(StandardTag::DiscTotal),
+                    )
+                    .await?
+                }
                 AtomType::EncodedByTag => {
                     add_generic_tag(it, &mut mb, map_std_str!(StandardTag::EncodedBy)).await?
                 }
@@ -859,7 +866,8 @@ impl Atom for IlstAtom {
                 }
                 AtomType::RatingTag => add_rating_tag(it, &mut mb).await?,
                 AtomType::RecordingCopyrightTag => {
-                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::ProductionCopyright)).await?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::ProductionCopyright))
+                        .await?
                 }
                 AtomType::SortAlbumArtistTag => {
                     add_generic_tag(it, &mut mb, map_std_str!(StandardTag::SortAlbumArtist)).await?
@@ -877,17 +885,21 @@ impl Atom for IlstAtom {
                     add_generic_tag(it, &mut mb, map_std_str!(StandardTag::SortTrackTitle)).await?
                 }
                 AtomType::SortShowNameTag => {
-                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::SortTvSeriesTitle)).await?
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::SortTvSeriesTitle))
+                        .await?
                 }
                 AtomType::TempoTag => {
                     add_generic_tag(it, &mut mb, map_std_uint!(StandardTag::Bpm)).await?
                 }
-                AtomType::TrackNumberTag => add_pair_tag(
-                    it,
-                    &mut mb,
-                    map_std_uint!(StandardTag::TrackNumber),
-                    map_std_uint!(StandardTag::TrackTotal),
-                ).await?,
+                AtomType::TrackNumberTag => {
+                    add_pair_tag(
+                        it,
+                        &mut mb,
+                        map_std_uint!(StandardTag::TrackNumber),
+                        map_std_uint!(StandardTag::TrackTotal),
+                    )
+                    .await?
+                }
                 AtomType::TrackTitleTag => {
                     add_generic_tag(it, &mut mb, map_std_str!(StandardTag::TrackTitle)).await?
                 }
@@ -895,7 +907,8 @@ impl Atom for IlstAtom {
                     add_generic_tag(it, &mut mb, map_std_str!(StandardTag::TvEpisodeTitle)).await?
                 }
                 AtomType::TvEpisodeNumberTag => {
-                    add_generic_tag(it, &mut mb, map_std_uint!(StandardTag::TvEpisodeNumber)).await?
+                    add_generic_tag(it, &mut mb, map_std_uint!(StandardTag::TvEpisodeNumber))
+                        .await?
                 }
                 AtomType::TvNetworkNameTag => {
                     add_generic_tag(it, &mut mb, map_std_str!(StandardTag::TvNetwork)).await?
@@ -918,7 +931,9 @@ impl Atom for IlstAtom {
                 AtomType::TrackArtistUrl => {
                     add_generic_tag(it, &mut mb, map_std_str!(StandardTag::UrlArtist)).await?
                 }
-                AtomType::WorkTag => add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Work)).await?,
+                AtomType::WorkTag => {
+                    add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Work)).await?
+                }
                 AtomType::WriterTag => {
                     add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Writer)).await?
                 }

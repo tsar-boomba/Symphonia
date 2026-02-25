@@ -575,7 +575,8 @@ pub static CODEBOOK_TABLES: Lazy<[Codebook<Entry16x16>; 18]> = Lazy::new(|| {
         // Decode a maximum of 8 bits per read.
         builder.bits_per_read(8);
 
-        *codebook = builder.make(table.codes, table.lens, &values).expect("valid static codebook data");
+        *codebook =
+            builder.make(table.codes, table.lens, &values).expect("valid static codebook data");
     }
 
     codebooks
@@ -598,7 +599,8 @@ pub static QUADS_CODEBOOK_TABLE: Lazy<[Codebook<Entry16x16>; 2]> = Lazy::new(|| 
         // Decode a maximum of 8 bits per read.
         builder.bits_per_read(8);
 
-        *codebook = builder.make(table.codes, table.lens, &values).expect("valid static codebook data");
+        *codebook =
+            builder.make(table.codes, table.lens, &values).expect("valid static codebook data");
     }
 
     codebooks

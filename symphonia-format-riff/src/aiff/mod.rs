@@ -179,7 +179,9 @@ impl<'s> AiffReader<'s> {
                     let text = chunk.parse_and_skip_unread(&mut mss).await?;
                     builder.add_tag(text.tag);
                 }
-                RiffAiffChunks::Id3(chunk) => id3 = Some(chunk.parse_and_skip_unread(&mut mss).await?),
+                RiffAiffChunks::Id3(chunk) => {
+                    id3 = Some(chunk.parse_and_skip_unread(&mut mss).await?)
+                }
             }
         }
 
@@ -296,7 +298,8 @@ fn process_markers(
             if comment.marker_id == 0 {
                 // Invalid/unset marker ID, this is a general comment.
                 builder.add_tag(tag);
-            } else if comment.marker_id > 0 {
+            }
+            else if comment.marker_id > 0 {
                 // Marker ID is set, this comment belongs to a marker/chapter. Try to get the
                 // index of the chapter associated with this marker ID.
                 if let Some(idx) = marker_index.get(&comment.marker_id) {
@@ -313,7 +316,8 @@ fn process_markers(
             tags: vec![],
             visuals: vec![],
         })
-    } else {
+    }
+    else {
         None
     }
 }
@@ -461,7 +465,8 @@ impl FormatReader for AiffReader<'_> {
             let current_pos = self.reader.pos();
             if seek_pos >= current_pos {
                 self.reader.ignore_bytes(seek_pos - current_pos).await?;
-            } else {
+            }
+            else {
                 return seek_error(SeekErrorKind::ForwardOnly);
             }
         }

@@ -330,7 +330,8 @@ impl Layer3 {
                         &mut bs,
                         ch > 0 && header.is_intensity_stereo(),
                         &mut frame_data.granules[gr].channels[ch],
-                    ).await
+                    )
+                    .await
                 }?;
 
                 let part2_3_length = u32::from(frame_data.granules[gr].channels[ch].part2_3_length);
@@ -350,7 +351,8 @@ impl Layer3 {
                     &frame_data.granules[gr].channels[ch],
                     part3_len,
                     &mut self.samples[gr][ch],
-                ).await;
+                )
+                .await;
 
                 // Huffman decoding errors are returned as an IO error by the bit reader. IO errors
                 // are unrecoverable, which is not the case for huffman decoding errors. Convert the
@@ -390,7 +392,8 @@ impl Layer for Layer3 {
 
         // Read side_info into the frame data.
         // TODO: Use a MonitorStream to compute the CRC.
-        let side_info_len = match bitstream::read_side_info(&mut bs, header, &mut frame_data).await {
+        let side_info_len = match bitstream::read_side_info(&mut bs, header, &mut frame_data).await
+        {
             Ok(len) => len,
             Err(e) => {
                 // A failure in reading this packet will cause a discontinuity in the codec
@@ -406,7 +409,7 @@ impl Layer for Layer3 {
             self.resevoir.fill(&buf[side_info_len..], frame_data.main_data_begin as usize)?;
 
         // Read the main data (scale factors and spectral samples).
-        match self.read_main_data(header, 8 * underflow, &mut frame_data) .await{
+        match self.read_main_data(header, 8 * underflow, &mut frame_data).await {
             Ok(len) => {
                 // Consume the bytes of main data read from the resevoir.
                 self.resevoir.consume(len);

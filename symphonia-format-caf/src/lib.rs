@@ -21,5 +21,5 @@ extern crate alloc;
 mod chunks;
 mod demuxer;
 
-pub use demuxer::CafReader;
 pub use demuxer::CafFormat;
+pub use demuxer::CafReader;

@@ -121,7 +121,8 @@ pub(crate) async fn decode_stereo<B: ReadBytes>(
     buffers: [&mut [i32]; 2],
     frames_per_block: usize,
 ) -> Result<()> {
-    let (mut left_status, mut right_status) = AdpcmMsBlockStatus::read_stereo_preamble(stream).await?;
+    let (mut left_status, mut right_status) =
+        AdpcmMsBlockStatus::read_stereo_preamble(stream).await?;
     buffers[0][0] = from_i16_shift!(left_status.sample2);
     buffers[0][1] = from_i16_shift!(left_status.sample1);
     buffers[1][0] = from_i16_shift!(right_status.sample2);

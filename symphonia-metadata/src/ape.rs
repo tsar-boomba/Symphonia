@@ -27,99 +27,99 @@ use symphonia_core::meta::{
     MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, RawTag,
     RawValue, StandardTag, StandardVisualKey, Tag, Visual,
 };
-use symphonia_core::{async_trait, Lazy, support_metadata};
 use symphonia_core::util::text;
+use symphonia_core::{Lazy, async_trait, support_metadata};
 
 use crate::utils::images::{ImageInfo, try_get_image_info};
 use crate::utils::std_tag::*;
 
 static APE_TAG_MAP: Lazy<RawTagParserMap> = Lazy::new(|| {
     let mut m: RawTagParserMap = HashMap::new();
-    m.insert("accurateripcount"            , parse_accuraterip_count);
-    m.insert("accurateripcountalloffsets"  , parse_accuraterip_count_all_offsets);
-    m.insert("accurateripcountwithoffset"  , parse_accuraterip_count_with_offset);
-    m.insert("accurateripcrc"              , parse_accuraterip_crc);
-    m.insert("accurateripdiscid"           , parse_accuraterip_disc_id);
-    m.insert("accurateripid"               , parse_accuraterip_id);
-    m.insert("accurateripoffset"           , parse_accuraterip_offset);
-    m.insert("accurateripresult"           , parse_accuraterip_result);
-    m.insert("accurateriptotal"            , parse_accuraterip_total);
-    m.insert("acoustid_fingerprint"        , parse_acoustid_fingerprint);
-    m.insert("acoustid_id"                 , parse_acoustid_id);
-    m.insert("album artist"                , parse_album_artist);
-    m.insert("album"                       , parse_album);
-    m.insert("albumartistsort"             , parse_sort_album_artist);
-    m.insert("albumsort"                   , parse_sort_album);
-    m.insert("arranger"                    , parse_arranger);
-    m.insert("artist"                      , parse_artist);
-    m.insert("artistsort"                  , parse_sort_artist);
-    m.insert("asin"                        , parse_ident_asin);
-    m.insert("bpm"                         , parse_bpm);
-    m.insert("catalog"                     , parse_ident_catalog_number);
-    m.insert("catalognumber"               , parse_ident_catalog_number);
-    m.insert("comment"                     , parse_comment);
-    m.insert("compilation"                 , parse_compilation);
-    m.insert("composer"                    , parse_composer);
-    m.insert("composersort"                , parse_sort_composer);
-    m.insert("conductor"                   , parse_conductor);
-    m.insert("copyright"                   , parse_copyright);
+    m.insert("accurateripcount", parse_accuraterip_count);
+    m.insert("accurateripcountalloffsets", parse_accuraterip_count_all_offsets);
+    m.insert("accurateripcountwithoffset", parse_accuraterip_count_with_offset);
+    m.insert("accurateripcrc", parse_accuraterip_crc);
+    m.insert("accurateripdiscid", parse_accuraterip_disc_id);
+    m.insert("accurateripid", parse_accuraterip_id);
+    m.insert("accurateripoffset", parse_accuraterip_offset);
+    m.insert("accurateripresult", parse_accuraterip_result);
+    m.insert("accurateriptotal", parse_accuraterip_total);
+    m.insert("acoustid_fingerprint", parse_acoustid_fingerprint);
+    m.insert("acoustid_id", parse_acoustid_id);
+    m.insert("album artist", parse_album_artist);
+    m.insert("album", parse_album);
+    m.insert("albumartistsort", parse_sort_album_artist);
+    m.insert("albumsort", parse_sort_album);
+    m.insert("arranger", parse_arranger);
+    m.insert("artist", parse_artist);
+    m.insert("artistsort", parse_sort_artist);
+    m.insert("asin", parse_ident_asin);
+    m.insert("bpm", parse_bpm);
+    m.insert("catalog", parse_ident_catalog_number);
+    m.insert("catalognumber", parse_ident_catalog_number);
+    m.insert("comment", parse_comment);
+    m.insert("compilation", parse_compilation);
+    m.insert("composer", parse_composer);
+    m.insert("composersort", parse_sort_composer);
+    m.insert("conductor", parse_conductor);
+    m.insert("copyright", parse_copyright);
     // Disc Number or Disc Number/Total Discs
-    m.insert("disc"                        , parse_disc_number);
-    m.insert("djmixer"                     , parse_mix_dj);
+    m.insert("disc", parse_disc_number);
+    m.insert("djmixer", parse_mix_dj);
     // EAN-13/UPC-A
-    m.insert("ean/upc"                     , parse_ident_ean_upn);
-    m.insert("encodedby"                   , parse_encoded_by);
-    m.insert("encoder settings"            , parse_encoder_settings);
-    m.insert("encoder"                     , parse_encoder);
-    m.insert("engineer"                    , parse_engineer);
-    m.insert("file"                        , parse_original_file);
-    m.insert("genre"                       , parse_genre);
-    m.insert("isbn"                        , parse_ident_isbn);
-    m.insert("isrc"                        , parse_ident_isrc);
-    m.insert("label"                       , parse_label);
-    m.insert("labelcode"                   , parse_label_code);
-    m.insert("language"                    , parse_language);
-    m.insert("lyricist"                    , parse_lyricist);
-    m.insert("lyrics"                      , parse_lyrics);
-    m.insert("media"                       , parse_media_format);
-    m.insert("mixer"                       , parse_mix_engineer);
-    m.insert("mood"                        , parse_mood);
-    m.insert("movement"                    , parse_movement_total);
-    m.insert("movementname"                , parse_movement_name);
-    m.insert("movementtotal"               , parse_movement_total);
-    m.insert("mp3gain_album_minmax"        , parse_mp3gain_album_min_max);
-    m.insert("mp3gain_minmax"              , parse_mp3gain_min_max);
-    m.insert("mp3gain_undo"                , parse_mp3gain_undo);
-    m.insert("musicbrainz_albumartistid"   , parse_musicbrainz_album_artist_id);
-    m.insert("musicbrainz_albumid"         , parse_musicbrainz_album_id);
-    m.insert("musicbrainz_albumstatus"     , parse_musicbrainz_release_status);
-    m.insert("musicbrainz_albumtype"       , parse_musicbrainz_release_type);
-    m.insert("musicbrainz_artistid"        , parse_musicbrainz_artist_id);
-    m.insert("musicbrainz_discid"          , parse_musicbrainz_disc_id);
-    m.insert("musicbrainz_originalalbumid" , parse_musicbrainz_original_album_id);
+    m.insert("ean/upc", parse_ident_ean_upn);
+    m.insert("encodedby", parse_encoded_by);
+    m.insert("encoder settings", parse_encoder_settings);
+    m.insert("encoder", parse_encoder);
+    m.insert("engineer", parse_engineer);
+    m.insert("file", parse_original_file);
+    m.insert("genre", parse_genre);
+    m.insert("isbn", parse_ident_isbn);
+    m.insert("isrc", parse_ident_isrc);
+    m.insert("label", parse_label);
+    m.insert("labelcode", parse_label_code);
+    m.insert("language", parse_language);
+    m.insert("lyricist", parse_lyricist);
+    m.insert("lyrics", parse_lyrics);
+    m.insert("media", parse_media_format);
+    m.insert("mixer", parse_mix_engineer);
+    m.insert("mood", parse_mood);
+    m.insert("movement", parse_movement_total);
+    m.insert("movementname", parse_movement_name);
+    m.insert("movementtotal", parse_movement_total);
+    m.insert("mp3gain_album_minmax", parse_mp3gain_album_min_max);
+    m.insert("mp3gain_minmax", parse_mp3gain_min_max);
+    m.insert("mp3gain_undo", parse_mp3gain_undo);
+    m.insert("musicbrainz_albumartistid", parse_musicbrainz_album_artist_id);
+    m.insert("musicbrainz_albumid", parse_musicbrainz_album_id);
+    m.insert("musicbrainz_albumstatus", parse_musicbrainz_release_status);
+    m.insert("musicbrainz_albumtype", parse_musicbrainz_release_type);
+    m.insert("musicbrainz_artistid", parse_musicbrainz_artist_id);
+    m.insert("musicbrainz_discid", parse_musicbrainz_disc_id);
+    m.insert("musicbrainz_originalalbumid", parse_musicbrainz_original_album_id);
     m.insert("musicbrainz_originalartistid", parse_musicbrainz_original_artist_id);
-    m.insert("musicbrainz_releasegroupid"  , parse_musicbrainz_release_group_id);
-    m.insert("musicbrainz_releasetrackid"  , parse_musicbrainz_release_track_id);
-    m.insert("musicbrainz_trackid"         , parse_musicbrainz_track_id);
-    m.insert("musicbrainz_trmid"           , parse_musicbrainz_trm_id);
-    m.insert("musicbrainz_workid"          , parse_musicbrainz_work_id);
-    m.insert("original artist"             , parse_original_artist);
-    m.insert("originalyear"                , parse_original_release_year);
-    m.insert("publisher"                   , parse_label);
-    m.insert("record date"                 , parse_recording_date);
-    m.insert("record location"             , parse_recording_location);
-    m.insert("related"                     , parse_url);
-    m.insert("replaygain_album_gain"       , parse_replaygain_album_gain);
-    m.insert("replaygain_album_peak"       , parse_replaygain_album_peak);
-    m.insert("replaygain_track_gain"       , parse_replaygain_track_gain);
-    m.insert("replaygain_track_peak"       , parse_replaygain_track_peak);
-    m.insert("subtitle"                    , parse_track_subtitle);
-    m.insert("title"                       , parse_track_title);
-    m.insert("titlesort"                   , parse_sort_track_title);
+    m.insert("musicbrainz_releasegroupid", parse_musicbrainz_release_group_id);
+    m.insert("musicbrainz_releasetrackid", parse_musicbrainz_release_track_id);
+    m.insert("musicbrainz_trackid", parse_musicbrainz_track_id);
+    m.insert("musicbrainz_trmid", parse_musicbrainz_trm_id);
+    m.insert("musicbrainz_workid", parse_musicbrainz_work_id);
+    m.insert("original artist", parse_original_artist);
+    m.insert("originalyear", parse_original_release_year);
+    m.insert("publisher", parse_label);
+    m.insert("record date", parse_recording_date);
+    m.insert("record location", parse_recording_location);
+    m.insert("related", parse_url);
+    m.insert("replaygain_album_gain", parse_replaygain_album_gain);
+    m.insert("replaygain_album_peak", parse_replaygain_album_peak);
+    m.insert("replaygain_track_gain", parse_replaygain_track_gain);
+    m.insert("replaygain_track_peak", parse_replaygain_track_peak);
+    m.insert("subtitle", parse_track_subtitle);
+    m.insert("title", parse_track_title);
+    m.insert("titlesort", parse_sort_track_title);
     // Track Number or Track Number/Total Tracks
-    m.insert("track"                       , parse_track_number);
-    m.insert("writer"                      , parse_writer);
-    m.insert("year"                        , parse_release_date);
+    m.insert("track", parse_track_number);
+    m.insert("writer", parse_writer);
+    m.insert("year", parse_release_date);
     // TODO: Debut Album
     // TODO: Publicationright
     // TODO: Abstract
@@ -423,7 +423,8 @@ impl MetadataReader for ApeReader<'_> {
                     if value.contains('\0') {
                         let items = value.split_terminator('\0').map(|s| s.to_string()).collect();
                         RawValue::StringList(Arc::new(items))
-                    } else {
+                    }
+                    else {
                         RawValue::from(value)
                     }
                 }

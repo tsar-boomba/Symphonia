@@ -354,13 +354,15 @@ pub fn parse_id3v2_genre(v: Arc<String>) -> StandardTagPair {
 
     let name = if s.is_empty() {
         None
-    } else if s.chars().all(|c| c.is_ascii_digit()) {
+    }
+    else if s.chars().all(|c| c.is_ascii_digit()) {
         // "<NUMBER>"
         s.parse::<u8>().ok().and_then(get_genre_name)
-    } else if let Some(rest) = s.strip_prefix('(') {
+    }
+    else if let Some(rest) = s.strip_prefix('(') {
         if let Some(close) = rest.find(')') {
             let num_str = &rest[..close];
-            let after   = &rest[close + 1..];
+            let after = &rest[close + 1..];
 
             // The bracketed section must contain at least one digit (mirrors [0-9]+).
             let valid_num = !num_str.is_empty() && num_str.chars().all(|c| c.is_ascii_digit());
@@ -368,18 +370,22 @@ pub fn parse_id3v2_genre(v: Arc<String>) -> StandardTagPair {
             if valid_num && after.is_empty() {
                 // "(<NUMBER>)"
                 num_str.parse::<u8>().ok().and_then(get_genre_name)
-            } else if valid_num {
+            }
+            else if valid_num {
                 // "(<NUMBER>)<NAME>"
                 Some(after.to_owned())
-            } else {
+            }
+            else {
                 // "()" or "(<GARBAGE>)..." — not a genre number, treat whole string as name.
                 Some(s.to_owned())
             }
-        } else {
+        }
+        else {
             // No closing paren — plain name.
             Some(s.to_owned())
         }
-    } else {
+    }
+    else {
         // "<NAME>"
         Some(s.to_owned())
     };
@@ -413,14 +419,17 @@ fn parse_m_of_n(v: Arc<String>) -> (Option<u64>, Option<u64>) {
 
         if all_digits(m_str) && all_digits(n_str) {
             (m_str.parse::<u64>().ok(), n_str.parse::<u64>().ok())
-        } else {
+        }
+        else {
             (None, None)
         }
-    } else {
+    }
+    else {
         // No slash — must be a bare number.
         if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) {
             (s.parse::<u64>().ok(), None)
-        } else {
+        }
+        else {
             (None, None)
         }
     }

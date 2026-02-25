@@ -5,11 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::Float;
-use core::cmp::min;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::cmp::min;
 use hashbrown::HashSet;
+use symphonia_core::Float;
 
 use symphonia_core::async_trait;
 use symphonia_core::errors::{Error, Result, decode_error};
@@ -109,7 +109,9 @@ macro_rules! try_or_ret {
             // An end-of-bitstream error is classified under ErrorKind::Other. This condition
             // should not be treated as an error, rather, it should return from the function
             // immediately without error.
-            Err(Error::IoError(ref e)) if e.kind() == symphonia_core::io::ErrorKind::Other => return Ok(()),
+            Err(Error::IoError(ref e)) if e.kind() == symphonia_core::io::ErrorKind::Other => {
+                return Ok(())
+            }
             Err(e) => return Err(e),
         }
     };
@@ -223,7 +225,8 @@ impl Floor for Floor0 {
             // Read the index into the floor's codebook list that contains the actual codebook
             // index.
             let floor_book_idx_bits = ilog(u32::from(self.setup.floor0_number_of_books));
-            let floor_book_idx = io_try_or_ret!(bs.read_bits_leq32(floor_book_idx_bits).await) as usize;
+            let floor_book_idx =
+                io_try_or_ret!(bs.read_bits_leq32(floor_book_idx_bits).await) as usize;
 
             // Get the actual codebook index from the floor's codebook list.
             let codebook_idx = self.setup.floor0_book_list[floor_book_idx] as usize;

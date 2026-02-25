@@ -170,7 +170,8 @@ impl AdtsHeader {
         bs.ignore_bit().await?;
 
         // Channel configuration.
-        let channels = match get_mpeg4_audio_channels_by_config_index(bs.read_bits_leq32(3).await?) {
+        let channels = match get_mpeg4_audio_channels_by_config_index(bs.read_bits_leq32(3).await?)
+        {
             Mpeg4AudioChannels::Channels(channels) => Some(channels),
             Mpeg4AudioChannels::Escape => None,
             Mpeg4AudioChannels::Invalid => {
@@ -361,7 +362,8 @@ impl FormatReader for AdtsReader<'_> {
                 if seeked_pos != self.first_frame_pos {
                     return seek_error(SeekErrorKind::Unseekable);
                 }
-            } else {
+            }
+            else {
                 return seek_error(SeekErrorKind::ForwardOnly);
             }
 
@@ -448,7 +450,8 @@ async fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Resu
         }
 
         let _ = source.seek_buffered(original_pos);
-    } else {
+    }
+    else {
         // The number of points to sample within the stream.
         const NUM_SAMPLE_POINTS: u64 = 4;
         const NUM_FRAMES_PER_SAMPLE_POINT: u32 = 100;

@@ -12,7 +12,10 @@ use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
 pub struct StssAtom {}
 
 impl Atom for StssAtom {
-    async fn read<R: ReadAtom>(_reader: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+    async fn read<R: ReadAtom>(
+        _reader: &mut AtomIterator<R>,
+        _header: &AtomHeader,
+    ) -> Result<Self> {
         todo!()
     }
 }

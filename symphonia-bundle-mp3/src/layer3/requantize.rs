@@ -5,11 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use alloc::vec::Vec;
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use symphonia_core::errors::Result;
-use symphonia_core::{Float, Lazy};
 use symphonia_core::io::ReadBitsLtr;
+use symphonia_core::{Float, Lazy};
 
 use crate::common::FrameHeader;
 
@@ -126,7 +126,8 @@ pub(super) async fn read_huffman_samples<B: ReadBitsLtr>(
                 // negative. The value of the sample is raised to the (4/3) power.
                 buf[i] = (1.0 - 2.0 * bs.read_bit().await? as f32) * pow43[x];
                 bits_read += 1;
-            } else {
+            }
+            else {
                 buf[i] = 0.0;
             }
 
@@ -141,7 +142,8 @@ pub(super) async fn read_huffman_samples<B: ReadBitsLtr>(
 
                 buf[i] = (1.0 - 2.0 * bs.read_bit().await? as f32) * pow43[y];
                 bits_read += 1;
-            } else {
+            }
+            else {
                 buf[i] = 0.0;
             }
 
@@ -176,27 +178,31 @@ pub(super) async fn read_huffman_samples<B: ReadBitsLtr>(
         if value & 0x1 != 0 {
             buf[i + 3] = 1.0 - 2.0 * (signs & 1) as f32;
             signs >>= 1;
-        } else {
+        }
+        else {
             buf[i + 3] = 0.0;
         }
 
         if value & 0x2 != 0 {
             buf[i + 2] = 1.0 - 2.0 * (signs & 1) as f32;
             signs >>= 1;
-        } else {
+        }
+        else {
             buf[i + 2] = 0.0;
         }
 
         if value & 0x4 != 0 {
             buf[i + 1] = 1.0 - 2.0 * (signs & 1) as f32;
             signs >>= 1;
-        } else {
+        }
+        else {
             buf[i + 1] = 0.0;
         }
 
         if value & 0x8 != 0 {
             buf[i + 0] = 1.0 - 2.0 * (signs & 1) as f32;
-        } else {
+        }
+        else {
             buf[i + 0] = 0.0;
         }
 
@@ -215,7 +221,8 @@ pub(super) async fn read_huffman_samples<B: ReadBitsLtr>(
     else if bits_read > part3_bits && i > big_values_len {
         info!("count1 overrun, malformed bitstream");
         i -= 4;
-    } else if bits_read > part3_bits {
+    }
+    else if bits_read > part3_bits {
         // It seems that most other decoders don't undo overruns of the big values. We'll just print
         // a message for now.
         info!("big_values overrun, malformed bitstream");

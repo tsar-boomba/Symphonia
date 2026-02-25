@@ -286,7 +286,8 @@ impl ObjectDescriptor for DecoderConfigDescriptor {
 
             match tag {
                 ClassTag::DecoderSpecificInfo => {
-                    dec_specific_config = Some(DecoderSpecificInfo::read(&mut scoped, desc_len).await?);
+                    dec_specific_config =
+                        Some(DecoderSpecificInfo::read(&mut scoped, desc_len).await?);
                 }
                 other => {
                     debug!("skipping {other:?} object in decoder config descriptor");

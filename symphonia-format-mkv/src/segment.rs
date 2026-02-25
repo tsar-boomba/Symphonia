@@ -5,8 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::Float;
 use core::num::NonZeroU64;
+use symphonia_core::Float;
 
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -376,7 +376,10 @@ pub(crate) struct TrackElement {
 impl EbmlElement<MkvSchema> for TrackElement {
     const TYPE: MkvElement = MkvElement::TrackEntry;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut number = None;
         let mut uid = None;
         let mut lang = None;
@@ -554,7 +557,10 @@ pub(crate) struct AudioElement {
 impl EbmlElement<MkvSchema> for AudioElement {
     const TYPE: MkvElement = MkvElement::Audio;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut sampling_frequency = None;
         let mut output_sampling_frequency = None;
         let mut channels = None;
@@ -636,7 +642,10 @@ pub(crate) struct VideoElement {
 impl EbmlElement<MkvSchema> for VideoElement {
     const TYPE: MkvElement = MkvElement::Video;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut pixel_width = None;
         let mut pixel_height = None;
 
@@ -679,7 +688,10 @@ pub(crate) struct BlockAdditionMappingElement {
 impl EbmlElement<MkvSchema> for BlockAdditionMappingElement {
     const TYPE: MkvElement = MkvElement::BlockAdditionMapping;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         // There can be many BlockAdditionMapping elements with DolbyVisionConfiguration in a single
         // track BlockAddIdType FourCC string allows to determine the type of
         // DolbyVisionConfiguration extra data
@@ -729,7 +741,10 @@ pub(crate) struct SeekHeadElement {
 impl EbmlElement<MkvSchema> for SeekHeadElement {
     const TYPE: MkvElement = MkvElement::SeekHead;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut seeks = Vec::new();
 
         while let Some(child) = it.next_header().await? {
@@ -758,7 +773,10 @@ pub(crate) struct SeekElement {
 impl EbmlElement<MkvSchema> for SeekElement {
     const TYPE: MkvElement = MkvElement::Seek;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut seek_id = None;
         let mut seek_position = None;
 
@@ -805,7 +823,10 @@ pub(crate) struct TracksElement {
 impl EbmlElement<MkvSchema> for TracksElement {
     const TYPE: MkvElement = MkvElement::Tracks;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut tracks = vec![];
 
         while let Some(child) = it.next_header().await? {
@@ -848,7 +869,10 @@ pub(crate) struct EbmlHeaderElement {
 impl EbmlElement<MkvSchema> for EbmlHeaderElement {
     const TYPE: MkvElement = MkvElement::Ebml;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut version = None;
         let mut read_version = None;
         let mut max_id_length = None;
@@ -985,7 +1009,10 @@ pub(crate) struct InfoElement {
 impl EbmlElement<MkvSchema> for InfoElement {
     const TYPE: MkvElement = MkvElement::Info;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut duration = None;
         let mut timestamp_scale = None;
         let mut title = None;
@@ -1009,7 +1036,8 @@ impl EbmlElement<MkvSchema> for InfoElement {
                 MkvElement::Duration => {
                     // Non-mandatory element. No schema-defined default.
                     // TODO: Must not be > 0.0.
-                    duration = Some(FloatingPointSegmentTicks::from(it.read_f64_no_default().await?));
+                    duration =
+                        Some(FloatingPointSegmentTicks::from(it.read_f64_no_default().await?));
                 }
                 MkvElement::Title => {
                     // Non-mandatory element. No schema-defined default.
@@ -1057,7 +1085,10 @@ pub(crate) struct CuesElement {
 impl EbmlElement<MkvSchema> for CuesElement {
     const TYPE: MkvElement = MkvElement::Cues;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut points = vec![];
 
         while let Some(child) = it.next_header().await? {
@@ -1088,7 +1119,10 @@ pub(crate) struct CuePointElement {
 impl EbmlElement<MkvSchema> for CuePointElement {
     const TYPE: MkvElement = MkvElement::CuePoint;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut time = None;
         let mut positions = None;
 
@@ -1127,7 +1161,10 @@ pub(crate) struct CueTrackPositionsElement {
 impl EbmlElement<MkvSchema> for CueTrackPositionsElement {
     const TYPE: MkvElement = MkvElement::CueTrackPositions;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut track = None;
         let mut cluster_pos = None;
         let mut cluster_rel_pos = None;
@@ -1184,7 +1221,10 @@ pub(crate) struct BlockGroupElement {
 impl EbmlElement<MkvSchema> for BlockGroupElement {
     const TYPE: MkvElement = MkvElement::BlockGroup;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut data = None;
         let mut block_duration = None;
         let mut reference_block = None;
@@ -1194,7 +1234,8 @@ impl EbmlElement<MkvSchema> for BlockGroupElement {
             match child.element_type() {
                 MkvElement::DiscardPadding => {
                     // Non-mandatory element. No schema-defined default.
-                    discard_padding = Some(SignedMatroskaTicks::from(it.read_i64_no_default().await?));
+                    discard_padding =
+                        Some(SignedMatroskaTicks::from(it.read_i64_no_default().await?));
                 }
                 MkvElement::Block => {
                     // Mandatory element.
@@ -1232,7 +1273,10 @@ pub(crate) struct TagsElement {
 impl EbmlElement<MkvSchema> for TagsElement {
     const TYPE: MkvElement = MkvElement::Tags;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut tags = Vec::new();
 
         while let Some(header) = it.next_header().await? {
@@ -1392,11 +1436,13 @@ impl TagsElement {
                     if targets.all_attachments {
                         append_to_map_all(&mut attachments, &raw_tags, &target);
                     }
-                } else {
+                }
+                else {
                     // No target UID(s). Append tags to the entire media.
                     append_to_media(&mut builder, &raw_tags, &ctx.target, &mut media_target);
                 }
-            } else {
+            }
+            else {
                 // No targets. Append tags to the entire media.
                 append_to_media(&mut builder, &raw_tags, &None, &mut media_target);
             }
@@ -1442,7 +1488,10 @@ pub(crate) struct TagElement {
 impl EbmlElement<MkvSchema> for TagElement {
     const TYPE: MkvElement = MkvElement::Tag;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut simple_tags = Vec::new();
         let mut targets = None;
 
@@ -1487,7 +1536,10 @@ pub(crate) struct TargetsElement {
 impl EbmlElement<MkvSchema> for TargetsElement {
     const TYPE: MkvElement = MkvElement::Targets;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut target_type_value = None;
         let mut target_type = None;
         let mut uids = Vec::new();
@@ -1578,7 +1630,10 @@ pub(crate) struct SimpleTagElement {
 impl EbmlElement<MkvSchema> for SimpleTagElement {
     const TYPE: MkvElement = MkvElement::SimpleTag;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut name = None;
         let mut value = None;
         let mut lang = None;
@@ -1650,7 +1705,10 @@ pub(crate) struct AttachedFileElement {
 impl EbmlElement<MkvSchema> for AttachedFileElement {
     const TYPE: MkvElement = MkvElement::AttachedFile;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut uid = None;
         let mut name = None;
         let mut desc = None;
@@ -1708,7 +1766,10 @@ pub(crate) struct AttachmentsElement {
 impl EbmlElement<MkvSchema> for AttachmentsElement {
     const TYPE: MkvElement = MkvElement::Attachments;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut attached_files = Vec::new();
 
         while let Some(header) = it.next_header().await? {
@@ -1758,7 +1819,10 @@ pub(crate) struct ChaptersElement {
 impl EbmlElement<MkvSchema> for ChaptersElement {
     const TYPE: MkvElement = MkvElement::Chapters;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut editions = Vec::new();
 
         while let Some(header) = it.next_header().await? {
@@ -1816,7 +1880,10 @@ pub(crate) struct EditionEntryElement {
 impl EbmlElement<MkvSchema> for EditionEntryElement {
     const TYPE: MkvElement = MkvElement::EditionEntry;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut uid = None;
         let mut is_hidden = false;
         let mut is_default = false;
@@ -1923,7 +1990,10 @@ pub(crate) struct EditionDisplayElement {
 impl EbmlElement<MkvSchema> for EditionDisplayElement {
     const TYPE: MkvElement = MkvElement::EditionDisplay;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut name = None;
         let mut lang_bcp47 = None;
 
@@ -1967,7 +2037,10 @@ pub(crate) struct ChapterAtomElement {
 impl EbmlElement<MkvSchema> for ChapterAtomElement {
     const TYPE: MkvElement = MkvElement::ChapterAtom;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut uid = None;
         let mut is_enabled = false;
         let mut is_hidden = false;
@@ -2064,7 +2137,8 @@ impl ChapterAtomElement {
                 // BCP47 language code is present, prefer it over the ISO 639-2 chapter language
                 // and county elements.
                 sub_fields.push(RawTagSubField::new(CHAPTER_TITLE_LANGUAGE_BCP47, lang));
-            } else {
+            }
+            else {
                 // ISO 639-2 language code.
                 sub_fields.push(RawTagSubField::new(CHAPTER_TITLE_LANGUAGE, display.lang));
 
@@ -2102,7 +2176,8 @@ impl ChapterAtomElement {
         if self.chapters.is_empty() {
             // This chapter atom does not have nested chapters. Return a chapter item.
             ChapterGroupItem::Chapter(chapter)
-        } else {
+        }
+        else {
             // This chapter atom has nested chapters. Return a group containing 1 chapter
             // (this one), and a group of nested chapters.
             let mut items = Vec::with_capacity(self.chapters.len());
@@ -2145,7 +2220,10 @@ pub(crate) struct ChapterDisplayElement {
 impl EbmlElement<MkvSchema> for ChapterDisplayElement {
     const TYPE: MkvElement = MkvElement::ChapterDisplay;
 
-    async fn read<R: ReadEbml>(it: &mut MkvEbmlIterator<R>, hdr: &MkvEbmlElementHeader) -> Result<Self> {
+    async fn read<R: ReadEbml>(
+        it: &mut MkvEbmlIterator<R>,
+        hdr: &MkvEbmlElementHeader,
+    ) -> Result<Self> {
         let mut name = None;
         let mut lang = None;
         let mut lang_bcp47 = None;

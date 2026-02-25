@@ -5,9 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use alloc::vec::Vec;
 use crate::atoms::limits::*;
 use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result, decode_error};
+use alloc::vec::Vec;
 
 #[derive(Debug)]
 pub struct StscEntry {
@@ -40,7 +40,8 @@ impl StscAtom {
 
             if entry.first_sample < sample_num {
                 left = mid + 1;
-            } else {
+            }
+            else {
                 right = mid;
             }
         }

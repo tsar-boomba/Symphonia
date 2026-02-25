@@ -27,11 +27,11 @@ use utils::{default_read_to_end, default_read_vectored};
 
 mod bit;
 mod buf_reader;
+mod impls;
 mod media_source_stream;
 mod monitor_stream;
 mod scoped_stream;
 pub mod utils;
-mod impls;
 
 pub use bit::*;
 pub use buf_reader::BufReader;
@@ -39,9 +39,9 @@ pub use embedded_io::{ErrorKind, ErrorType, ReadExactError, SeekFrom};
 pub use media_source_stream::{MediaSourceStream, MediaSourceStreamOptions};
 pub use monitor_stream::{Monitor, MonitorStream};
 pub use scoped_stream::ScopedStream;
-pub use utils::{BorrowedBuf, BorrowedCursor, Cursor, IoSliceMut};
 #[cfg(feature = "std")]
 pub use utils::FromStd;
+pub use utils::{BorrowedBuf, BorrowedCursor, Cursor, IoSliceMut};
 
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -109,7 +109,10 @@ impl From<std::io::Error> for Error {
 pub trait Read: ErrorType {
     async fn read(&mut self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error>;
 
-    async fn read_exact(&mut self, mut buf: &mut [u8]) -> core::result::Result<(), ReadExactError<Self::Error>> {
+    async fn read_exact(
+        &mut self,
+        mut buf: &mut [u8],
+    ) -> core::result::Result<(), ReadExactError<Self::Error>> {
         while !buf.is_empty() {
             match self.read(buf).await {
                 Ok(0) => break,
@@ -117,11 +120,7 @@ pub trait Read: ErrorType {
                 Err(e) => return Err(ReadExactError::Other(e)),
             }
         }
-        if buf.is_empty() {
-            Ok(())
-        } else {
-            Err(ReadExactError::UnexpectedEof)
-        }
+        if buf.is_empty() { Ok(()) } else { Err(ReadExactError::UnexpectedEof) }
     }
 
     async fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize>
@@ -168,7 +167,10 @@ impl<T: ?Sized + Read + Send> Read for &mut T {
     }
 
     #[inline]
-    async fn read_exact(&mut self, buf: &mut [u8]) -> core::result::Result<(), ReadExactError<Self::Error>> {
+    async fn read_exact(
+        &mut self,
+        buf: &mut [u8],
+    ) -> core::result::Result<(), ReadExactError<Self::Error>> {
         T::read_exact(self, buf).await
     }
 }

@@ -7,10 +7,10 @@
 
 //! The `errors` module defines the common error type.
 
+use crate::io;
 use core::error;
 use core::fmt;
 use core::result;
-use crate::io;
 
 /// `SeekErrorKind` is a list of generic reasons why a seek may fail.
 #[non_exhaustive]

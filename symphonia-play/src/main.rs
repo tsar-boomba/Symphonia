@@ -155,7 +155,8 @@ fn run(args: &ArgMatches) -> Result<i32> {
 
     // If the path string is '-' then read from standard input.
     let source = if path.as_os_str() == "-" {
-        Box::new(ReadOnlySource::new(FromStd::new(std::io::stdin()))) as Box<dyn MediaSource<Error = symphonia::core::io::Error>>
+        Box::new(ReadOnlySource::new(FromStd::new(std::io::stdin())))
+            as Box<dyn MediaSource<Error = symphonia::core::io::Error>>
     }
     else {
         // Othwerise, get a Path from the path string.
@@ -453,7 +454,11 @@ fn play_track(
 
                     // Try to open the audio output.
                     audio_output.replace(output::try_open(decoded.spec(), duration).map_err(
-                        |_| Error::IoError(symphonia::core::io::Error::other("failed to open audio output")),
+                        |_| {
+                            Error::IoError(symphonia::core::io::Error::other(
+                                "failed to open audio output",
+                            ))
+                        },
                     )?);
                 }
                 else {
@@ -474,7 +479,9 @@ fn play_track(
 
                     if let Some(audio_output) = audio_output {
                         audio_output.write(decoded).map_err(|_| {
-                            Error::IoError(symphonia::core::io::Error::other("failed to write audio output"))
+                            Error::IoError(symphonia::core::io::Error::other(
+                                "failed to write audio output",
+                            ))
                         })?;
                     }
                 }

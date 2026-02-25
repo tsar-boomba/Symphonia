@@ -8,9 +8,9 @@
 //! Frame body readers.
 
 use alloc::sync::Arc;
-use symphonia_core::Lazy;
 use core::char;
 use core::str;
+use symphonia_core::Lazy;
 
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
@@ -167,7 +167,8 @@ async fn read_lang_code(reader: &mut BufReader<'_>) -> Result<Option<String>> {
     let code = if code.eq_ignore_ascii_case(b"XXX") {
         // Unknown language code.
         None
-    } else {
+    }
+    else {
         // Convert to lowercase string.
         Some(
             core::str::from_utf8(&code)
@@ -316,7 +317,8 @@ pub async fn read_apic_frame(
             _ => None,
         }
         .map(|s| s.to_string())
-    } else {
+    }
+    else {
         // APIC frames use a null-terminated ASCII media-type string.
         read_string_ignore_empty(&mut reader, Encoding::Iso8859_1)?
     };
@@ -926,7 +928,8 @@ pub async fn read_tipl_frame(
         }
 
         Ok(FrameResult::MultipleTags(tags))
-    } else {
+    }
+    else {
         // Return as text frame.
         Ok(FrameResult::Tag(Tag::new(raw)))
     }
@@ -1265,7 +1268,11 @@ fn get_parser(id: &[u8]) -> Option<RawTagParser> {
     }
 }
 
-pub async fn read_frame(reader: BufReader<'_>, id: &[u8], major_version: u8) -> Result<FrameResult> {
+pub async fn read_frame(
+    reader: BufReader<'_>,
+    id: &[u8],
+    major_version: u8,
+) -> Result<FrameResult> {
     let raw_tag_parser = get_parser(id);
     let frame = &FrameInfo::new(id, major_version, raw_tag_parser);
 

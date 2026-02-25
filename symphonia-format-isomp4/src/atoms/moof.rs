@@ -5,10 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use alloc::vec::Vec;
 use crate::atoms::{
     Atom, AtomHeader, AtomIterator, AtomType, MfhdAtom, ReadAtom, Result, TrafAtom, decode_error,
 };
+use alloc::vec::Vec;
 
 /// Movie fragment atom.
 #[allow(dead_code)]

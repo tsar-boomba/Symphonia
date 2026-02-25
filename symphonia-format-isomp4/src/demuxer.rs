@@ -23,8 +23,8 @@ use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::units::Time;
 
 use alloc::sync::Arc;
-use hashbrown::HashMap;
 use core::num::NonZero;
+use hashbrown::HashMap;
 
 use crate::atoms::{AtomError, AtomIterator, AtomType, ReadAtom};
 use crate::atoms::{FtypAtom, MetaAtom, MoofAtom, MoovAtom, SidxAtom, TrakAtom};
@@ -167,7 +167,8 @@ impl<'s> IsoMp4Reader<'s> {
             mss.seek(SeekFrom::Start(pos)).await?;
             info!("stream is seekable with len={len} bytes.");
             Some(len)
-        } else {
+        }
+        else {
             None
         };
 
@@ -280,7 +281,8 @@ impl<'s> IsoMp4Reader<'s> {
         if moov.is_fragmented() {
             if !sidx_timespans.is_empty() {
                 info!("stream is segmented with a segment index.");
-            } else {
+            }
+            else {
                 info!("stream is segmented without a segment index.");
             }
         }
@@ -360,11 +362,13 @@ impl<'s> IsoMp4Reader<'s> {
                 // Try to get the timestamp for the next sample of the track from the segment.
                 if let Some(timing) = seg.sample_timing(state.track_num, state.next_sample)? {
                     // Calculate the presentation time using the timestamp.
-                    let Some(ts) = timing.ts.try_into().ok() else {
+                    let Some(ts) = timing.ts.try_into().ok()
+                    else {
                         return Ok(None);
                     };
 
-                    let Some(sample_time) = tb.calc_time(ts) else {
+                    let Some(sample_time) = tb.calc_time(ts)
+                    else {
                         return Ok(None);
                     };
 
@@ -416,7 +420,8 @@ impl<'s> IsoMp4Reader<'s> {
         // then the base position is the position of current the sample.
         let pos = if sample_data_desc.base_pos > track.next_sample_pos {
             sample_data_desc.base_pos
-        } else {
+        }
+        else {
             track.next_sample_pos
         };
 
@@ -500,7 +505,8 @@ impl<'s> IsoMp4Reader<'s> {
             let tb = track.time_base.expect("track always created with a timebase");
             let ts = tb.calc_timestamp(time).ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
             self.seek_track_by_ts(track_num, ts).await
-        } else {
+        }
+        else {
             seek_error(SeekErrorKind::Unseekable)
         }
     }
@@ -700,7 +706,8 @@ impl FormatReader for IsoMp4Reader<'_> {
 
                     // Seek the primary track and return the result.
                     self.seek_track_by_ts(track_num, ts).await
-                } else {
+                }
+                else {
                     seek_error(SeekErrorKind::InvalidTrack)
                 }
             }

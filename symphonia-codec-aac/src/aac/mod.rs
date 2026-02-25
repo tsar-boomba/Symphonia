@@ -52,7 +52,10 @@ pub struct AacDecoder {
 }
 
 impl AacDecoder {
-    pub async fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+    pub async fn try_new(
+        params: &AudioCodecParameters,
+        _opts: &AudioDecoderOptions,
+    ) -> Result<Self> {
         // This decoder only supports AAC.
         if params.codec != CODEC_ID_AAC {
             return unsupported_error("aac: invalid codec");
@@ -113,7 +116,8 @@ impl AacDecoder {
     fn set_pair(&mut self, pair_no: usize, channel: usize, pair: bool) -> Result<()> {
         if self.pairs.len() <= pair_no {
             self.pairs.push(cpe::ChannelPair::new(pair, channel, self.sbinfo));
-        } else {
+        }
+        else {
             validate!(self.pairs[pair_no].channel == channel);
             validate!(self.pairs[pair_no].is_pair == pair);
         }
@@ -267,7 +271,8 @@ impl AudioDecoder for AacDecoder {
         if let Err(e) = self.decode_inner(packet).await {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
