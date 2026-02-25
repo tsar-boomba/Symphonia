@@ -34,7 +34,6 @@ riff = [
 ]
 
 [dependencies]
-lazy_static = { workspace = true }
 log = { workspace = true }
 smallvec = { workspace = true }
 symphonia-core = { version = "0.6.1", path = "../symphonia-core" }

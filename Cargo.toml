@@ -34,7 +34,6 @@ version = "0.6.1"
 
 [workspace.dependencies]
 hashbrown = "0.16.1"
-lazy_static = "1.4.0"
 log = "0.4"
 smallvec = "1.13.1"
 

@@ -10,30 +10,27 @@ use core::f32;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use lazy_static::lazy_static;
-
-use crate::dsp::complex::Complex;
+use crate::dsp::complex::{Complex, ComplexFloat};
 use crate::dsp::fft::MAX_SIZE;
+use crate::Lazy;
 
 macro_rules! fft_twiddle_table {
     ($bi:expr, $name:ident) => {
-        lazy_static! {
-            static ref $name: Box<[Complex<f32>; (1 << $bi) >> 1]> = {
-                const N: usize = 1 << $bi;
-                const TABLE_SIZE: usize = N >> 1;
-                let theta = core::f64::consts::PI / TABLE_SIZE as f64;
+        static $name: Lazy<Box<[Complex<f32>; (1 << $bi) >> 1]>> = Lazy::new(|| {
+            const N: usize = 1 << $bi;
+            const TABLE_SIZE: usize = N >> 1;
+            let theta = core::f64::consts::PI / TABLE_SIZE as f64;
 
-                let table: Vec<Complex<f32>> = (0..TABLE_SIZE)
-                    .map(|k| {
-                        let angle = theta * k as f64;
-                        Complex::new(angle.cos() as f32, -angle.sin() as f32)
-                    })
-                    .collect();
+            let table: Vec<Complex<f32>> = (0..TABLE_SIZE)
+                .map(|k| {
+                    let angle = theta * k as f64;
+                    Complex::new(angle.cos() as f32, -angle.sin() as f32)
+                })
+                .collect();
 
-                // UNWRAP: The vector was initialized to be the correct size.
-                table.into_boxed_slice().try_into().unwrap()
-            };
-        }
+            // UNWRAP: The vector was initialized to be the correct size.
+            table.into_boxed_slice().try_into().unwrap()
+        });
     };
 }
 

@@ -13,6 +13,7 @@
 
 use alloc::vec::Vec;
 use alloc::boxed::Box;
+use symphonia_core::Lazy;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
 use symphonia_core::io::vlc::{Codebook, Entry8x16};
@@ -23,7 +24,6 @@ use crate::aac::codebooks;
 use crate::aac::common::*;
 use crate::aac::dsp;
 
-use lazy_static::lazy_static;
 use log::debug;
 
 mod gain;
@@ -43,45 +43,39 @@ const NORMAL_SCALE_MIN: i16 = -100;
 /// The length of the `POW43` table.
 const POW43_TABLE_LEN: usize = 8192;
 
-lazy_static! {
-    /// Pre-computed table of y = x^(4/3).
-    static ref POW43_TABLE: Box<[f32; POW43_TABLE_LEN]> = {
-        let table: Vec<f32> = (0..POW43_TABLE_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
-        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
-    };
-}
+/// Pre-computed table of y = x^(4/3).
+static POW43_TABLE: Lazy<Box<[f32; POW43_TABLE_LEN]>> = Lazy::new(|| {
+    let table: Vec<f32> = (0..POW43_TABLE_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
+    table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
+});
 
 /// The length of the `NORMAL_SCF_TABLE` table.
 const NORMAL_SCF_TABLE_LEN: usize = 256;
 
-lazy_static! {
-    /// Pre-computed table of y = 2^(0.25 * (x - 156)) for decoding scale factors for normal bands.
-    /// This table is indexed relative to -100, the minimum encoded scale factor value for normal
-    /// bands. Therefore, an input of 0 corresponds to -100.
-    static ref NORMAL_SCF_TABLE: Box<[f32; NORMAL_SCF_TABLE_LEN]> = {
-        let table: Vec<f32> = (0..NORMAL_SCF_TABLE_LEN)
-            .map(|i| 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN)))
-            .collect();
+/// Pre-computed table of y = 2^(0.25 * (x - 156)) for decoding scale factors for normal bands.
+/// This table is indexed relative to -100, the minimum encoded scale factor value for normal
+/// bands. Therefore, an input of 0 corresponds to -100.
+static NORMAL_SCF_TABLE: Lazy<Box<[f32; NORMAL_SCF_TABLE_LEN]>> = Lazy::new(|| {
+    let table: Vec<f32> = (0..NORMAL_SCF_TABLE_LEN)
+        .map(|i| 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN)))
+        .collect();
 
-        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
-    };
-}
+    table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
+});
 
 /// The length of the `INTENSITY_SCF_TABLE` table.
 const INTENSITY_SCF_TABLE_LEN: usize = 256;
 
-lazy_static! {
-    /// Pre-computed table of y = 0.5^(0.25 * (x - 155)) for decoding scale factors for intensity
-    /// coded bands. This table is indexed relative to -155, the minimum encoded scale factor value
-    /// for intensity coded bands. Therefore, an input of 0 corresponds to -155.
-    static ref INTENSITY_SCF_TABLE: Box<[f32; INTENSITY_SCF_TABLE_LEN]> = {
-        let table: Vec<f32> = (0..INTENSITY_SCF_TABLE_LEN)
-            .map(|i| 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN)))
-            .collect();
+/// Pre-computed table of y = 0.5^(0.25 * (x - 155)) for decoding scale factors for intensity
+/// coded bands. This table is indexed relative to -155, the minimum encoded scale factor value
+/// for intensity coded bands. Therefore, an input of 0 corresponds to -155.
+static INTENSITY_SCF_TABLE: Lazy<Box<[f32; INTENSITY_SCF_TABLE_LEN]>> = Lazy::new(|| {
+    let table: Vec<f32> = (0..INTENSITY_SCF_TABLE_LEN)
+        .map(|i| 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN)))
+        .collect();
 
-        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
-    };
-}
+    table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
+});
 
 #[derive(Clone)]
 pub struct IcsInfo {
@@ -158,8 +152,7 @@ impl IcsInfo {
                     self.window_groups += 1;
                 }
             }
-        }
-        else {
+        } else {
             self.long_win = true;
             self.num_windows = 1;
             self.max_sfb = bs.read_bits_leq32(6)? as usize;
@@ -182,11 +175,9 @@ impl IcsInfo {
     fn get_group_start(&self, g: usize) -> usize {
         if g == 0 {
             0
-        }
-        else if g >= self.window_groups {
+        } else if g >= self.window_groups {
             if self.long_win { 1 } else { 8 }
-        }
-        else {
+        } else {
             self.group_start[g]
         }
     }
@@ -324,21 +315,18 @@ impl Ics {
             for sfb in 0..self.info.max_sfb {
                 self.scales[g][sfb] = if self.is_zero(g, sfb) {
                     0.0
-                }
-                else if self.is_intensity(g, sfb) {
+                } else if self.is_intensity(g, sfb) {
                     scf_intensity += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
 
                     // Valid range is -155 to 100. Value offset by 155 for lookup table indexing.
                     validate!((scf_intensity >= 0) && (scf_intensity < 256));
 
                     table_intensity_scf[scf_intensity as usize]
-                }
-                else if self.is_noise(g, sfb) {
+                } else if self.is_noise(g, sfb) {
                     if noise_pcm_flag {
                         noise_pcm_flag = false;
                         scf_noise += (bs.read_bits_leq32(9)? as i16) - 256;
-                    }
-                    else {
+                    } else {
                         scf_noise += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
                     }
 
@@ -346,8 +334,7 @@ impl Ics {
                     validate!((scf_noise >= 0) && (scf_noise < 256));
 
                     table_normal_scf[scf_noise as usize]
-                }
-                else {
+                } else {
                     scf_normal += i16::from(bs.read_codebook(scf_cb)?.0) - 60;
 
                     // Valid range is -100 to 155. Value offset by 100 for lookup table indexing.

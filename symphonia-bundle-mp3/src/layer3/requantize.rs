@@ -8,6 +8,7 @@
 use alloc::vec::Vec;
 use alloc::boxed::Box;
 use symphonia_core::errors::Result;
+use symphonia_core::{Float, Lazy};
 use symphonia_core::io::ReadBitsLtr;
 
 use crate::common::FrameHeader;
@@ -17,21 +18,17 @@ use super::{GranuleChannel, codebooks, common::*};
 use core::cmp::min;
 use core::{f32, f64};
 
-use lazy_static::lazy_static;
-
 use log::info;
 
 /// The length of the `POW43` table.
 const POW43_LEN: usize = 8207;
 
-lazy_static! {
-    /// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The
-    /// value of s(i) is bound between 0..8207.
-    static ref POW43: Box<[f32; POW43_LEN]> = {
-        let pow43: Vec<f32> = (0..POW43_LEN).map(|i| f32::powf(i as f32, 4.0 / 3.0)).collect();
-        pow43.into_boxed_slice().try_into().expect("vec initialized to POW43_LEN")
-    };
-}
+/// Lookup table for computing x(i) = s(i)^(4/3) where s(i) is a decoded Huffman sample. The
+/// value of s(i) is bound between 0..8207.
+static POW43: Lazy<Box<[f32; POW43_LEN]>> = Lazy::new(|| {
+    let pow43: Vec<f32> = (0..POW43_LEN).map(|i| f32::powf(i as f32, 4.0 / 3.0)).collect();
+    pow43.into_boxed_slice().try_into().expect("vec initialized to POW43_LEN")
+});
 
 /// Zero a sample buffer.
 #[inline(always)]
@@ -129,8 +126,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
                 // negative. The value of the sample is raised to the (4/3) power.
                 buf[i] = (1.0 - 2.0 * bs.read_bit()? as f32) * pow43[x];
                 bits_read += 1;
-            }
-            else {
+            } else {
                 buf[i] = 0.0;
             }
 
@@ -145,8 +141,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
 
                 buf[i] = (1.0 - 2.0 * bs.read_bit()? as f32) * pow43[y];
                 bits_read += 1;
-            }
-            else {
+            } else {
                 buf[i] = 0.0;
             }
 
@@ -181,31 +176,27 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
         if value & 0x1 != 0 {
             buf[i + 3] = 1.0 - 2.0 * (signs & 1) as f32;
             signs >>= 1;
-        }
-        else {
+        } else {
             buf[i + 3] = 0.0;
         }
 
         if value & 0x2 != 0 {
             buf[i + 2] = 1.0 - 2.0 * (signs & 1) as f32;
             signs >>= 1;
-        }
-        else {
+        } else {
             buf[i + 2] = 0.0;
         }
 
         if value & 0x4 != 0 {
             buf[i + 1] = 1.0 - 2.0 * (signs & 1) as f32;
             signs >>= 1;
-        }
-        else {
+        } else {
             buf[i + 1] = 0.0;
         }
 
         if value & 0x8 != 0 {
             buf[i + 0] = 1.0 - 2.0 * (signs & 1) as f32;
-        }
-        else {
+        } else {
             buf[i + 0] = 0.0;
         }
 
@@ -224,8 +215,7 @@ pub(super) fn read_huffman_samples<B: ReadBitsLtr>(
     else if bits_read > part3_bits && i > big_values_len {
         info!("count1 overrun, malformed bitstream");
         i -= 4;
-    }
-    else if bits_read > part3_bits {
+    } else if bits_read > part3_bits {
         // It seems that most other decoders don't undo overruns of the big values. We'll just print
         // a message for now.
         info!("big_values overrun, malformed bitstream");
