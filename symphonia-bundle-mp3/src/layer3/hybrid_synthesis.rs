@@ -14,7 +14,7 @@ use crate::common::FrameHeader;
 
 use super::{GranuleChannel, common::*};
 
-use core::{convert::TryInto, f64};
+use core::{convert::TryInto, f32};
 
 /// Hybrid synthesesis IMDCT window coefficients for: Long, Start, Short, and End block, in that
 /// order.
@@ -50,41 +50,41 @@ use core::{convert::TryInto, f64};
 /// W[18..36] = sin(PI/36.0 * (i + 0.5))
 /// ```
 static IMDCT_WINDOWS: Lazy<[[f32; 36]; 4]> = Lazy::new(|| {
-    const PI_36: f64 = f64::consts::PI / 36.0;
-    const PI_12: f64 = f64::consts::PI / 12.0;
+    const PI_36: f32 = f32::consts::PI / 36.0;
+    const PI_12: f32 = f32::consts::PI / 12.0;
 
     let mut windows = [[0f32; 36]; 4];
 
     // Window for Long blocks.
     for i in 0..36 {
-        windows[0][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+        windows[0][i] = (PI_36 * (i as f32 + 0.5)).sin();
     }
 
     // Window for Start blocks (indicies 30..36 implictly 0.0).
     for i in 0..18 {
-        windows[1][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+        windows[1][i] = (PI_36 * (i as f32 + 0.5)).sin();
     }
     for i in 18..24 {
         windows[1][i] = 1.0;
     }
     for i in 24..30 {
-        windows[1][i] = (PI_12 * ((i - 18) as f64 + 0.5)).sin() as f32;
+        windows[1][i] = (PI_12 * ((i - 18) as f32 + 0.5)).sin();
     }
 
     // Window for Short blocks.
     for i in 0..12 {
-        windows[2][i] = (PI_12 * (i as f64 + 0.5)).sin() as f32;
+        windows[2][i] = (PI_12 * (i as f32 + 0.5)).sin();
     }
 
     // Window for End blocks (indicies 0..6 implicitly 0.0).
     for i in 6..12 {
-        windows[3][i] = (PI_12 * ((i - 6) as f64 + 0.5)).sin() as f32;
+        windows[3][i] = (PI_12 * ((i - 6) as f32 + 0.5)).sin();
     }
     for i in 12..18 {
         windows[3][i] = 1.0;
     }
     for i in 18..36 {
-        windows[3][i] = (PI_36 * (i as f64 + 0.5)).sin() as f32;
+        windows[3][i] = (PI_36 * (i as f32 + 0.5)).sin();
     }
 
     windows
@@ -100,7 +100,7 @@ static IMDCT_WINDOWS: Lazy<[[f32; 36]; 4]> = Lazy::new(|| {
 /// where:
 ///     `N=12`, `i=N/4..3N/4`, and `k=0..N/2`.
 static IMDCT_HALF_COS_12: Lazy<[[f32; 6]; 6]> = Lazy::new(|| {
-    const PI_24: f64 = f64::consts::PI / 24.0;
+    const PI_24: f32 = f32::consts::PI / 24.0;
 
     let mut cos = [[0f32; 6]; 6];
 
@@ -108,7 +108,7 @@ static IMDCT_HALF_COS_12: Lazy<[[f32; 6]; 6]> = Lazy::new(|| {
         for (k, cos_ik) in cos_i.iter_mut().enumerate() {
             // Only compute the middle half of the cosine lookup table (i offset by 3).
             let n = (2 * (i + 3) + (12 / 2) + 1) * (2 * k + 1);
-            *cos_ik = (PI_24 * n as f64).cos() as f32;
+            *cos_ik = (PI_24 * n as f32).cos();
         }
     }
 
@@ -129,15 +129,15 @@ static IMDCT_HALF_COS_12: Lazy<[[f32; 6]; 6]> = Lazy::new(|| {
 /// c[i] = [ -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037 ]
 /// ```
 static ANTIALIAS_CS_CA: Lazy<([f32; 8], [f32; 8])> = Lazy::new(|| {
-    const C: [f64; 8] = [-0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037];
+    const C: [f32; 8] = [-0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037];
 
     let mut cs = [0f32; 8];
     let mut ca = [0f32; 8];
 
     for i in 0..8 {
         let sqrt = (1.0 + (C[i] * C[i])).sqrt();
-        cs[i] = (1.0 / sqrt) as f32;
-        ca[i] = (C[i] / sqrt) as f32;
+        cs[i] = (1.0 / sqrt);
+        ca[i] = (C[i] / sqrt);
     }
 
     (cs, ca)
@@ -476,10 +476,10 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
 mod tests {
     use super::IMDCT_WINDOWS;
     use super::imdct12_win;
-    use core::f64;
+    use core::f32;
 
     fn imdct12_analytical(x: &[f32; 6]) -> [f32; 12] {
-        const PI_24: f64 = f64::consts::PI / 24.0;
+        const PI_24: f32 = f32::consts::PI / 24.0;
 
         let mut result = [0f32; 12];
 
@@ -487,7 +487,7 @@ mod tests {
             let mut sum = 0.0;
             for k in 0..6 {
                 sum +=
-                    (x[k] as f64) * (PI_24 * ((2 * i + (12 / 2) + 1) * (2 * k + 1)) as f64).cos();
+                    (x[k] as f32) * (PI_24 * ((2 * i + (12 / 2) + 1) * (2 * k + 1)) as f32).cos();
             }
             result[i] = sum as f32;
         }
@@ -556,6 +556,7 @@ mod imdct36 {
     /// Signal Processing, vol. 48, no. 10, pp. 990-994, 2001.
     ///
     /// https://ieeexplore.ieee.org/document/974789
+    #[inline(always)]
     pub fn imdct36(x: &mut [f32; 18], window: &[f32; 36], overlap: &mut [f32; 18]) {
         let mut dct = [0f32; 18];
 
@@ -769,18 +770,18 @@ mod imdct36 {
     #[cfg(test)]
     mod tests {
         use super::imdct36;
-        use core::f64;
+        use core::f32;
 
         fn imdct36_analytical(x: &[f32; 18]) -> [f32; 36] {
             let mut result = [0f32; 36];
 
-            const PI_72: f64 = f64::consts::PI / 72.0;
+            const PI_72: f32 = f32::consts::PI / 72.0;
 
             for i in 0..36 {
                 let mut sum = 0.0;
                 for j in 0..18 {
                     sum +=
-                        (x[j] as f64) * (PI_72 * (((2 * i) + 1 + 18) * ((2 * j) + 1)) as f64).cos();
+                        (x[j] as f32) * (PI_72 * (((2 * i) + 1 + 18) * ((2 * j) + 1)) as f32).cos();
                 }
                 result[i] = sum as f32;
             }

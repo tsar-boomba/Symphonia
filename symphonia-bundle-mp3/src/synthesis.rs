@@ -316,9 +316,21 @@ pub fn synthesis(state: &mut SynthesisState, n_frames: usize, in_samples: &[f32]
 
             let k = j << 6;
 
+            // These asserts let the compiler prove all indexing below is in-bounds
+            // and eliminate every bounds check in the inner loop
+            assert_eq!(v0.len(), 32);
+            assert_eq!(v1.len(), 32);
+            assert_eq!(o_vec.len(), 32);
+
+            let d0 = &SYNTHESIS_D[k..k + 32];
+            let d1 = &SYNTHESIS_D[k + 32..k + 64];
+            // Same as above, these should help remove bounds checks
+            assert_eq!(d0.len(), 32);
+            assert_eq!(d1.len(), 32);
+
             for i in 0..32 {
-                o_vec[i] += v0[i] * SYNTHESIS_D[k + i + 0];
-                o_vec[i] += v1[i] * SYNTHESIS_D[k + i + 32];
+                o_vec[i] += v0[i] * d0[i];
+                o_vec[i] += v1[i] * d1[i];
             }
         }
 
@@ -849,17 +861,17 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 #[cfg(test)]
 mod tests {
     use super::dct32;
-    use core::f64;
+    use core::f32;
 
     fn dct32_analytical(x: &[f32; 32]) -> [f32; 32] {
-        const PI_32: f64 = f64::consts::PI / 32.0;
+        const PI_32: f32 = f32::consts::PI / 32.0;
 
         let mut result = [0f32; 32];
         for (i, item) in result.iter_mut().enumerate() {
             *item = x
                 .iter()
                 .enumerate()
-                .map(|(j, &jtem)| jtem * (PI_32 * (i as f64) * ((j as f64) + 0.5)).cos() as f32)
+                .map(|(j, &jtem)| jtem * (PI_32 * (i as f32) * ((j as f32) + 0.5)).cos() as f32)
                 .sum();
         }
 

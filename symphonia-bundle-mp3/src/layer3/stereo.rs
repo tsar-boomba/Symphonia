@@ -5,15 +5,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::{Float, Lazy};
 use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::{Float, Lazy};
 
 use crate::common::{ChannelMode, FrameHeader, Mode};
 
 use super::{Granule, common::*};
 
 use core::cmp::max;
-use core::{f32, f64};
+use core::f32;
 
 /// The invalid intensity position for MPEG1 bitstreams.
 const INTENSITY_INV_POS_MPEG1: u8 = 7;
@@ -55,19 +55,19 @@ const INTENSITY_INV_POS_MPEG2: u8 = 31;
 /// second dimension is indexed by is_pos to obtain the channel coefficients. Note that
 /// is_pos == 31 is considered an invalid position, but IS included in the table.
 static INTENSITY_STEREO_RATIOS_MPEG2: Lazy<[[(f32, f32); 32]; 2]> = Lazy::new(|| {
-    let is_scale: [f64; 2] = [1.0 / f64::sqrt(f64::consts::SQRT_2), f64::consts::FRAC_1_SQRT_2];
+    let is_scale: [f32; 2] = [1.0 / f32::sqrt(f32::consts::SQRT_2), f32::consts::FRAC_1_SQRT_2];
 
     let mut ratios = [[(0.0, 0.0); 32]; 2];
 
     for (i, is_pos) in (0..32).enumerate() {
         if is_pos & 1 != 0 {
             // Odd case.
-            ratios[0][i] = (is_scale[0].powf(f64::from(is_pos + 1) / 2.0) as f32, 1.0);
-            ratios[1][i] = (is_scale[1].powf(f64::from(is_pos + 1) / 2.0) as f32, 1.0);
+            ratios[0][i] = (is_scale[0].powf((is_pos + 1) as f32 / 2.0) as f32, 1.0);
+            ratios[1][i] = (is_scale[1].powf((is_pos + 1) as f32 / 2.0) as f32, 1.0);
         } else {
             // Even & zero case.
-            ratios[0][i] = (1.0, is_scale[0].powf(f64::from(is_pos) / 2.0) as f32);
-            ratios[1][i] = (1.0, is_scale[1].powf(f64::from(is_pos) / 2.0) as f32);
+            ratios[0][i] = (1.0, is_scale[0].powf((is_pos) as f32 / 2.0) as f32);
+            ratios[1][i] = (1.0, is_scale[1].powf((is_pos) as f32 / 2.0) as f32);
         }
     }
 
@@ -95,12 +95,12 @@ static INTENSITY_STEREO_RATIOS_MPEG2: Lazy<[[(f32, f32); 32]; 2]> = Lazy::new(||
 /// This table is indexed by is_pos. Note that is_pos == 7 is invalid and is NOT included in the
 /// table.
 static INTENSITY_STEREO_RATIOS_MPEG1: Lazy<[(f32, f32); 7]> = Lazy::new(|| {
-    const PI_12: f64 = f64::consts::PI / 12.0;
+    const PI_12: f32 = f32::consts::PI / 12.0;
 
     let mut ratios = [(0.0, 0.0); 7];
 
     for (is_pos, ratio) in ratios.iter_mut().enumerate() {
-        let is_ratio = (PI_12 * is_pos as f64).tan();
+        let is_ratio = (PI_12 * is_pos as f32).tan();
         *ratio = ((is_ratio / (1.0 + is_ratio)) as f32, (1.0 / (1.0 + is_ratio)) as f32);
     }
 

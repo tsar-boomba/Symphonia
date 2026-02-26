@@ -14,7 +14,7 @@ use crate::common::FrameHeader;
 use super::{GranuleChannel, codebooks, common::*};
 
 use core::cmp::min;
-use core::{f32, f64};
+use core::f32;
 
 use log::info;
 
@@ -271,7 +271,7 @@ fn requantize_long(channel: &GranuleChannel, bands: &[usize], buf: &mut [f32; 57
         // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
         // Since scalefac_shift was multiplies by 4 above, the final equation becomes
         // 2^{ 0.25 * (A - B) }.
-        let pow2ab = f64::powf(2.0, 0.25 * f64::from(a - b)) as f32;
+        let pow2ab = f32::powf(2.0, 0.25 * (a - b) as f32) as f32;
 
         // Calculate the ending sample index for the scale-factor band, clamping it to the length of
         // the sample buffer.
@@ -334,7 +334,7 @@ fn requantize_short(
         // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
         // Since scalefac_shift multiplies by 4 above, the final equation becomes
         // 2^{ 0.25 * (A - B) }.
-        let pow2ab = f64::powf(2.0, 0.25 * f64::from(a[i % 3] - b)) as f32;
+        let pow2ab = f32::powf(2.0, 0.25 * (a[i % 3] - b) as f32) as f32;
 
         // Clamp the ending sample index to the rzero sample index. Since samples starting from
         // rzero are 0, there is no point in requantizing them.
