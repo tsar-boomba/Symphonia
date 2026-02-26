@@ -5,10 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use core::cmp;
-
 use alloc::boxed::Box;
-use async_trait::async_trait;
+use core::cmp;
 
 use super::{FiniteStream, ReadBytes, SeekBuffered};
 
@@ -70,7 +68,6 @@ impl<B: ReadBytes> FiniteStream for ScopedStream<B> {
     }
 }
 
-#[async_trait]
 impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     #[inline(always)]
     async fn read_byte(&mut self) -> super::Result<u8> {

@@ -8,8 +8,6 @@
 use alloc::{boxed::Box, vec};
 use core::cmp;
 
-use async_trait::async_trait;
-
 use super::{FiniteStream, ReadBytes};
 
 #[inline(always)]
@@ -97,7 +95,6 @@ impl<'a> BufReader<'a> {
     }
 }
 
-#[async_trait]
 impl ReadBytes for BufReader<'_> {
     #[inline(always)]
     async fn read_byte(&mut self) -> super::Result<u8> {

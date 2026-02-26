@@ -6,8 +6,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use alloc::boxed::Box;
-use async_trait::async_trait;
-
 use super::ReadBytes;
 
 /// A `Monitor` provides a common interface to examine the operations observed be
@@ -72,7 +70,6 @@ impl<B: ReadBytes, M: Monitor> MonitorStream<B, M> {
     }
 }
 
-#[async_trait]
 impl<B: ReadBytes, M: Monitor + Send> ReadBytes for MonitorStream<B, M> {
     #[inline(always)]
     async fn read_byte(&mut self) -> super::Result<u8> {
