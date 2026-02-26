@@ -8,9 +8,9 @@
 //! Frame body readers.
 
 use alloc::sync::Arc;
-use symphonia_core::Lazy;
 use core::char;
 use core::str;
+use symphonia_core::Lazy;
 
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};

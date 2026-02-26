@@ -27,8 +27,8 @@ use symphonia_core::meta::{
     MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, RawTag,
     RawValue, StandardTag, StandardVisualKey, Tag, Visual,
 };
-use symphonia_core::{async_trait, Lazy, support_metadata};
 use symphonia_core::util::text;
+use symphonia_core::{Lazy, async_trait, support_metadata};
 
 use crate::utils::images::{ImageInfo, try_get_image_info};
 use crate::utils::std_tag::*;

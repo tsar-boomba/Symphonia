@@ -14,7 +14,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-default = []
+default = ["opt-cmsis-dsp"] # TODO: remove
 
 std = ["embedded-io/std", "embedded-io-adapters/std", "once_cell/std"]
 defmt = ["embedded-io/defmt"]
@@ -24,11 +24,14 @@ opt-simd-sse = ["rustfft/sse"]
 opt-simd-avx = ["rustfft/avx"]
 opt-simd-neon = ["rustfft/neon"]
 
+# Use dsp hardware support on cortex-m33
+opt-cmsis-dsp = ["cmsis_dsp"]
+
 # Enable all SIMD support.
 opt-simd = [
     "opt-simd-sse",
     "opt-simd-avx",
-    "opt-simd-neon",
+    "opt-simd-neon"
 ]
 
 # Experimental features.
@@ -49,6 +52,11 @@ num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 smallvec = "1.13.1"
 # Use critical-section feature for no_std support, but when std is enabled uses std::sync
 once_cell = { version = "1.21", default-features = false, features = ["critical-section"] }
+
+# TODO
+# also hard code to my fork until we can upstream my updates
+# hard-code feature for now, if people care can fix later
+cmsis_dsp = { git = "https://github.com/tsar-boomba/cmsis_dsp.rs.git", optional = true, features = ["dsp-instructions"] }
 
 [dependencies.rustfft]
 version = "6.1.0"

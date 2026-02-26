@@ -258,13 +258,14 @@ pub(super) fn antialias(channel: &mut GranuleChannel, samples: &mut [f32; 576]) 
     // Note that all butterfly calculations only involve two samples, and all iterations are
     // independant of each other. This lends itself well for SIMD processing.
     for sb in (18..channel.rzero).step_by(18) {
+        // Window is exactly 16 samples: 8 below sb, 8 above
+        let (lower, upper) = samples[sb - 8..sb + 8].split_at_mut(8);
+        // lower[7-i] == samples[sb-1-i], upper[i] == samples[sb+i]
         for i in 0..8 {
-            let li = sb - 1 - i;
-            let ui = sb + i;
-            let lower = samples[li];
-            let upper = samples[ui];
-            samples[li] = lower * cs[i] - upper * ca[i];
-            samples[ui] = upper * cs[i] + lower * ca[i];
+            let l = lower[7 - i];
+            let u = upper[i];
+            lower[7 - i] = l * cs[i] - u * ca[i];
+            upper[i] = u * cs[i] + l * ca[i];
         }
     }
 }
@@ -756,6 +757,7 @@ mod imdct36 {
         let a25 = m1 - m6;
         let a26 = m1 + m7;
 
+        assert!(y.len() >= 17);
         y[0] = a09 + a11;
         y[2] = m8 - a26;
         y[4] = m4 - a21;

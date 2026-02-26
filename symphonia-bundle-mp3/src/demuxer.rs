@@ -176,7 +176,8 @@ impl FormatReader for MpaReader<'_> {
                     warn!("found an unexpected xing tag, discarding");
                     continue;
                 }
-            } else if is_maybe_vbri_tag(&data, &header)
+            }
+            else if is_maybe_vbri_tag(&data, &header)
                 && try_read_vbri_tag(&data, &header).await.is_some()
             {
                 // Discard the packet and tag since it was not at the start of the stream.
@@ -262,7 +263,8 @@ impl FormatReader for MpaReader<'_> {
         // Ensure the seek position is within the bounds of the track.
         if required_ts < min_ts {
             return seek_error(SeekErrorKind::OutOfRange);
-        } else if let Some(max_ts) = max_ts {
+        }
+        else if let Some(max_ts) = max_ts {
             if required_ts > max_ts {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
@@ -447,14 +449,16 @@ impl<'s> MpaReader<'s> {
 
                 track.with_num_frames(num_frames.saturating_sub(u64::from(discard)));
             }
-        } else if let Some(vbri_tag) = try_read_vbri_tag(&packet, &header).await {
+        }
+        else if let Some(vbri_tag) = try_read_vbri_tag(&packet, &header).await {
             info!("using vbri header for duration");
 
             let num_frames = u64::from(vbri_tag.num_mpeg_frames) * u64::from(header.num_frames());
 
             // Check if there is a VBRI tag.
             track.with_num_frames(num_frames);
-        } else {
+        }
+        else {
             // The first frame was not a Xing/Info header, rewind back to the start of the frame so
             // that it may be decoded.
             mss.seek_buffered_rev(MPEG_HEADER_LEN + header.frame_size);
@@ -796,7 +800,8 @@ async fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Opt
         let mut toc = [0; 100];
         reader.read_buf_exact(&mut toc).await?;
         Some(toc)
-    } else {
+    }
+    else {
         None
     };
 
@@ -846,7 +851,8 @@ async fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Opt
                 let padding = trim & ((1 << 12) - 1);
 
                 (delay, padding.saturating_sub(528 + 1))
-            } else {
+            }
+            else {
                 (0, 0)
             }
         };
@@ -874,11 +880,13 @@ async fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Opt
             if header.has_crc || encoder[..4] == *b"LAME" {
                 // Read the CRC using the inner reader to not change the computed CRC.
                 Some(reader.inner_mut().read_be_u16().await?)
-            } else {
+            }
+            else {
                 // No CRC is present.
                 None
             }
-        } else {
+        }
+        else {
             // The tag is truncated. No CRC will be present.
             info!("xing tag lame extension is truncated");
             None
@@ -897,12 +905,14 @@ async fn try_read_info_tag_inner(buf: &[u8], header: &FrameHeader) -> Result<Opt
                 enc_delay,
                 enc_padding,
             })
-        } else {
+        }
+        else {
             // The CRC did not match, this is probably not a LAME tag.
             warn!("xing tag lame extension crc mismatch");
             None
         }
-    } else {
+    }
+    else {
         // Frame not large enough for a LAME tag.
         info!("xing tag too small for lame extension");
         None
@@ -918,7 +928,8 @@ fn parse_lame_tag_replaygain(value: u16, expected_name: u8) -> Option<f32> {
     if name == expected_name {
         let gain = (value & 0x01ff) as f32 / 10.0;
         Some(if value & 0x200 != 0 { -gain } else { gain })
-    } else {
+    }
+    else {
         None
     }
 }

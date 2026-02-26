@@ -9,9 +9,9 @@ use alloc::boxed::Box;
 use core::convert::TryInto;
 use core::f32;
 
+use crate::Lazy;
 use crate::dsp::complex::{Complex, ComplexFloat};
 use crate::dsp::fft::MAX_SIZE;
-use crate::Lazy;
 
 macro_rules! fft_twiddle_table {
     ($bi:expr, $name:ident) => {

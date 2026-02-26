@@ -88,6 +88,9 @@ opt-simd-sse = ["symphonia-core/opt-simd-sse"]
 opt-simd-avx = ["symphonia-core/opt-simd-avx"]
 opt-simd-neon = ["symphonia-core/opt-simd-neon"]
 
+# Hardware DSP support on cortex-m33
+opt-cmsis-dsp = ["symphonia-core/opt-cmsis-dsp"]
+
 # Enable all SIMD support.
 opt-simd = [
     "opt-simd-sse",
