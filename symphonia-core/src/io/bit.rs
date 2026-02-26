@@ -7,9 +7,6 @@
 
 use core::cmp::min;
 
-use alloc::boxed::Box;
-use async_trait::async_trait;
-
 use crate::io::ReadBytes;
 use crate::util::bits::*;
 
@@ -420,8 +417,7 @@ pub mod vlc {
                         // Recurse down the tree.
                         if let Some(&block_id) = blocks[parent_block_id].nodes.get(&prefix) {
                             parent_block_id = block_id;
-                        }
-                        else {
+                        } else {
                             // Add a child block to the parent block.
                             let block_id = blocks.len();
 
@@ -463,15 +459,11 @@ pub mod vlc {
 }
 
 mod private {
-    use alloc::boxed::Box;
-    use async_trait::async_trait;
-
     use crate::io;
 
-    #[async_trait]
-    pub trait FetchBitsLtr {
+    pub trait FetchBitsLtr: Send {
         /// Discard any remaining bits in the source and fetch 1 or more new bits.
-        async fn fetch_bits(&mut self) -> io::Result<()>;
+        fn fetch_bits(&mut self) -> impl Future<Output = io::Result<()>> + Send;
 
         /// Fetch 0 or more new bits, and append them after the remaining bits.
         fn fetch_bits_partial(&mut self) -> io::Result<()>;
@@ -486,10 +478,9 @@ mod private {
         fn consume_bits(&mut self, num: u32);
     }
 
-    #[async_trait]
-    pub trait FetchBitsRtl {
+    pub trait FetchBitsRtl: Send {
         /// Discard any remaining bits in the source and fetch 1 or more new bits.
-        async fn fetch_bits(&mut self) -> io::Result<()>;
+        fn fetch_bits(&mut self) -> impl Future<Output = io::Result<()>> + Send;
 
         /// Fetch 0 or more new bits, and append them after the remaining bits.
         fn fetch_bits_partial(&mut self) -> io::Result<()>;
@@ -512,7 +503,6 @@ pub trait FiniteBitStream {
 }
 
 /// `ReadBitsLtr` reads bits from most-significant to least-significant.
-#[async_trait]
 pub trait ReadBitsLtr: Send + private::FetchBitsLtr {
     /// Discards any saved bits and resets the `BitStream` to prepare it for a byte-aligned read.
     #[inline(always)]
@@ -523,260 +513,294 @@ pub trait ReadBitsLtr: Send + private::FetchBitsLtr {
 
     /// Ignores the specified number of bits from the stream or returns an error.
     #[inline(always)]
-    async fn ignore_bits(&mut self, mut num_bits: u32) -> super::Result<()> {
-        if num_bits <= self.num_bits_left() {
-            self.consume_bits(num_bits);
-        }
-        else {
-            // Consume whole bit caches directly.
-            while num_bits > self.num_bits_left() {
-                num_bits -= self.num_bits_left();
-                self.fetch_bits().await?;
+    fn ignore_bits(&mut self, mut num_bits: u32) -> impl Future<Output = super::Result<()>> + Send {
+        async move {
+            if num_bits <= self.num_bits_left() {
+                self.consume_bits(num_bits);
+            } else {
+                // Consume whole bit caches directly.
+                while num_bits > self.num_bits_left() {
+                    num_bits -= self.num_bits_left();
+                    self.fetch_bits().await?;
+                }
+
+                if num_bits > 0 {
+                    // Shift out in two parts to prevent panicing when num_bits == 64.
+                    self.consume_bits(num_bits - 1);
+                    self.consume_bits(1);
+                }
             }
 
-            if num_bits > 0 {
-                // Shift out in two parts to prevent panicing when num_bits == 64.
-                self.consume_bits(num_bits - 1);
-                self.consume_bits(1);
-            }
+            Ok(())
         }
-
-        Ok(())
     }
 
     /// Ignores one bit from the stream or returns an error.
     #[inline(always)]
-    async fn ignore_bit(&mut self) -> super::Result<()> {
-        self.ignore_bits(1).await
+    fn ignore_bit(&mut self) -> impl Future<Output = super::Result<()>> + Send {
+        async { self.ignore_bits(1).await }
     }
 
     /// Read a single bit as a boolean value or returns an error.
     #[inline(always)]
-    async fn read_bool(&mut self) -> super::Result<bool> {
-        if self.num_bits_left() < 1 {
-            self.fetch_bits().await?;
+    fn read_bool(&mut self) -> impl Future<Output = super::Result<bool>> + Send {
+        async {
+            if self.num_bits_left() < 1 {
+                self.fetch_bits().await?;
+            }
+
+            let bit = self.get_bits() & (1 << 63) != 0;
+
+            self.consume_bits(1);
+            Ok(bit)
         }
-
-        let bit = self.get_bits() & (1 << 63) != 0;
-
-        self.consume_bits(1);
-        Ok(bit)
     }
 
     /// Reads and returns a single bit or returns an error.
     #[inline(always)]
-    async fn read_bit(&mut self) -> super::Result<u32> {
-        if self.num_bits_left() < 1 {
-            self.fetch_bits().await?;
+    fn read_bit(&mut self) -> impl Future<Output = super::Result<u32>> + Send {
+        async {
+            if self.num_bits_left() < 1 {
+                self.fetch_bits().await?;
+            }
+
+            let bit = self.get_bits() >> 63;
+
+            self.consume_bits(1);
+
+            Ok(bit as u32)
         }
-
-        let bit = self.get_bits() >> 63;
-
-        self.consume_bits(1);
-
-        Ok(bit as u32)
     }
 
     /// Reads and returns up to 32-bits or returns an error.
     #[inline(always)]
-    async fn read_bits_leq32(&mut self, mut bit_width: u32) -> super::Result<u32> {
-        debug_assert!(bit_width <= u32::BITS);
+    fn read_bits_leq32(
+        &mut self,
+        mut bit_width: u32,
+    ) -> impl Future<Output = super::Result<u32>> + Send {
+        async move {
+            debug_assert!(bit_width <= u32::BITS);
 
-        // Shift in two 32-bit operations instead of a single 64-bit operation to avoid panicing
-        // when bit_width == 0 (and thus shifting right 64-bits). This is preferred to branching
-        // the bit_width == 0 case, since reading up-to 32-bits at a time is a hot code-path.
-        let mut bits = (self.get_bits() >> u32::BITS) >> (u32::BITS - bit_width);
-
-        while bit_width > self.num_bits_left() {
-            bit_width -= self.num_bits_left();
-
-            self.fetch_bits().await?;
-
-            // Unlike the first shift, bit_width is always > 0 here so this operation will never
-            // shift by > 63 bits.
-            bits |= self.get_bits() >> (u64::BITS - bit_width);
-        }
-
-        self.consume_bits(bit_width);
-
-        Ok(bits as u32)
-    }
-
-    /// Reads up to 32-bits and interprets them as a signed two's complement integer or returns an
-    /// error.
-    #[inline(always)]
-    async fn read_bits_leq32_signed(&mut self, bit_width: u32) -> super::Result<i32> {
-        let value = self.read_bits_leq32(bit_width).await?;
-        Ok(sign_extend_leq32_to_i32(value, bit_width))
-    }
-
-    /// Reads and returns up to 64-bits or returns an error.
-    #[inline(always)]
-    async fn read_bits_leq64(&mut self, mut bit_width: u32) -> super::Result<u64> {
-        debug_assert!(bit_width <= u64::BITS);
-
-        // Hard-code the bit_width == 0 case as it's not possible to handle both the bit_width == 0
-        // and bit_width == 64 cases branchlessly. This should be optimized out when bit_width is
-        // known at compile time. Since it's generally rare to need to read up-to 64-bits at a time
-        // (as oppopsed to 32-bits), this is an acceptable solution.
-        if bit_width == 0 {
-            Ok(0)
-        }
-        else {
-            // Since bit_width is always > 0, this shift operation is always < 64, and will
-            // therefore never panic.
-            let mut bits = self.get_bits() >> (u64::BITS - bit_width);
+            // Shift in two 32-bit operations instead of a single 64-bit operation to avoid panicing
+            // when bit_width == 0 (and thus shifting right 64-bits). This is preferred to branching
+            // the bit_width == 0 case, since reading up-to 32-bits at a time is a hot code-path.
+            let mut bits = (self.get_bits() >> u32::BITS) >> (u32::BITS - bit_width);
 
             while bit_width > self.num_bits_left() {
                 bit_width -= self.num_bits_left();
 
                 self.fetch_bits().await?;
 
+                // Unlike the first shift, bit_width is always > 0 here so this operation will never
+                // shift by > 63 bits.
                 bits |= self.get_bits() >> (u64::BITS - bit_width);
             }
 
-            // Shift in two parts to prevent panicing when bit_width == 64.
-            self.consume_bits(bit_width - 1);
-            self.consume_bits(1);
+            self.consume_bits(bit_width);
 
-            Ok(bits)
+            Ok(bits as u32)
+        }
+    }
+
+    /// Reads up to 32-bits and interprets them as a signed two's complement integer or returns an
+    /// error.
+    #[inline(always)]
+    fn read_bits_leq32_signed(
+        &mut self,
+        bit_width: u32,
+    ) -> impl Future<Output = super::Result<i32>> + Send {
+        async move {
+            let value = self.read_bits_leq32(bit_width).await?;
+            Ok(sign_extend_leq32_to_i32(value, bit_width))
+        }
+    }
+
+    /// Reads and returns up to 64-bits or returns an error.
+    #[inline(always)]
+    fn read_bits_leq64(
+        &mut self,
+        mut bit_width: u32,
+    ) -> impl Future<Output = super::Result<u64>> + Send {
+        async move {
+            debug_assert!(bit_width <= u64::BITS);
+
+            // Hard-code the bit_width == 0 case as it's not possible to handle both the bit_width == 0
+            // and bit_width == 64 cases branchlessly. This should be optimized out when bit_width is
+            // known at compile time. Since it's generally rare to need to read up-to 64-bits at a time
+            // (as oppopsed to 32-bits), this is an acceptable solution.
+            if bit_width == 0 {
+                Ok(0)
+            } else {
+                // Since bit_width is always > 0, this shift operation is always < 64, and will
+                // therefore never panic.
+                let mut bits = self.get_bits() >> (u64::BITS - bit_width);
+
+                while bit_width > self.num_bits_left() {
+                    bit_width -= self.num_bits_left();
+
+                    self.fetch_bits().await?;
+
+                    bits |= self.get_bits() >> (u64::BITS - bit_width);
+                }
+
+                // Shift in two parts to prevent panicing when bit_width == 64.
+                self.consume_bits(bit_width - 1);
+                self.consume_bits(1);
+
+                Ok(bits)
+            }
         }
     }
 
     /// Reads up to 64-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    async fn read_bits_leq64_signed(&mut self, bit_width: u32) -> super::Result<i64> {
-        let value = self.read_bits_leq64(bit_width).await?;
-        Ok(sign_extend_leq64_to_i64(value, bit_width))
+    fn read_bits_leq64_signed(
+        &mut self,
+        bit_width: u32,
+    ) -> impl Future<Output = super::Result<i64>> + Send {
+        async move {
+            let value = self.read_bits_leq64(bit_width).await?;
+            Ok(sign_extend_leq64_to_i64(value, bit_width))
+        }
     }
 
     /// Reads and returns a unary zeros encoded integer or an error.
     #[inline(always)]
-    async fn read_unary_zeros(&mut self) -> super::Result<u32> {
-        let mut num = 0;
+    fn read_unary_zeros(&mut self) -> impl Future<Output = super::Result<u32>> + Send {
+        async {
+            let mut num = 0;
 
-        loop {
-            // Get the number of leading zeros.
-            let num_zeros = self.get_bits().leading_zeros();
+            loop {
+                // Get the number of leading zeros.
+                let num_zeros = self.get_bits().leading_zeros();
 
-            if num_zeros >= self.num_bits_left() {
-                // If the number of zeros exceeds the number of bits left then all the remaining
-                // bits were 0.
-                num += self.num_bits_left();
-                self.fetch_bits().await?;
+                if num_zeros >= self.num_bits_left() {
+                    // If the number of zeros exceeds the number of bits left then all the remaining
+                    // bits were 0.
+                    num += self.num_bits_left();
+                    self.fetch_bits().await?;
+                } else {
+                    // Otherwise, a 1 bit was encountered after `n_zeros` 0 bits.
+                    num += num_zeros;
+
+                    // Since bits are shifted off the cache after they're consumed, for there to be a
+                    // 1 bit there must be atleast one extra available bit in the cache that can be
+                    // consumed after the 0 bits.
+                    self.consume_bits(num_zeros);
+                    self.consume_bits(1);
+
+                    // Done decoding.
+                    break;
+                }
             }
-            else {
-                // Otherwise, a 1 bit was encountered after `n_zeros` 0 bits.
-                num += num_zeros;
 
-                // Since bits are shifted off the cache after they're consumed, for there to be a
-                // 1 bit there must be atleast one extra available bit in the cache that can be
-                // consumed after the 0 bits.
-                self.consume_bits(num_zeros);
-                self.consume_bits(1);
-
-                // Done decoding.
-                break;
-            }
+            Ok(num)
         }
-
-        Ok(num)
     }
 
     /// Reads and returns a unary zeros encoded integer that is capped to a maximum value.
     #[inline(always)]
-    async fn read_unary_zeros_capped(&mut self, mut limit: u32) -> super::Result<u32> {
-        let mut num = 0;
+    fn read_unary_zeros_capped(
+        &mut self,
+        mut limit: u32,
+    ) -> impl Future<Output = super::Result<u32>> + Send {
+        async move {
+            let mut num = 0;
 
-        loop {
-            // Get the number of leading zeros, capped to the limit.
-            let num_bits_left = self.num_bits_left();
-            let num_zeros = min(self.get_bits().leading_zeros(), num_bits_left);
+            loop {
+                // Get the number of leading zeros, capped to the limit.
+                let num_bits_left = self.num_bits_left();
+                let num_zeros = min(self.get_bits().leading_zeros(), num_bits_left);
 
-            if num_zeros >= limit {
-                // There are more ones than the limit. A terminator cannot be encountered.
-                num += limit;
-                self.consume_bits(limit);
-                break;
-            }
-            else {
-                // There are less ones than the limit. A terminator was encountered OR more bits
-                // are needed.
-                limit -= num_zeros;
-                num += num_zeros;
-
-                if num_zeros < num_bits_left {
-                    // There are less ones than the number of bits left in the reader. Thus, a
-                    // terminator was not encountered and not all bits have not been consumed.
-                    self.consume_bits(num_zeros);
-                    self.consume_bits(1);
+                if num_zeros >= limit {
+                    // There are more ones than the limit. A terminator cannot be encountered.
+                    num += limit;
+                    self.consume_bits(limit);
                     break;
+                } else {
+                    // There are less ones than the limit. A terminator was encountered OR more bits
+                    // are needed.
+                    limit -= num_zeros;
+                    num += num_zeros;
+
+                    if num_zeros < num_bits_left {
+                        // There are less ones than the number of bits left in the reader. Thus, a
+                        // terminator was not encountered and not all bits have not been consumed.
+                        self.consume_bits(num_zeros);
+                        self.consume_bits(1);
+                        break;
+                    }
                 }
+
+                self.fetch_bits().await?;
             }
 
-            self.fetch_bits().await?;
+            Ok(num)
         }
-
-        Ok(num)
     }
 
     /// Reads and returns a unary ones encoded integer or an error.
     #[inline(always)]
-    async fn read_unary_ones(&mut self) -> super::Result<u32> {
-        // Note: This algorithm is identical to read_unary_zeros except flipped for 1s.
-        let mut num = 0;
+    fn read_unary_ones(&mut self) -> impl Future<Output = super::Result<u32>> + Send {
+        async {
+            // Note: This algorithm is identical to read_unary_zeros except flipped for 1s.
+            let mut num = 0;
 
-        loop {
-            let num_ones = self.get_bits().leading_ones();
+            loop {
+                let num_ones = self.get_bits().leading_ones();
 
-            if num_ones >= self.num_bits_left() {
-                num += self.num_bits_left();
-                self.fetch_bits().await?;
-            }
-            else {
-                num += num_ones;
+                if num_ones >= self.num_bits_left() {
+                    num += self.num_bits_left();
+                    self.fetch_bits().await?;
+                } else {
+                    num += num_ones;
 
-                self.consume_bits(num_ones);
-                self.consume_bits(1);
-
-                break;
-            }
-        }
-
-        Ok(num)
-    }
-
-    /// Reads and returns a unary ones encoded integer that is capped to a maximum value.
-    #[inline(always)]
-    async fn read_unary_ones_capped(&mut self, mut limit: u32) -> super::Result<u32> {
-        // Note: This algorithm is identical to read_unary_zeros_capped except flipped for 1s.
-        let mut num = 0;
-
-        loop {
-            let num_bits_left = self.num_bits_left();
-            let num_ones = min(self.get_bits().leading_ones(), num_bits_left);
-
-            if num_ones >= limit {
-                num += limit;
-                self.consume_bits(limit);
-                break;
-            }
-            else {
-                limit -= num_ones;
-                num += num_ones;
-
-                if num_ones < num_bits_left {
                     self.consume_bits(num_ones);
                     self.consume_bits(1);
+
                     break;
                 }
             }
 
-            self.fetch_bits().await?;
+            Ok(num)
         }
+    }
 
-        Ok(num)
+    /// Reads and returns a unary ones encoded integer that is capped to a maximum value.
+    #[inline(always)]
+    fn read_unary_ones_capped(
+        &mut self,
+        mut limit: u32,
+    ) -> impl Future<Output = super::Result<u32>> + Send {
+        async move {
+            // Note: This algorithm is identical to read_unary_zeros_capped except flipped for 1s.
+            let mut num = 0;
+
+            loop {
+                let num_bits_left = self.num_bits_left();
+                let num_ones = min(self.get_bits().leading_ones(), num_bits_left);
+
+                if num_ones >= limit {
+                    num += limit;
+                    self.consume_bits(limit);
+                    break;
+                } else {
+                    limit -= num_ones;
+                    num += num_ones;
+
+                    if num_ones < num_bits_left {
+                        self.consume_bits(num_ones);
+                        self.consume_bits(1);
+                        break;
+                    }
+                }
+
+                self.fetch_bits().await?;
+            }
+
+            Ok(num)
+        }
     }
 
     /// Reads a codebook value from the `BitStream` using the provided `Codebook` and returns the
@@ -840,7 +864,6 @@ impl<'a, B: ReadBytes> BitStreamLtr<'a, B> {
     }
 }
 
-#[async_trait]
 impl<B: ReadBytes> private::FetchBitsLtr for BitStreamLtr<'_, B> {
     #[inline(always)]
     async fn fetch_bits(&mut self) -> super::Result<()> {
@@ -890,7 +913,6 @@ impl<'a> BitReaderLtr<'a> {
     }
 }
 
-#[async_trait]
 impl private::FetchBitsLtr for BitReaderLtr<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> super::Result<()> {
@@ -964,105 +986,74 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
     /// Ignores the specified number of bits from the stream or returns an error.
     #[inline(always)]
-    async fn ignore_bits(&mut self, mut num_bits: u32) -> super::Result<()> {
-        if num_bits <= self.num_bits_left() {
-            self.consume_bits(num_bits);
-        }
-        else {
-            // Consume whole bit caches directly.
-            while num_bits > self.num_bits_left() {
-                num_bits -= self.num_bits_left();
-                self.fetch_bits().await?;
+    fn ignore_bits(&mut self, mut num_bits: u32) -> impl Future<Output = super::Result<()>> + Send {
+        async move {
+            if num_bits <= self.num_bits_left() {
+                self.consume_bits(num_bits);
+            } else {
+                // Consume whole bit caches directly.
+                while num_bits > self.num_bits_left() {
+                    num_bits -= self.num_bits_left();
+                    self.fetch_bits().await?;
+                }
+
+                if num_bits > 0 {
+                    // Shift out in two parts to prevent panicing when num_bits == 64.
+                    self.consume_bits(num_bits - 1);
+                    self.consume_bits(1);
+                }
             }
 
-            if num_bits > 0 {
-                // Shift out in two parts to prevent panicing when num_bits == 64.
-                self.consume_bits(num_bits - 1);
-                self.consume_bits(1);
-            }
+            Ok(())
         }
-
-        Ok(())
     }
 
     /// Ignores one bit from the stream or returns an error.
     #[inline(always)]
-    async fn ignore_bit(&mut self) -> super::Result<()> {
-        self.ignore_bits(1).await
+    fn ignore_bit(&mut self) -> impl Future<Output = super::Result<()>> + Send {
+        async { self.ignore_bits(1).await }
     }
 
     /// Read a single bit as a boolean value or returns an error.
     #[inline(always)]
-    async fn read_bool(&mut self) -> super::Result<bool> {
-        if self.num_bits_left() < 1 {
-            self.fetch_bits().await?;
+    fn read_bool(&mut self) -> impl Future<Output = super::Result<bool>> + Send {
+        async {
+            if self.num_bits_left() < 1 {
+                self.fetch_bits().await?;
+            }
+
+            let bit = (self.get_bits() & 1) == 1;
+
+            self.consume_bits(1);
+            Ok(bit)
         }
-
-        let bit = (self.get_bits() & 1) == 1;
-
-        self.consume_bits(1);
-        Ok(bit)
     }
 
     /// Reads and returns a single bit or returns an error.
     #[inline(always)]
-    async fn read_bit(&mut self) -> super::Result<u32> {
-        if self.num_bits_left() < 1 {
-            self.fetch_bits().await?;
+    fn read_bit(&mut self) -> impl Future<Output = super::Result<u32>> + Send {
+        async {
+            if self.num_bits_left() < 1 {
+                self.fetch_bits().await?;
+            }
+
+            let bit = self.get_bits() & 1;
+
+            self.consume_bits(1);
+
+            Ok(bit as u32)
         }
-
-        let bit = self.get_bits() & 1;
-
-        self.consume_bits(1);
-
-        Ok(bit as u32)
     }
 
     /// Reads and returns up to 32-bits or returns an error.
     #[inline(always)]
-    async fn read_bits_leq32(&mut self, bit_width: u32) -> super::Result<u32> {
-        debug_assert!(bit_width <= u32::BITS);
+    fn read_bits_leq32(
+        &mut self,
+        bit_width: u32,
+    ) -> impl Future<Output = super::Result<u32>> + Send {
+        async move {
+            debug_assert!(bit_width <= u32::BITS);
 
-        let mut bits = self.get_bits();
-        let mut bits_needed = bit_width;
-
-        while bits_needed > self.num_bits_left() {
-            bits_needed -= self.num_bits_left();
-
-            self.fetch_bits().await?;
-
-            bits |= self.get_bits() << (bit_width - bits_needed);
-        }
-
-        self.consume_bits(bits_needed);
-
-        // Since bit_width is <= 32, this shift will never panic.
-        let mask = !(!0 << bit_width);
-
-        Ok((bits & mask) as u32)
-    }
-
-    /// Reads up to 32-bits and interprets them as a signed two's complement integer or returns an
-    /// error.
-    #[inline(always)]
-    async fn read_bits_leq32_signed(&mut self, bit_width: u32) -> super::Result<i32> {
-        let value = self.read_bits_leq32(bit_width).await?;
-        Ok(sign_extend_leq32_to_i32(value, bit_width))
-    }
-
-    /// Reads and returns up to 64-bits or returns an error.
-    #[inline(always)]
-    async fn read_bits_leq64(&mut self, bit_width: u32) -> super::Result<u64> {
-        debug_assert!(bit_width <= u64::BITS);
-
-        // Hard-code the bit_width == 0 case as it's not possible to handle both the bit_width == 0
-        // and bit_width == 64 cases branchlessly. This should be optimized out when bit_width is
-        // known at compile time. Since it's generally rare to need to read up-to 64-bits at a time
-        // (as oppopsed to 32-bits), this is an acceptable solution.
-        if bit_width == 0 {
-            Ok(0)
-        }
-        else {
             let mut bits = self.get_bits();
             let mut bits_needed = bit_width;
 
@@ -1071,156 +1062,221 @@ pub trait ReadBitsRtl: private::FetchBitsRtl {
 
                 self.fetch_bits().await?;
 
-                // Since bits_needed will always be > 0, this will never shift by > 63 bits if
-                // bit_width == 64 and therefore will never panic.
                 bits |= self.get_bits() << (bit_width - bits_needed);
             }
 
-            // Shift in two parts to prevent panicing when bit_width == 64.
-            self.consume_bits(bits_needed - 1);
-            self.consume_bits(1);
+            self.consume_bits(bits_needed);
 
-            // Generate the mask in two parts to prevent panicing when bit_width == 64.
-            let mask = !((!0 << (bit_width - 1)) << 1);
+            // Since bit_width is <= 32, this shift will never panic.
+            let mask = !(!0 << bit_width);
 
-            Ok(bits & mask)
+            Ok((bits & mask) as u32)
+        }
+    }
+
+    /// Reads up to 32-bits and interprets them as a signed two's complement integer or returns an
+    /// error.
+    #[inline(always)]
+    fn read_bits_leq32_signed(
+        &mut self,
+        bit_width: u32,
+    ) -> impl Future<Output = super::Result<i32>> + Send {
+        async move {
+            let value = self.read_bits_leq32(bit_width).await?;
+            Ok(sign_extend_leq32_to_i32(value, bit_width))
+        }
+    }
+
+    /// Reads and returns up to 64-bits or returns an error.
+    #[inline(always)]
+    fn read_bits_leq64(
+        &mut self,
+        bit_width: u32,
+    ) -> impl Future<Output = super::Result<u64>> + Send {
+        async move {
+            debug_assert!(bit_width <= u64::BITS);
+
+            // Hard-code the bit_width == 0 case as it's not possible to handle both the bit_width == 0
+            // and bit_width == 64 cases branchlessly. This should be optimized out when bit_width is
+            // known at compile time. Since it's generally rare to need to read up-to 64-bits at a time
+            // (as oppopsed to 32-bits), this is an acceptable solution.
+            if bit_width == 0 {
+                Ok(0)
+            } else {
+                let mut bits = self.get_bits();
+                let mut bits_needed = bit_width;
+
+                while bits_needed > self.num_bits_left() {
+                    bits_needed -= self.num_bits_left();
+
+                    self.fetch_bits().await?;
+
+                    // Since bits_needed will always be > 0, this will never shift by > 63 bits if
+                    // bit_width == 64 and therefore will never panic.
+                    bits |= self.get_bits() << (bit_width - bits_needed);
+                }
+
+                // Shift in two parts to prevent panicing when bit_width == 64.
+                self.consume_bits(bits_needed - 1);
+                self.consume_bits(1);
+
+                // Generate the mask in two parts to prevent panicing when bit_width == 64.
+                let mask = !((!0 << (bit_width - 1)) << 1);
+
+                Ok(bits & mask)
+            }
         }
     }
 
     /// Reads up to 64-bits and interprets them as a signed two's complement integer or returns an
     /// error.
     #[inline(always)]
-    async fn read_bits_leq64_signed(&mut self, bit_width: u32) -> super::Result<i64> {
-        let value = self.read_bits_leq64(bit_width).await?;
-        Ok(sign_extend_leq64_to_i64(value, bit_width))
+    fn read_bits_leq64_signed(
+        &mut self,
+        bit_width: u32,
+    ) -> impl Future<Output = super::Result<i64>> + Send {
+        async move {
+            let value = self.read_bits_leq64(bit_width).await?;
+            Ok(sign_extend_leq64_to_i64(value, bit_width))
+        }
     }
 
     /// Reads and returns a unary zeros encoded integer or an error.
     #[inline(always)]
-    async fn read_unary_zeros(&mut self) -> super::Result<u32> {
-        let mut num = 0;
+    fn read_unary_zeros(&mut self) -> impl Future<Output = super::Result<u32>> + Send {
+        async {
+            let mut num = 0;
 
-        loop {
-            // Get the number of trailing zeros.
-            let num_zeros = self.get_bits().trailing_zeros();
+            loop {
+                // Get the number of trailing zeros.
+                let num_zeros = self.get_bits().trailing_zeros();
 
-            if num_zeros >= self.num_bits_left() {
-                // If the number of zeros exceeds the number of bits left then all the remaining
-                // bits were 0.
-                num += self.num_bits_left();
-                self.fetch_bits().await?;
+                if num_zeros >= self.num_bits_left() {
+                    // If the number of zeros exceeds the number of bits left then all the remaining
+                    // bits were 0.
+                    num += self.num_bits_left();
+                    self.fetch_bits().await?;
+                } else {
+                    // Otherwise, a 1 bit was encountered after `n_zeros` 0 bits.
+                    num += num_zeros;
+
+                    // Since bits are shifted off the cache after they're consumed, for there to be a
+                    // 1 bit there must be atleast one extra available bit in the cache that can be
+                    // consumed after the 0 bits.
+                    self.consume_bits(num_zeros);
+                    self.consume_bits(1);
+
+                    // Done decoding.
+                    break;
+                }
             }
-            else {
-                // Otherwise, a 1 bit was encountered after `n_zeros` 0 bits.
-                num += num_zeros;
 
-                // Since bits are shifted off the cache after they're consumed, for there to be a
-                // 1 bit there must be atleast one extra available bit in the cache that can be
-                // consumed after the 0 bits.
-                self.consume_bits(num_zeros);
-                self.consume_bits(1);
-
-                // Done decoding.
-                break;
-            }
+            Ok(num)
         }
-
-        Ok(num)
     }
 
     /// Reads and returns a unary zeros encoded integer that is capped to a maximum value.
     #[inline(always)]
-    async fn read_unary_zeros_capped(&mut self, mut limit: u32) -> super::Result<u32> {
-        let mut num = 0;
+    fn read_unary_zeros_capped(
+        &mut self,
+        mut limit: u32,
+    ) -> impl Future<Output = super::Result<u32>> + Send {
+        async move {
+            let mut num = 0;
 
-        loop {
-            // Get the number of trailing zeros, capped to the limit.
-            let num_bits_left = self.num_bits_left();
-            let num_zeros = min(self.get_bits().trailing_zeros(), num_bits_left);
+            loop {
+                // Get the number of trailing zeros, capped to the limit.
+                let num_bits_left = self.num_bits_left();
+                let num_zeros = min(self.get_bits().trailing_zeros(), num_bits_left);
 
-            if num_zeros >= limit {
-                // There are more zeros than the limit. A terminator cannot be encountered.
-                num += limit;
-                self.consume_bits(limit);
-                break;
-            }
-            else {
-                // There are less zeros than the limit. A terminator was encountered OR more bits
-                // are needed.
-                limit -= num_zeros;
-                num += num_zeros;
-
-                if num_zeros < num_bits_left {
-                    // There are less zeros than the number of bits left in the reader. Thus, a
-                    // terminator was not encountered and not all bits have not been consumed.
-                    self.consume_bits(num_zeros);
-                    self.consume_bits(1);
+                if num_zeros >= limit {
+                    // There are more zeros than the limit. A terminator cannot be encountered.
+                    num += limit;
+                    self.consume_bits(limit);
                     break;
+                } else {
+                    // There are less zeros than the limit. A terminator was encountered OR more bits
+                    // are needed.
+                    limit -= num_zeros;
+                    num += num_zeros;
+
+                    if num_zeros < num_bits_left {
+                        // There are less zeros than the number of bits left in the reader. Thus, a
+                        // terminator was not encountered and not all bits have not been consumed.
+                        self.consume_bits(num_zeros);
+                        self.consume_bits(1);
+                        break;
+                    }
                 }
-            }
 
-            self.fetch_bits().await?;
-        }
-
-        Ok(num)
-    }
-
-    /// Reads and returns a unary ones encoded integer or an error.
-    #[inline(always)]
-    async fn read_unary_ones(&mut self) -> super::Result<u32> {
-        // Note: This algorithm is identical to read_unary_zeros except flipped for 1s.
-        let mut num = 0;
-
-        loop {
-            let num_ones = self.get_bits().trailing_ones();
-
-            if num_ones >= self.num_bits_left() {
-                num += self.num_bits_left();
                 self.fetch_bits().await?;
             }
-            else {
-                num += num_ones;
 
-                self.consume_bits(num_ones);
-                self.consume_bits(1);
-
-                break;
-            }
+            Ok(num)
         }
-
-        Ok(num)
     }
 
     /// Reads and returns a unary ones encoded integer or an error.
     #[inline(always)]
-    async fn read_unary_ones_capped(&mut self, mut limit: u32) -> super::Result<u32> {
-        // Note: This algorithm is identical to read_unary_zeros_capped except flipped for 1s.
-        let mut num = 0;
+    fn read_unary_ones(&mut self) -> impl Future<Output = super::Result<u32>> + Send {
+        async {
+            // Note: This algorithm is identical to read_unary_zeros except flipped for 1s.
+            let mut num = 0;
 
-        loop {
-            let num_bits_left = self.num_bits_left();
-            let num_ones = min(self.get_bits().trailing_ones(), num_bits_left);
+            loop {
+                let num_ones = self.get_bits().trailing_ones();
 
-            if num_ones >= limit {
-                num += limit;
-                self.consume_bits(limit);
-                break;
-            }
-            else {
-                limit -= num_ones;
-                num += num_ones;
+                if num_ones >= self.num_bits_left() {
+                    num += self.num_bits_left();
+                    self.fetch_bits().await?;
+                } else {
+                    num += num_ones;
 
-                if num_ones < num_bits_left {
                     self.consume_bits(num_ones);
                     self.consume_bits(1);
+
                     break;
                 }
             }
 
-            self.fetch_bits().await?;
+            Ok(num)
         }
+    }
 
-        Ok(num)
+    /// Reads and returns a unary ones encoded integer or an error.
+    #[inline(always)]
+    fn read_unary_ones_capped(
+        &mut self,
+        mut limit: u32,
+    ) -> impl Future<Output = super::Result<u32>> + Send {
+        async move {
+            // Note: This algorithm is identical to read_unary_zeros_capped except flipped for 1s.
+            let mut num = 0;
+
+            loop {
+                let num_bits_left = self.num_bits_left();
+                let num_ones = min(self.get_bits().trailing_ones(), num_bits_left);
+
+                if num_ones >= limit {
+                    num += limit;
+                    self.consume_bits(limit);
+                    break;
+                } else {
+                    limit -= num_ones;
+                    num += num_ones;
+
+                    if num_ones < num_bits_left {
+                        self.consume_bits(num_ones);
+                        self.consume_bits(1);
+                        break;
+                    }
+                }
+
+                self.fetch_bits().await?;
+            }
+
+            Ok(num)
+        }
     }
 
     #[inline(always)]
@@ -1282,7 +1338,6 @@ impl<'a, B: ReadBytes> BitStreamRtl<'a, B> {
     }
 }
 
-#[async_trait]
 impl<B: ReadBytes> private::FetchBitsRtl for BitStreamRtl<'_, B> {
     #[inline(always)]
     async fn fetch_bits(&mut self) -> super::Result<()> {
@@ -1332,7 +1387,6 @@ impl<'a> BitReaderRtl<'a> {
     }
 }
 
-#[async_trait]
 impl private::FetchBitsRtl for BitReaderRtl<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> super::Result<()> {

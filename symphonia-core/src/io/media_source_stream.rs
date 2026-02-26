@@ -244,7 +244,6 @@ impl super::Seek for MediaSourceStream<'_> {
     }
 }
 
-#[async_trait]
 impl ReadBytes for MediaSourceStream<'_> {
     #[inline(always)]
     async fn read_byte(&mut self) -> super::Result<u8> {

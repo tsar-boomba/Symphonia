@@ -7,9 +7,6 @@
 
 use core::cmp;
 
-use alloc::boxed::Box;
-use async_trait::async_trait;
-
 use super::{FiniteStream, ReadBytes, SeekBuffered};
 
 #[inline(always)]
@@ -70,7 +67,6 @@ impl<B: ReadBytes> FiniteStream for ScopedStream<B> {
     }
 }
 
-#[async_trait]
 impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     #[inline(always)]
     async fn read_byte(&mut self) -> super::Result<u8> {

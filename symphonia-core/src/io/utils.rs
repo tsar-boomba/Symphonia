@@ -740,7 +740,7 @@ where
                         continue;
                     }
 
-                    return Err(e.into());
+                    return Err(e);
                 }
             }
         }
@@ -805,7 +805,7 @@ where
                         continue;
                     }
 
-                    return Err(e.into());
+                    return Err(e);
                 }
                 // Do not stop now in case of error: we might have received both data
                 // and an error

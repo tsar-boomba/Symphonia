@@ -211,7 +211,6 @@ impl<T: ?Sized + Seek + Send> Seek for &mut T {
 ///
 /// Despite requiring the [`std::io::Seek`] trait, seeking is an optional capability that can be
 /// queried at runtime.
-#[async_trait]
 pub trait MediaSource: Read + Seek + Send {
     /// Returns if the source is seekable. This may be an expensive operation.
     fn is_seekable(&self) -> bool;
@@ -221,7 +220,6 @@ pub trait MediaSource: Read + Seek + Send {
 }
 
 #[cfg(feature = "std")]
-#[async_trait]
 impl MediaSource for FromStd<std::fs::File> {
     /// Returns if the `std::io::File` backing the `MediaSource` is seekable.
     ///
@@ -298,7 +296,6 @@ impl<R: Read> io::ErrorType for ReadOnlySource<R> {
     type Error = Error;
 }
 
-#[async_trait]
 impl<R: Read + Send> MediaSource for ReadOnlySource<R>
 where
     Error: core::convert::From<<R as embedded_io::ErrorType>::Error>,
@@ -331,235 +328,260 @@ impl<R: Read + Send> Seek for ReadOnlySource<R> {
 
 /// `ReadBytes` provides methods to read bytes and interpret them as little- or big-endian
 /// unsigned integers or floating-point values of standard widths.
-#[async_trait]
 pub trait ReadBytes: Send {
     /// Reads a single byte from the stream and returns it or an error.
-    async fn read_byte(&mut self) -> Result<u8>;
+    fn read_byte(&mut self) -> impl Future<Output = Result<u8>> + Send;
 
     /// Reads two bytes from the stream and returns them in read-order or an error.
-    async fn read_double_bytes(&mut self) -> Result<[u8; 2]>;
+    fn read_double_bytes(&mut self) -> impl Future<Output = Result<[u8; 2]>> + Send;
 
     /// Reads three bytes from the stream and returns them in read-order or an error.
-    async fn read_triple_bytes(&mut self) -> Result<[u8; 3]>;
+    fn read_triple_bytes(&mut self) -> impl Future<Output = Result<[u8; 3]>> + Send;
 
     /// Reads four bytes from the stream and returns them in read-order or an error.
-    async fn read_quad_bytes(&mut self) -> Result<[u8; 4]>;
+    fn read_quad_bytes(&mut self) -> impl Future<Output = Result<[u8; 4]>> + Send;
 
     /// Reads up-to the number of bytes required to fill buf or returns an error.
-    async fn read_buf(&mut self, buf: &mut [u8]) -> Result<usize>;
+    fn read_buf(&mut self, buf: &mut [u8]) -> impl Future<Output = Result<usize>> + Send;
 
     /// Reads exactly the number of bytes required to fill be provided buffer or returns an error.
-    async fn read_buf_exact(&mut self, buf: &mut [u8]) -> Result<()>;
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> impl Future<Output = Result<()>> + Send;
 
     /// Reads a single unsigned byte from the stream and returns it or an error.
     #[inline(always)]
-    async fn read_u8(&mut self) -> Result<u8> {
-        self.read_byte().await
+    fn read_u8(&mut self) -> impl Future<Output = Result<u8>> + Send {
+        async { self.read_byte().await }
     }
 
     /// Reads a single signed byte from the stream and returns it or an error.
     #[inline(always)]
-    async fn read_i8(&mut self) -> Result<i8> {
-        Ok(self.read_byte().await? as i8)
+    fn read_i8(&mut self) -> impl Future<Output = Result<i8>> + Send {
+        async { Ok(self.read_byte().await? as i8) }
     }
 
     /// Reads two bytes from the stream and interprets them as an unsigned 16-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_u16(&mut self) -> Result<u16> {
-        Ok(u16::from_le_bytes(self.read_double_bytes().await?))
+    fn read_u16(&mut self) -> impl Future<Output = Result<u16>> + Send {
+        async { Ok(u16::from_le_bytes(self.read_double_bytes().await?)) }
     }
 
     /// Reads two bytes from the stream and interprets them as an signed 16-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_i16(&mut self) -> Result<i16> {
-        Ok(i16::from_le_bytes(self.read_double_bytes().await?))
+    fn read_i16(&mut self) -> impl Future<Output = Result<i16>> + Send {
+        async { Ok(i16::from_le_bytes(self.read_double_bytes().await?)) }
     }
 
     /// Reads two bytes from the stream and interprets them as an unsigned 16-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_be_u16(&mut self) -> Result<u16> {
-        Ok(u16::from_be_bytes(self.read_double_bytes().await?))
+    fn read_be_u16(&mut self) -> impl Future<Output = Result<u16>> + Send {
+        async { Ok(u16::from_be_bytes(self.read_double_bytes().await?)) }
     }
 
     /// Reads two bytes from the stream and interprets them as an signed 16-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_be_i16(&mut self) -> Result<i16> {
-        Ok(i16::from_be_bytes(self.read_double_bytes().await?))
+    fn read_be_i16(&mut self) -> impl Future<Output = Result<i16>> + Send {
+        async { Ok(i16::from_be_bytes(self.read_double_bytes().await?)) }
     }
 
     /// Reads three bytes from the stream and interprets them as an unsigned 24-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_u24(&mut self) -> Result<u32> {
-        let mut buf = [0u8; core::mem::size_of::<u32>()];
-        buf[0..3].clone_from_slice(&self.read_triple_bytes().await?);
-        Ok(u32::from_le_bytes(buf))
+    fn read_u24(&mut self) -> impl Future<Output = Result<u32>> + Send {
+        async {
+            let mut buf = [0u8; core::mem::size_of::<u32>()];
+            buf[0..3].clone_from_slice(&self.read_triple_bytes().await?);
+            Ok(u32::from_le_bytes(buf))
+        }
     }
 
     /// Reads three bytes from the stream and interprets them as an signed 24-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_i24(&mut self) -> Result<i32> {
-        Ok(((self.read_u24().await? << 8) as i32) >> 8)
+    fn read_i24(&mut self) -> impl Future<Output = Result<i32>> + Send {
+        async { Ok(((self.read_u24().await? << 8) as i32) >> 8) }
     }
 
     /// Reads three bytes from the stream and interprets them as an unsigned 24-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_be_u24(&mut self) -> Result<u32> {
-        let mut buf = [0u8; core::mem::size_of::<u32>()];
-        buf[0..3].clone_from_slice(&self.read_triple_bytes().await?);
-        Ok(u32::from_be_bytes(buf) >> 8)
+    fn read_be_u24(&mut self) -> impl Future<Output = Result<u32>> + Send {
+        async {
+            let mut buf = [0u8; core::mem::size_of::<u32>()];
+            buf[0..3].clone_from_slice(&self.read_triple_bytes().await?);
+            Ok(u32::from_be_bytes(buf) >> 8)
+        }
     }
 
     /// Reads three bytes from the stream and interprets them as an signed 24-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_be_i24(&mut self) -> Result<i32> {
-        Ok(((self.read_be_u24().await? << 8) as i32) >> 8)
+    fn read_be_i24(&mut self) -> impl Future<Output = Result<i32>> + Send {
+        async { Ok(((self.read_be_u24().await? << 8) as i32) >> 8) }
     }
 
     /// Reads four bytes from the stream and interprets them as an unsigned 32-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_u32(&mut self) -> Result<u32> {
-        Ok(u32::from_le_bytes(self.read_quad_bytes().await?))
+    fn read_u32(&mut self) -> impl Future<Output = Result<u32>> + Send {
+        async { Ok(u32::from_le_bytes(self.read_quad_bytes().await?)) }
     }
 
     /// Reads four bytes from the stream and interprets them as an signed 32-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_i32(&mut self) -> Result<i32> {
-        Ok(i32::from_le_bytes(self.read_quad_bytes().await?))
+    fn read_i32(&mut self) -> impl Future<Output = Result<i32>> + Send {
+        async { Ok(i32::from_le_bytes(self.read_quad_bytes().await?)) }
     }
 
     /// Reads four bytes from the stream and interprets them as an unsigned 32-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_be_u32(&mut self) -> Result<u32> {
-        Ok(u32::from_be_bytes(self.read_quad_bytes().await?))
+    fn read_be_u32(&mut self) -> impl Future<Output = Result<u32>> + Send {
+        async { Ok(u32::from_be_bytes(self.read_quad_bytes().await?)) }
     }
 
     /// Reads four bytes from the stream and interprets them as a signed 32-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_be_i32(&mut self) -> Result<i32> {
-        Ok(i32::from_be_bytes(self.read_quad_bytes().await?))
+    fn read_be_i32(&mut self) -> impl Future<Output = Result<i32>> + Send {
+        async { Ok(i32::from_be_bytes(self.read_quad_bytes().await?)) }
     }
 
     /// Reads eight bytes from the stream and interprets them as an unsigned 64-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_u64(&mut self) -> Result<u64> {
-        let mut buf = [0u8; core::mem::size_of::<u64>()];
-        self.read_buf_exact(&mut buf).await?;
-        Ok(u64::from_le_bytes(buf))
+    fn read_u64(&mut self) -> impl Future<Output = Result<u64>> + Send {
+        async {
+            let mut buf = [0u8; core::mem::size_of::<u64>()];
+            self.read_buf_exact(&mut buf).await?;
+            Ok(u64::from_le_bytes(buf))
+        }
     }
 
     /// Reads eight bytes from the stream and interprets them as an signed 64-bit little-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_i64(&mut self) -> Result<i64> {
-        let mut buf = [0u8; core::mem::size_of::<i64>()];
-        self.read_buf_exact(&mut buf).await?;
-        Ok(i64::from_le_bytes(buf))
+    fn read_i64(&mut self) -> impl Future<Output = Result<i64>> + Send {
+        async {
+            let mut buf = [0u8; core::mem::size_of::<i64>()];
+            self.read_buf_exact(&mut buf).await?;
+            Ok(i64::from_le_bytes(buf))
+        }
     }
 
     /// Reads eight bytes from the stream and interprets them as an unsigned 64-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_be_u64(&mut self) -> Result<u64> {
-        let mut buf = [0u8; core::mem::size_of::<u64>()];
-        self.read_buf_exact(&mut buf).await?;
-        Ok(u64::from_be_bytes(buf))
+    fn read_be_u64(&mut self) -> impl Future<Output = Result<u64>> + Send {
+        async {
+            let mut buf = [0u8; core::mem::size_of::<u64>()];
+            self.read_buf_exact(&mut buf).await?;
+            Ok(u64::from_be_bytes(buf))
+        }
     }
 
     /// Reads eight bytes from the stream and interprets them as an signed 64-bit big-endian
     /// integer or returns an error.
     #[inline(always)]
-    async fn read_be_i64(&mut self) -> Result<i64> {
-        let mut buf = [0u8; core::mem::size_of::<i64>()];
-        self.read_buf_exact(&mut buf).await?;
-        Ok(i64::from_be_bytes(buf))
+    fn read_be_i64(&mut self) -> impl Future<Output = Result<i64>> + Send {
+        async {
+            let mut buf = [0u8; core::mem::size_of::<i64>()];
+            self.read_buf_exact(&mut buf).await?;
+            Ok(i64::from_be_bytes(buf))
+        }
     }
 
     /// Reads four bytes from the stream and interprets them as a 32-bit little-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
-    async fn read_f32(&mut self) -> Result<f32> {
-        Ok(f32::from_le_bytes(self.read_quad_bytes().await?))
+    fn read_f32(&mut self) -> impl Future<Output = Result<f32>> + Send {
+        async { Ok(f32::from_le_bytes(self.read_quad_bytes().await?)) }
     }
 
     /// Reads four bytes from the stream and interprets them as a 32-bit big-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
-    async fn read_be_f32(&mut self) -> Result<f32> {
-        Ok(f32::from_be_bytes(self.read_quad_bytes().await?))
+    fn read_be_f32(&mut self) -> impl Future<Output = Result<f32>> + Send {
+        async { Ok(f32::from_be_bytes(self.read_quad_bytes().await?)) }
     }
 
     /// Reads four bytes from the stream and interprets them as a 64-bit little-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
-    async fn read_f64(&mut self) -> Result<f64> {
-        let mut buf = [0u8; core::mem::size_of::<u64>()];
-        self.read_buf_exact(&mut buf).await?;
-        Ok(f64::from_le_bytes(buf))
+    fn read_f64(&mut self) -> impl Future<Output = Result<f64>> + Send {
+        async {
+            let mut buf = [0u8; core::mem::size_of::<u64>()];
+            self.read_buf_exact(&mut buf).await?;
+            Ok(f64::from_le_bytes(buf))
+        }
     }
 
     /// Reads four bytes from the stream and interprets them as a 64-bit big-endian IEEE-754
     /// floating-point value.
     #[inline(always)]
-    async fn read_be_f64(&mut self) -> Result<f64> {
-        let mut buf = [0u8; core::mem::size_of::<u64>()];
-        self.read_buf_exact(&mut buf).await?;
-        Ok(f64::from_be_bytes(buf))
+    fn read_be_f64(&mut self) -> impl Future<Output = Result<f64>> + Send {
+        async {
+            let mut buf = [0u8; core::mem::size_of::<u64>()];
+            self.read_buf_exact(&mut buf).await?;
+            Ok(f64::from_be_bytes(buf))
+        }
     }
 
     /// Reads up-to the number of bytes requested, and returns a boxed slice of the data or an
     /// error.
-    async fn read_boxed_slice(&mut self, len: usize) -> Result<Box<[u8]>> {
-        let mut buf = vec![0u8; len];
-        let actual_len = self.read_buf(&mut buf).await?;
-        buf.truncate(actual_len);
-        Ok(buf.into_boxed_slice())
+    fn read_boxed_slice(&mut self, len: usize) -> impl Future<Output = Result<Box<[u8]>>> + Send {
+        async move {
+            let mut buf = vec![0u8; len];
+            let actual_len = self.read_buf(&mut buf).await?;
+            buf.truncate(actual_len);
+            Ok(buf.into_boxed_slice())
+        }
     }
 
     /// Reads exactly the number of bytes requested, and returns a boxed slice of the data or an
     /// error.
-    async fn read_boxed_slice_exact(&mut self, len: usize) -> Result<Box<[u8]>> {
-        let mut buf = vec![0u8; len];
-        self.read_buf_exact(&mut buf).await?;
-        Ok(buf.into_boxed_slice())
+    fn read_boxed_slice_exact(
+        &mut self,
+        len: usize,
+    ) -> impl Future<Output = Result<Box<[u8]>>> + Send {
+        async move {
+            let mut buf = vec![0u8; len];
+            self.read_buf_exact(&mut buf).await?;
+            Ok(buf.into_boxed_slice())
+        }
     }
 
     /// Reads bytes from the stream into a supplied buffer until a byte pattern is matched. Returns
     /// a mutable slice to the valid region of the provided buffer.
     #[inline(always)]
-    async fn scan_bytes<'a>(&mut self, pattern: &[u8], buf: &'a mut [u8]) -> Result<&'a mut [u8]> {
-        self.scan_bytes_aligned(pattern, 1, buf).await
+    fn scan_bytes<'a>(
+        &mut self,
+        pattern: &[u8],
+        buf: &'a mut [u8],
+    ) -> impl Future<Output = Result<&'a mut [u8]>> + Send {
+        async move { self.scan_bytes_aligned(pattern, 1, buf).await }
     }
 
     /// Reads bytes from a stream into a supplied buffer until a byte patter is matched on an
     /// aligned byte boundary. Returns a mutable slice to the valid region of the provided buffer.
-    async fn scan_bytes_aligned<'a>(
+    fn scan_bytes_aligned<'a>(
         &mut self,
         pattern: &[u8],
         align: usize,
         buf: &'a mut [u8],
-    ) -> Result<&'a mut [u8]>;
+    ) -> impl Future<Output = Result<&'a mut [u8]>> + Send;
 
     /// Ignores the specified number of bytes from the stream or returns an error.
-    async fn ignore_bytes(&mut self, count: u64) -> Result<()>;
+    fn ignore_bytes(&mut self, count: u64) -> impl Future<Output = Result<()>> + Send;
 
     /// Gets the position of the stream.
     fn pos(&self) -> u64;
 }
 
-#[async_trait]
 impl<R: ReadBytes> ReadBytes for &mut R {
     #[inline(always)]
     async fn read_byte(&mut self) -> Result<u8> {
