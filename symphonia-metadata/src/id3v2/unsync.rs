@@ -85,7 +85,6 @@ impl<B: ReadBytes + FiniteStream> FiniteStream for UnsyncStream<B> {
     }
 }
 
-#[async_trait]
 impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
     async fn read_byte(&mut self) -> io::Result<u8> {
         let last = self.byte;
