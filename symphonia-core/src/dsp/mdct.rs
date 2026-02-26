@@ -44,15 +44,15 @@ impl Imdct {
         let n2 = n / 2;
         let mut twiddle = Vec::with_capacity(n2);
 
-        let alpha = 1.0 / 8.0 + if scale.is_sign_positive() { 0.0 } else { n2 as f64 };
-        let pi_n = core::f64::consts::PI / n as f64;
-        let sqrt_scale = scale.abs().sqrt();
+        let alpha = 1.0 / 8.0 + if scale.is_sign_positive() { 0.0 } else { n2 as f32 };
+        let pi_n = core::f32::consts::PI / n as f32;
+        let sqrt_scale = (scale as f32).abs().sqrt();
 
         for k in 0..n2 {
-            let theta = pi_n * (alpha + k as f64);
+            let theta = pi_n * (alpha + k as f32);
             let re = sqrt_scale * theta.cos();
             let im = sqrt_scale * theta.sin();
-            twiddle.push(Complex::new(re as f32, im as f32));
+            twiddle.push(Complex::new(re, im));
         }
 
         // Allocate scratch for the IMDCT.
