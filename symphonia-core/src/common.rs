@@ -68,7 +68,7 @@ pub enum Tier {
 ///
 /// All limits can be defaulted to a reasonable value specific to the situation. These defaults will
 /// generally not break any normal streams.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum Limit {
     /// Do not impose any limit.
     None,

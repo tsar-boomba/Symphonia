@@ -31,13 +31,21 @@ use log::{debug, log_enabled, warn};
 use super::frame::*;
 use super::validate::Validator;
 
-fn decorrelate_left_side(left: &[i32], side: &mut [i32]) {
-    for (s, l) in side.iter_mut().zip(left) {
-        *s = *l - *s;
+fn decorrelate_left_side(shift: u32, left: &mut [i32], side: &mut [i32]) {
+    for (l, s) in left.iter_mut().zip(side.iter_mut()) {
+        *s = (*l - *s) << shift;
+        *l <<= shift;
     }
 }
 
-fn decorrelate_mid_side(mid: &mut [i32], side: &mut [i32]) {
+fn decorrelate_right_side(shift: u32, right: &mut [i32], side: &mut [i32]) {
+    for (s, r) in side.iter_mut().zip(right.iter_mut()) {
+        *s = (*s + *r) << shift;
+        *r <<= shift;
+    }
+}
+
+fn decorrelate_mid_side(shift: u32, mid: &mut [i32], side: &mut [i32]) {
     for (m, s) in mid.iter_mut().zip(side) {
         // Mid (M) is given as M = L/2 + R/2, while Side (S) is given as S = L - R.
         //
@@ -72,14 +80,8 @@ fn decorrelate_mid_side(mid: &mut [i32], side: &mut [i32]) {
         //      - R = (2*M + (S%2) - S) / 2
         let mid = (*m << 1) | (*s & 1);
         let side = *s;
-        *m = (mid + side) >> 1;
-        *s = (mid - side) >> 1;
-    }
-}
-
-fn decorrelate_right_side(right: &[i32], side: &mut [i32]) {
-    for (s, r) in side.iter_mut().zip(right) {
-        *s += *r;
+        *m = ((mid + side) >> 1) << shift;
+        *s = ((mid - side) >> 1) << shift;
     }
 }
 
@@ -152,11 +154,9 @@ impl FlacDecoder {
         // the stream information if provided. If neither are available, return an error.
         let bits_per_sample = if let Some(bps) = header.bits_per_sample {
             bps
-        }
-        else if let Some(bps) = self.params.bits_per_sample {
+        } else if let Some(bps) = self.params.bits_per_sample {
             bps
-        }
-        else {
+        } else {
             return decode_error("flac: bits per sample not provided");
         };
         if bits_per_sample > u32::BITS {
@@ -177,6 +177,12 @@ impl FlacDecoder {
         self.buf.clear();
         self.buf.render_uninit(Some(header.block_num_samples as usize));
 
+        // The decoder uses a 32bit sample format as a common denominator, but that doesn't mean
+        // the encoded audio samples are actually 32bit. Shift all samples in the output buffer
+        // so that regardless the encoded bits/sample, the output is always 32bits/sample.
+        // We pass this into the decorrelate and read_subframe functions to apply it.
+        let shift = 32 - bits_per_sample;
+
         // Only Bitstream reading for subframes.
         {
             // Sub-frames don't have any byte-aligned content, so use a BitReader.
@@ -192,6 +198,7 @@ impl FlacDecoder {
                             self.buf
                                 .plane_mut(i)
                                 .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?,
+                            Some(shift),
                         )
                         .await?;
                     }
@@ -204,10 +211,10 @@ impl FlacDecoder {
                         .plane_pair_mut(0, 1)
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
-                    read_subframe(&mut bs, bits_per_sample, left).await?;
-                    read_subframe(&mut bs, bits_per_sample + 1, side).await?;
+                    read_subframe(&mut bs, bits_per_sample, left, None).await?;
+                    read_subframe(&mut bs, bits_per_sample + 1, side, None).await?;
 
-                    decorrelate_left_side(left, side);
+                    decorrelate_left_side(shift, left, side);
                 }
                 ChannelAssignment::MidSide => {
                     let (mid, side) = self
@@ -215,10 +222,10 @@ impl FlacDecoder {
                         .plane_pair_mut(0, 1)
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
-                    read_subframe(&mut bs, bits_per_sample, mid).await?;
-                    read_subframe(&mut bs, bits_per_sample + 1, side).await?;
+                    read_subframe(&mut bs, bits_per_sample, mid, None).await?;
+                    read_subframe(&mut bs, bits_per_sample + 1, side, None).await?;
 
-                    decorrelate_mid_side(mid, side);
+                    decorrelate_mid_side(shift, mid, side);
                 }
                 ChannelAssignment::RightSide => {
                     let (side, right) = self
@@ -226,10 +233,10 @@ impl FlacDecoder {
                         .plane_pair_mut(0, 1)
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
-                    read_subframe(&mut bs, bits_per_sample + 1, side).await?;
-                    read_subframe(&mut bs, bits_per_sample, right).await?;
+                    read_subframe(&mut bs, bits_per_sample + 1, side, None).await?;
+                    read_subframe(&mut bs, bits_per_sample, right, None).await?;
 
-                    decorrelate_right_side(right, side);
+                    decorrelate_right_side(shift, right, side);
                 }
             }
         }
@@ -237,14 +244,6 @@ impl FlacDecoder {
         // Feed the validator if validation is enabled.
         if self.is_validating {
             self.validator.update(&self.buf, bits_per_sample);
-        }
-
-        // The decoder uses a 32bit sample format as a common denominator, but that doesn't mean
-        // the encoded audio samples are actually 32bit. Shift all samples in the output buffer
-        // so that regardless the encoded bits/sample, the output is always 32bits/sample.
-        if bits_per_sample < 32 {
-            let shift = 32 - bits_per_sample;
-            self.buf.apply(|sample| sample << shift);
         }
 
         Ok(())
@@ -270,8 +269,7 @@ impl AudioDecoder for FlacDecoder {
         if let Err(e) = self.decode_inner(packet).await {
             self.buf.clear();
             Err(e)
-        }
-        else {
+        } else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }
@@ -301,8 +299,7 @@ impl AudioDecoder for FlacDecoder {
                 }
 
                 result.verify_ok = Some(decoded == expected)
-            }
-            else {
+            } else {
                 warn!("verification requested but the expected md5 checksum was not provided");
             }
         }
@@ -342,7 +339,13 @@ enum SubFrameType {
     Linear(u32),
 }
 
-async fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> Result<()> {
+// When reading an independent channel, apply shift as we go through instead of at the end
+async fn read_subframe<B: ReadBitsLtr>(
+    bs: &mut B,
+    frame_bps: u32,
+    buf: &mut [i32],
+    shift: Option<u32>,
+) -> Result<()> {
     // First sub-frame bit must always 0.
     if bs.read_bool().await? {
         return decode_error("flac: subframe padding is not 0");
@@ -398,18 +401,24 @@ async fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i3
     };
 
     // Shift the samples to account for the dropped bits.
-    samples_shl(dropped_bps, buf);
+    samples_shl(dropped_bps, buf, shift);
 
     Ok(())
 }
 
 #[inline(always)]
-fn samples_shl(shift: u32, buf: &mut [i32]) {
-    if shift > 0 {
+fn samples_shl(shift: u32, buf: &mut [i32], bps_shift: Option<u32>) {
+    if let Some(bps_shift) = bps_shift {
+        for sample in buf.iter_mut() {
+            *sample = sample.wrapping_shl(shift) << bps_shift;
+        }
+    } else if shift > 0 {
         for sample in buf.iter_mut() {
             *sample = sample.wrapping_shl(shift);
         }
     }
+
+    // If no shifts are needed, do nothing
 }
 
 async fn decode_constant<B: ReadBitsLtr>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
@@ -451,7 +460,7 @@ async fn decode_fixed_linear<B: ReadBitsLtr>(
     // TODO: The fixed predictor uses 64-bit accumulators by default to support bps > 26. On 64-bit
     // machines, this is preferable, but on 32-bit machines if bps <= 26, run a 32-bit predictor,
     // and fallback to the 64-bit predictor if necessary (which is basically never).
-    fixed_predict(order, buf);
+    fixed_predict(bps, order, buf);
 
     Ok(())
 }
@@ -493,9 +502,22 @@ async fn decode_linear<B: ReadBitsLtr>(
 
         // Helper function to dispatch to a predictor with a maximum order of N.
         #[inline(always)]
-        fn lpc<const N: usize>(order: u32, coeffs: &[i32; 32], coeff_shift: i32, buf: &mut [i32]) {
+        fn lpc<const N: usize>(
+            bps: u32,
+            order: u32,
+            coeffs: &[i32; 32],
+            coeff_shift: i32,
+            buf: &mut [i32],
+        ) {
             let coeffs_n = (&coeffs[32 - N..32]).try_into().unwrap();
-            lpc_predict::<N>(order as usize, coeffs_n, coeff_shift as u32, buf);
+
+            // Use 32-bit math when sample size is smaller. This will be much faster on CPUs that
+            // don't have instructions for 64-bit math
+            if bps <= 26 {
+                lpc_predict_i32(order as usize, coeffs_n, coeff_shift as u32, buf);
+            } else {
+                lpc_predict_i64::<N>(order as usize, coeffs_n, coeff_shift as u32, buf);
+            }
         }
 
         // Pick the best length linear predictor to use based on the order. Most FLAC streams use
@@ -504,15 +526,14 @@ async fn decode_linear<B: ReadBitsLtr>(
         // then there will be wasted computations. On the other hand, it is not worth the code bloat
         // to specialize for every order <= 12.
         match order {
-            0..=4 => lpc::<4>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            5..=6 => lpc::<6>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            7..=8 => lpc::<8>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            9..=10 => lpc::<10>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            11..=12 => lpc::<12>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            _ => lpc::<32>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            0..=4 => lpc::<4>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
+            5..=6 => lpc::<6>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
+            7..=8 => lpc::<8>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
+            9..=10 => lpc::<10>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
+            11..=12 => lpc::<12>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
+            _ => lpc::<32>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
         };
-    }
-    else {
+    } else {
         return unsupported_error("flac: lpc shifts less than 0 are not supported");
     }
 
@@ -605,8 +626,7 @@ async fn decode_rice_partition<B: ReadBitsLtr>(
             let r = bs.read_bits_leq32(rice_param).await?;
             *sample = rice_signed_to_i32((q << rice_param) | r);
         }
-    }
-    else {
+    } else {
         let residual_bits = bs.read_bits_leq32(5).await?;
 
         // trace!(
@@ -671,93 +691,122 @@ fn verify_rice_signed_to_i32() {
     assert_eq!(rice_signed_to_i32(u32::MAX), -2_147_483_648);
 }
 
-fn fixed_predict(order: u32, buf: &mut [i32]) {
-    debug_assert!(order <= 4);
+macro_rules! make_fixed_predict {
+    ($fn_name:ident, $type:ty) => {
+        fn $fn_name(order: u32, buf: &mut [i32]) {
+            debug_assert!(order <= 4);
 
-    // The Fixed Predictor is just a hard-coded version of the Linear Predictor up to order 4 and
-    // with fixed coefficients. Some cases may be simplified such as orders 0 and 1. For orders 2
-    // through 4, use the same IIR-style algorithm as the Linear Predictor.
-    match order {
-        // A 0th order predictor always predicts 0, and therefore adds nothing to any of the samples
-        // in buf. Do nothing.
-        0 => (),
-        // A 1st order predictor always returns the previous sample since the polynomial is:
-        // s(i) = 1*s(i),
-        1 => {
-            for i in 1..buf.len() {
-                buf[i] = buf[i].wrapping_add(buf[i - 1]);
-            }
+            // The Fixed Predictor is just a hard-coded version of the Linear Predictor up to order 4 and
+            // with fixed coefficients. Some cases may be simplified such as orders 0 and 1. For orders 2
+            // through 4, use the same IIR-style algorithm as the Linear Predictor.
+            match order {
+                // A 0th order predictor always predicts 0, and therefore adds nothing to any of the samples
+                // in buf. Do nothing.
+                0 => (),
+                // A 1st order predictor always returns the previous sample since the polynomial is:
+                // s(i) = 1*s(i),
+                1 => {
+                    for i in 1..buf.len() {
+                        buf[i] = buf[i].wrapping_add(buf[i - 1]);
+                    }
+                }
+                // A 2nd order predictor uses the polynomial: s(i) = 2*s(i-1) - 1*s(i-2).
+                2 => {
+                    for i in 2..buf.len() {
+                        let a = Wrapping(-1) * Wrapping(<$type>::from(buf[i - 2]));
+                        let b = Wrapping(2) * Wrapping(<$type>::from(buf[i - 1]));
+                        buf[i] = buf[i].wrapping_add((a + b).0 as i32);
+                    }
+                }
+                // A 3rd order predictor uses the polynomial: s(i) = 3*s(i-1) - 3*s(i-2) + 1*s(i-3).
+                3 => {
+                    for i in 3..buf.len() {
+                        let a = Wrapping(1) * Wrapping(<$type>::from(buf[i - 3]));
+                        let b = Wrapping(-3) * Wrapping(<$type>::from(buf[i - 2]));
+                        let c = Wrapping(3) * Wrapping(<$type>::from(buf[i - 1]));
+                        buf[i] = buf[i].wrapping_add((a + b + c).0 as i32);
+                    }
+                }
+                // A 4th order predictor uses the polynomial:
+                // s(i) = 4*s(i-1) - 6*s(i-2) + 4*s(i-3) - 1*s(i-4).
+                4 => {
+                    for i in 4..buf.len() {
+                        let a = Wrapping(-1) * Wrapping(<$type>::from(buf[i - 4]));
+                        let b = Wrapping(4) * Wrapping(<$type>::from(buf[i - 3]));
+                        let c = Wrapping(-6) * Wrapping(<$type>::from(buf[i - 2]));
+                        let d = Wrapping(4) * Wrapping(<$type>::from(buf[i - 1]));
+                        buf[i] = buf[i].wrapping_add((a + b + c + d).0 as i32);
+                    }
+                }
+                _ => unreachable!(),
+            };
         }
-        // A 2nd order predictor uses the polynomial: s(i) = 2*s(i-1) - 1*s(i-2).
-        2 => {
-            for i in 2..buf.len() {
-                let a = Wrapping(-1) * Wrapping(i64::from(buf[i - 2]));
-                let b = Wrapping(2) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] = buf[i].wrapping_add((a + b).0 as i32);
-            }
-        }
-        // A 3rd order predictor uses the polynomial: s(i) = 3*s(i-1) - 3*s(i-2) + 1*s(i-3).
-        3 => {
-            for i in 3..buf.len() {
-                let a = Wrapping(1) * Wrapping(i64::from(buf[i - 3]));
-                let b = Wrapping(-3) * Wrapping(i64::from(buf[i - 2]));
-                let c = Wrapping(3) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] = buf[i].wrapping_add((a + b + c).0 as i32);
-            }
-        }
-        // A 4th order predictor uses the polynomial:
-        // s(i) = 4*s(i-1) - 6*s(i-2) + 4*s(i-3) - 1*s(i-4).
-        4 => {
-            for i in 4..buf.len() {
-                let a = Wrapping(-1) * Wrapping(i64::from(buf[i - 4]));
-                let b = Wrapping(4) * Wrapping(i64::from(buf[i - 3]));
-                let c = Wrapping(-6) * Wrapping(i64::from(buf[i - 2]));
-                let d = Wrapping(4) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] = buf[i].wrapping_add((a + b + c + d).0 as i32);
-            }
-        }
-        _ => unreachable!(),
     };
 }
 
-/// Generalized Linear Predictive Coding (LPC) decoder. The exact number of coefficients given is
-/// specified by `order`. Coefficients must be stored in reverse order in `coeffs` with the first
-/// coefficient at index 31. Coefficients at indices less than 31 - `order` must be 0.
-/// It is expected that the first `order` samples in `buf` are warm-up samples.
-fn lpc_predict<const N: usize>(order: usize, coeffs: &[i32; N], coeff_shift: u32, buf: &mut [i32]) {
-    // Order must be less than or equal to the number of coefficients.
-    debug_assert!(order <= coeffs.len());
+make_fixed_predict!(fixed_predict_i32, i32);
+make_fixed_predict!(fixed_predict_i64, i64);
 
-    // Order must be less than to equal to the number of samples the buffer can hold.
-    debug_assert!(order <= buf.len());
-
-    // The main, efficient, predictor loop needs N previous samples to run. Since order <= N,
-    // calculate enough samples to reach N.
-    let n_prefill = cmp::min(N, buf.len()) - order;
-
-    for i in order..order + n_prefill {
-        let predicted = coeffs[N - order..N]
-            .iter()
-            .zip(&buf[i - order..i])
-            .map(|(&c, &sample)| c as i64 * sample as i64)
-            .sum::<i64>();
-
-        buf[i] += (predicted >> coeff_shift) as i32;
-    }
-
-    // If the pre-fill operation filled the entire sample buffer, return immediately.
-    if buf.len() <= N {
-        return;
-    }
-
-    // Main predictor loop. Calculate each sample by applying what is essentially an IIR filter.
-    for i in N..buf.len() {
-        let predicted = coeffs
-            .iter()
-            .zip(&buf[i - N..i])
-            .map(|(&c, &s)| i64::from(c) * i64::from(s))
-            .sum::<i64>();
-
-        buf[i] += (predicted >> coeff_shift) as i32;
+fn fixed_predict(bps: u32, order: u32, buf: &mut [i32]) {
+    if bps <= 26 {
+        fixed_predict_i32(order, buf);
+    } else {
+        fixed_predict_i64(order, buf);
     }
 }
+
+macro_rules! make_lpc_predict {
+    ($fn_name:ident, $type:ty) => {
+        /// Generalized Linear Predictive Coding (LPC) decoder. The exact number of coefficients given is
+        /// specified by `order`. Coefficients must be stored in reverse order in `coeffs` with the first
+        /// coefficient at index 31. Coefficients at indices less than 31 - `order` must be 0.
+        /// It is expected that the first `order` samples in `buf` are warm-up samples.
+        ///
+        /// Uses $type for integer math. This may be more efficient on certain platforms.
+        fn $fn_name<const N: usize>(
+            order: usize,
+            coeffs: &[i32; N],
+            coeff_shift: u32,
+            buf: &mut [i32],
+        ) {
+            // Order must be less than or equal to the number of coefficients.
+            debug_assert!(order <= coeffs.len());
+
+            // Order must be less than to equal to the number of samples the buffer can hold.
+            debug_assert!(order <= buf.len());
+
+            // The main, efficient, predictor loop needs N previous samples to run. Since order <= N,
+            // calculate enough samples to reach N.
+            let n_prefill = cmp::min(N, buf.len()) - order;
+
+            for i in order..order + n_prefill {
+                let mut acc: $type = 0;
+                for j in 0..order {
+                    acc = acc.wrapping_add(
+                        (coeffs[N - order + j] as $type).wrapping_mul(buf[i - order + j] as $type),
+                    );
+                }
+                buf[i] = buf[i].wrapping_add((acc >> coeff_shift) as i32);
+            }
+
+            // If the pre-fill operation filled the entire sample buffer, return immediately.
+            if buf.len() <= N {
+                return;
+            }
+
+            // Main predictor loop. Calculate each sample by applying what is essentially an IIR filter.
+            for i in N..buf.len() {
+                let mut acc: $type = 0;
+                for j in 0..coeffs.len() {
+                    acc =
+                        acc.wrapping_add(<$type>::from(coeffs[j]) * <$type>::from(buf[i - N + j]));
+                }
+
+                buf[i] = buf[i].wrapping_add((acc >> coeff_shift) as i32);
+            }
+        }
+    };
+}
+
+make_lpc_predict!(lpc_predict_i32, i32);
+make_lpc_predict!(lpc_predict_i64, i64);
