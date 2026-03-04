@@ -11,7 +11,7 @@ use crate::common::SideData;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use symphonia_common::xiph::audio::vorbis::*;
-use symphonia_core::async_trait;
+use symphonia_core::{async_trait, Float};
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
