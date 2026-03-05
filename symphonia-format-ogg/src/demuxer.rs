@@ -92,17 +92,8 @@ impl<'s> OggReader<'s> {
 
         // If the page is marked as a first page, then try to start a new physical stream.
         if page.header.is_first_page {
-            if !self.streams.is_empty() {
-                warn!("Ignoring late-arrival BOS page for serial {:#x} to prevent restart.", page.header.serial);
-                return Ok(());
-            }
-            
-            if !self.streams.contains_key(&page.header.serial) {
-                self.start_new_physical_stream().await?;
-                return reset_error();
-            }
-
-            return Ok(());
+            self.start_new_physical_stream().await?;
+            return reset_error();
         }
 
         if let Some(stream) = self.streams.get_mut(&page.header.serial) {
@@ -314,6 +305,7 @@ impl<'s> OggReader<'s> {
         assert!(self.pages.header().is_first_page);
 
         info!("starting new physical stream");
+        debug!("Header: {:?}", self.pages.page().header);
 
         // The first page of each logical stream, marked with the first page flag, must contain the
         // identification packet for the encapsulated codec bitstream. The first page for each
