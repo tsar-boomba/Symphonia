@@ -74,7 +74,7 @@ struct ClusterState {
 impl<'s> MkvReader<'s> {
     pub async fn try_new(mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
         // Get the total length of the stream, if possible.
-        let (is_seekable, total_len) = (mss.is_seekable(), mss.byte_len());
+        let (is_seekable, total_len) = (mss.is_seekable().await, mss.byte_len().await);
 
         match total_len {
             Some(len) if is_seekable => info!("stream is seekable with len={len} bytes."),

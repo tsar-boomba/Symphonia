@@ -103,7 +103,7 @@ impl<'s> AiffReader<'s> {
         let mut comt = None;
         let mut id3 = None;
 
-        let is_seekable = mss.is_seekable();
+        let is_seekable = mss.is_seekable().await;
 
         let mut attachments = Vec::new();
         let mut builder = MetadataBuilder::new(AIFF_METADATA_INFO);
@@ -441,7 +441,7 @@ impl FormatReader for AiffReader<'_> {
 
         // If the reader supports seeking we can seek directly to the frame's offset wherever it may
         // be.
-        if self.reader.is_seekable() {
+        if self.reader.is_seekable().await {
             self.reader.seek(SeekFrom::Start(seek_pos)).await?;
         }
         // If the reader does not support seeking, we can only emulate forward seeks by consuming

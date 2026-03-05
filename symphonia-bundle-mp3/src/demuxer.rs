@@ -270,7 +270,7 @@ impl FormatReader for MpaReader<'_> {
             }
         }
 
-        let is_seekable = self.reader.is_seekable();
+        let is_seekable = self.reader.is_seekable().await;
 
         // If the stream is unseekable and the required timestamp in the past, then return an
         // error, it is not possible to seek to it.
@@ -464,7 +464,7 @@ impl<'s> MpaReader<'s> {
             mss.seek_buffered_rev(MPEG_HEADER_LEN + header.frame_size);
 
             // Likely not a VBR file, so estimate the duration if seekable.
-            if mss.is_seekable() {
+            if mss.is_seekable().await {
                 info!("estimating duration from bitrate, may be inaccurate for vbr files");
 
                 if let Some(n_mpeg_frames) = estimate_num_mpeg_frames(&mut mss).await {
@@ -496,7 +496,7 @@ impl<'s> MpaReader<'s> {
     ) -> Result<()> {
         // Get the length in bytes of the stream's audio data. It is not possible to coarsely seek
         // without knowing this.
-        let audio_byte_len = match self.reader.byte_len() {
+        let audio_byte_len = match self.reader.byte_len().await {
             Some(byte_len) => u128::from(byte_len - self.first_packet_pos),
             None => return seek_error(SeekErrorKind::Unseekable),
         };
@@ -697,7 +697,7 @@ async fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream<'_>) -> Option<
     let mut total_frame_len = 0;
     let mut total_frames = 0;
 
-    let total_len = match reader.byte_len() {
+    let total_len = match reader.byte_len().await {
         Some(len) => len - start_pos,
         _ => return None,
     };

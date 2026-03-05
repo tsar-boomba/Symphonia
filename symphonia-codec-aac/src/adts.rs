@@ -339,7 +339,7 @@ impl FormatReader for AdtsReader<'_> {
         // to the start of the stream.
         if required_ts < self.next_packet_ts {
             // If the reader is not seekable then only forward seeks are possible.
-            if self.reader.is_seekable() {
+            if self.reader.is_seekable().await {
                 let seeked_pos = self.reader.seek(SeekFrom::Start(self.first_frame_pos)).await?;
 
                 // Since the elementary stream has no timestamp information, the position seeked
@@ -410,7 +410,7 @@ impl FormatReader for AdtsReader<'_> {
 
 async fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Result<Option<u64>> {
     let original_pos = source.pos();
-    let remaining_len = match source.byte_len() {
+    let remaining_len = match source.byte_len().await {
         Some(len) => len - original_pos,
         _ => return Ok(None),
     };
@@ -418,7 +418,7 @@ async fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Resu
     let mut parsed_n_frames = 0;
     let mut n_bytes = 0;
 
-    if !source.is_seekable() {
+    if !source.is_seekable().await {
         // The maximum length in bytes of frames to consume from the stream to sample.
         const MAX_LEN: u64 = 16 * 1024;
 

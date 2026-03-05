@@ -119,7 +119,7 @@ impl<'s> IsoMp4Reader<'s> {
         // To get to beginning of the atom.
         mss.seek_buffered_rel(-4);
 
-        let is_seekable = mss.is_seekable();
+        let is_seekable = mss.is_seekable().await;
 
         let mut ftyp = None;
         let mut moov = None;
@@ -557,7 +557,7 @@ impl FormatReader for IsoMp4Reader<'_> {
 
         // Attempt a fast seek within the buffer cache.
         if reader.seek_buffered(sample_info.pos) != sample_info.pos {
-            if reader.is_seekable() {
+            if reader.is_seekable().await {
                 // Fallback to a slow seek if the stream is seekable.
                 reader.seek(SeekFrom::Start(sample_info.pos)).await?;
             }

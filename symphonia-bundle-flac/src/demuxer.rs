@@ -287,7 +287,7 @@ impl FormatReader for FlacReader<'_> {
 
         // If the reader supports seeking, coarsely seek to the nearest packet with a timestamp
         // lower than the desired timestamp using a binary search.
-        if self.reader.is_seekable() {
+        if self.reader.is_seekable().await {
             // The range formed by start_byte_offset..end_byte_offset defines an area where the
             // binary search for the packet containing the desired timestamp will be performed. The
             // lower bound is set to the byte offset of the first frame, while the upper bound is
@@ -369,7 +369,7 @@ impl FormatReader for FlacReader<'_> {
             // The desired timestamp precedes the current packet's timestamp.
             if ts < sync.ts {
                 // Attempted to seek backwards on an unseekable stream.
-                if !self.reader.is_seekable() {
+                if !self.reader.is_seekable().await {
                     return seek_error(SeekErrorKind::ForwardOnly);
                 }
                 // Overshot a regular seek, or the stream is corrupted, not necessarily an error

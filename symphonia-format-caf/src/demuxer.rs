@@ -232,7 +232,7 @@ impl FormatReader for CafReader<'_> {
                     + u64::from(bytes_per_packet.get()) * dur_from_start.get()
                         / if is_uncompressed { 1 } else { frames_per_packet };
 
-                if self.reader.is_seekable() {
+                if self.reader.is_seekable().await {
                     self.reader.seek(SeekFrom::Start(seek_pos)).await?;
                 }
                 else {
@@ -277,7 +277,7 @@ impl FormatReader for CafReader<'_> {
 
                 let seek_pos = self.data_start_pos + seek_packet.data_offset;
 
-                if self.reader.is_seekable() {
+                if self.reader.is_seekable().await {
                     self.reader.seek(SeekFrom::Start(seek_pos)).await?;
                 }
                 else {
@@ -547,7 +547,7 @@ impl<'s> CafReader<'s> {
                 return decode_error("caf: missing audio description chunk");
             }
 
-            if let Some(byte_len) = self.reader.byte_len() {
+            if let Some(byte_len) = self.reader.byte_len().await {
                 if self.reader.pos() == byte_len {
                     // If we've reached the end of the file, then the Audio Data chunk should have
                     // had a defined size, and we should seek to the start of the audio data.
