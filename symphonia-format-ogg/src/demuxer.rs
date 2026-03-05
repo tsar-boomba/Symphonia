@@ -91,7 +91,7 @@ impl<'s> OggReader<'s> {
         let page = self.pages.page();
 
         // If the page is marked as a first page, then try to start a new physical stream.
-        if page.header.is_first_page {
+        if page.header.is_first_page && !self.streams.contains_key(&page.header.serial) {
             warn!("BOS page detected at reader pos {}", self.reader.pos());
             self.start_new_physical_stream().await?;
             return reset_error();
