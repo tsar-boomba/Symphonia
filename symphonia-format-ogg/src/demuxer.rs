@@ -91,17 +91,24 @@ impl<'s> OggReader<'s> {
         let page = self.pages.page();
 
         // If the page is marked as a first page, then try to start a new physical stream.
-        if page.header.is_first_page && !self.streams.contains_key(&page.header.serial) {
-            warn!("BOS page detected at reader pos {}", self.reader.pos());
-            self.start_new_physical_stream().await?;
-            return reset_error();
+        if page.header.is_first_page {
+            if !self.streams.is_empty() {
+                warn!("Ignoring late-arrival BOS page for serial {:#x} to prevent restart.", page.header.serial);
+                return Ok(());
+            }
+            
+            if !self.streams.contains_key(&page.header.serial) {
+                self.start_new_physical_stream().await?;
+                return reset_error();
+            }
+
+            return Ok(());
         }
 
         if let Some(stream) = self.streams.get_mut(&page.header.serial) {
             // TODO: Process side data.
             let _side_data = stream.read_page(&page).await?;
-        }
-        else {
+        } else {
             // If there is no associated logical stream with this page, then this is a
             // completely random page within the physical stream. Discard it.
         }
@@ -118,8 +125,7 @@ impl<'s> OggReader<'s> {
 
         if let Some(stream) = self.streams.get(&page.header.serial) {
             stream.peek_packet()
-        }
-        else {
+        } else {
             None
         }
     }
@@ -217,13 +223,11 @@ impl<'s> OggReader<'s> {
                     // The required timestamp is less-than the timestamp of the first sample in the
                     // page. Update the upper bound and bisect again.
                     end_byte_pos = mid_byte_pos;
-                }
-                else if target_ts > end_ts {
+                } else if target_ts > end_ts {
                     // The required timestamp is greater-than the timestamp of the final sample in
                     // the in the page. Update the lower bound and bisect again.
                     start_byte_pos = mid_byte_pos;
-                }
-                else {
+                } else {
                     // The sample with the required timestamp is contained in the page. The
                     // bisection has converged on the correct page so stop the bisection.
                     start_byte_pos = mid_byte_pos;
@@ -505,8 +509,7 @@ impl FormatReader for OggReader<'_> {
                             return seek_error(SeekErrorKind::OutOfRange);
                         }
                     }
-                }
-                else {
+                } else {
                     return seek_error(SeekErrorKind::InvalidTrack);
                 }
 
@@ -517,11 +520,9 @@ impl FormatReader for OggReader<'_> {
                 // Get the track serial.
                 let serial = if let Some(serial) = track_id {
                     serial
-                }
-                else if let Some(first_track) = self.tracks.first() {
+                } else if let Some(first_track) = self.tracks.first() {
                     first_track.id
-                }
-                else {
+                } else {
                     // No tracks.
                     return seek_error(SeekErrorKind::Unseekable);
                 };
@@ -556,8 +557,7 @@ impl FormatReader for OggReader<'_> {
                     }
 
                     ts
-                }
-                else {
+                } else {
                     // No mapper for track. The user provided a bad track ID.
                     return seek_error(SeekErrorKind::InvalidTrack);
                 };
