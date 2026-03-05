@@ -92,9 +92,38 @@ impl<'s> OggReader<'s> {
 
         // If the page is marked as a first page, then try to start a new physical stream.
         if page.header.is_first_page {
-            self.start_new_physical_stream().await?;
-            return reset_error();
+            if let Some(stream) = self.streams.get_mut(&page.header.serial) {
+                // We found a duplicate BOS mid-stream.
+                // Instead of returning a Reset Error to the player,
+                // we reset the INTERNAL logical stream state quietly.
+                warn!(
+                    "Duplicate BOS for {:#x}. Performing silent internal reset.",
+                    page.header.serial
+                );
+
+                stream.reset();
+
+                // Just keep going through pages until get to one thats new
+                loop {
+                    match self.pages.try_next_page(&mut self.reader).await {
+                        Ok(_) => {
+                            if stream.is_next_page(&self.pages.page()) {
+                                break;
+                            }
+                        }
+                        Err(Error::IoError(e)) => return Err(Error::from(e)),
+                        Err(e) => {
+                            warn!("{e}");
+                        }
+                    }
+                }
+            } else {
+                self.start_new_physical_stream().await?;
+                return reset_error();
+            }
         }
+
+        let page = self.pages.page();
 
         if let Some(stream) = self.streams.get_mut(&page.header.serial) {
             // TODO: Process side data.

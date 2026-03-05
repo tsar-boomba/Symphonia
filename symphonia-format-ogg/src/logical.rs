@@ -102,6 +102,14 @@ impl LogicalStream {
         self.prev_page_info.map(|info| info.is_last_page)
     }
 
+    pub fn is_next_page(&self, page: &Page<'_>) -> bool {
+        if let Some(prev_page_info) = &self.prev_page_info {
+            prev_page_info.seq < page.header.sequence
+        } else {
+            true
+        }
+    }
+
     /// Reads a page.
     pub async fn read_page(&mut self, page: &Page<'_>) -> Result<Vec<SideData>> {
         self.read_page_init(page, false).await
