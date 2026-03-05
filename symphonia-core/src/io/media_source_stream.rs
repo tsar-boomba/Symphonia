@@ -52,7 +52,7 @@ impl Default for MediaSourceStreamOptions {
 /// invalidation. Note that regular a `seek()` will invalidate the buffer.
 pub struct MediaSourceStream<'s> {
     /// The source reader.
-    inner: Box<dyn MediaSource<Error = super::Error> + Send + 's>,
+    inner: Box<dyn MediaSource<Error = super::Error> + Send + Sync + 's>,
     /// The ring buffer.
     ring: Box<[u8]>,
     /// The ring buffer's wrap-around mask.
@@ -75,7 +75,7 @@ impl<'s> MediaSourceStream<'s> {
     const MAX_BLOCK_LEN: usize = 32 * 1024;
 
     pub fn new(
-        source: Box<dyn MediaSource<Error = super::Error> + 's>,
+        source: Box<dyn MediaSource<Error = super::Error> + Sync + 's>,
         options: MediaSourceStreamOptions,
     ) -> Self {
         // The buffer length must be a power of 2, and > the maximum read block length.
@@ -280,13 +280,13 @@ impl super::ErrorType for MediaSourceStream<'_> {
 #[async_trait]
 impl MediaSource for MediaSourceStream<'_> {
     #[inline]
-    fn is_seekable(&self) -> bool {
-        self.inner.is_seekable()
+    async fn is_seekable(&self) -> bool {
+        self.inner.is_seekable().await
     }
 
     #[inline]
-    fn byte_len(&self) -> Option<u64> {
-        self.inner.byte_len()
+    async fn byte_len(&self) -> Option<u64> {
+        self.inner.byte_len().await
     }
 }
 
@@ -463,7 +463,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         // If the stream is seekable and the number of bytes to ignore is large, perform a seek
         // first. Note that ignored bytes are rewindable. Therefore, ensure the ring-buffer is
         // full after the seek just like if bytes were ignored by consuming them instead.
-        while self.is_large_operation(count) && self.is_seekable() {
+        while self.is_large_operation(count) && self.is_seekable().await {
             let delta = count.min(i64::MAX as u64).sub(self.ring.len() as u64);
             self.seek(SeekFrom::Current(delta as i64)).await?;
             count -= delta;
