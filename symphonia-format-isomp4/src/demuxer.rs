@@ -155,7 +155,7 @@ impl<'s> IsoMp4Reader<'s> {
         // To get to beginning of the atom.
         mss.seek_buffered_rel(-4);
 
-        let is_seekable = mss.is_seekable();
+        let is_seekable = mss.is_seekable().await;
 
         let mut ftyp = None;
         let mut moov = None;

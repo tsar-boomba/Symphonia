@@ -805,7 +805,7 @@ impl<R: ReadAtom> AtomIterator<R> {
     {
         // Attempt a seek within the cache first.
         if self.reader.seek_buffered(pos) != pos {
-            if self.reader.is_seekable() {
+            if self.reader.is_seekable().await {
                 // Fallback to a slow seek if the stream is seekable.
                 self.reader.seek(SeekFrom::Start(pos)).await?;
             }
