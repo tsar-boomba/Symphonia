@@ -138,7 +138,7 @@ impl<'s> OggReader<'s> {
             // current page.
             if let Some(stream) = self.streams.get_mut(&page.header.serial) {
                 if let Some(packet) = stream.next_packet() {
-                    debug!("ogg packet reader at {}; page: {:?}", self.reader.pos(), page.header);
+                    debug!("ogg packet reader at {}", self.reader.pos());
                     return Ok(Some(packet));
                 }
             }
