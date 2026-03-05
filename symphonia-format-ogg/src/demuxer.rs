@@ -91,10 +91,10 @@ impl<'s> OggReader<'s> {
         let page = self.pages.page();
 
         // If the page is marked as a first page, then try to start a new physical stream.
-        // if page.header.is_first_page {
-        //     self.start_new_physical_stream().await?;
-        //     return reset_error();
-        // }
+        if page.header.is_first_page {
+            self.start_new_physical_stream().await?;
+            return reset_error();
+        }
 
         if let Some(stream) = self.streams.get_mut(&page.header.serial) {
             // TODO: Process side data.
