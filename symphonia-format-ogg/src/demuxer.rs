@@ -101,8 +101,6 @@ impl<'s> OggReader<'s> {
                     page.header.serial
                 );
 
-                stream.reset();
-
                 // Just keep going through pages until get to one thats new
                 loop {
                     match self.pages.try_next_page(&mut self.reader).await {
