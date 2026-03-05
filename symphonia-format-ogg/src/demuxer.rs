@@ -92,10 +92,10 @@ impl<'s> OggReader<'s> {
 
         // If the page is marked as a first page, then try to start a new physical stream.
         if page.header.is_first_page {
+            // Handling of OGG that has 2 Beginning of Stream (BoS) pages (why??????)
+            // Basically if we find a second BoS in the stream with a serial # we've already seen
+            // we just skip that page and any pages after that we've already seen, by sequence #
             if let Some(stream) = self.streams.get_mut(&page.header.serial) {
-                // We found a duplicate BOS mid-stream.
-                // Instead of returning a Reset Error to the player,
-                // we reset the INTERNAL logical stream state quietly.
                 warn!(
                     "Duplicate BOS for {:#x}. Performing silent internal reset.",
                     page.header.serial
@@ -165,7 +165,6 @@ impl<'s> OggReader<'s> {
             // current page.
             if let Some(stream) = self.streams.get_mut(&page.header.serial) {
                 if let Some(packet) = stream.next_packet() {
-                    debug!("ogg packet reader at {}", self.reader.pos());
                     return Ok(Some(packet));
                 }
             }
