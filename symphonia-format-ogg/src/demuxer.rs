@@ -92,6 +92,7 @@ impl<'s> OggReader<'s> {
 
         // If the page is marked as a first page, then try to start a new physical stream.
         if page.header.is_first_page {
+            warn!("BOS page detected at reader pos {}", self.reader.pos());
             self.start_new_physical_stream().await?;
             return reset_error();
         }
@@ -382,9 +383,7 @@ impl<'s> OggReader<'s> {
         }
 
         // Probe the logical streams for their start and end pages.
-        debug!("before: {}", self.reader.pos());
         physical::probe_stream_start(&mut self.reader, &mut self.pages, &mut streams).await;
-        debug!("after: {}", self.reader.pos());
 
         let mut byte_range_end = Default::default();
 
