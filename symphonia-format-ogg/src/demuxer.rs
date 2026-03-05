@@ -174,7 +174,7 @@ impl<'s> OggReader<'s> {
 
         // If the reader is seekable, then use the bisection method to coarsely seek to the nearest
         // page that ends before the required timestamp.
-        if self.reader.is_seekable() {
+        if self.reader.is_seekable().await {
             // Bisection method byte ranges. When these two values are equal, the bisection has
             // converged on the position of the correct page.
             let mut start_byte_pos = self.phys_byte_range_start;
@@ -388,8 +388,8 @@ impl<'s> OggReader<'s> {
 
         // If the media source stream is seekable, then try to determine the duration of each
         // logical stream, and the length in bytes of the physical stream.
-        if self.reader.is_seekable() {
-            if let Some(total_len) = self.reader.byte_len() {
+        if self.reader.is_seekable().await {
+            if let Some(total_len) = self.reader.byte_len().await {
                 byte_range_end = physical::probe_stream_end(
                     &mut self.reader,
                     &mut self.pages,

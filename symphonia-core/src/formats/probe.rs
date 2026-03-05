@@ -443,8 +443,8 @@ impl Probe {
     ) -> Result<Box<dyn FormatReader + 's>> {
         // Probe for trailing metadata only if the media source stream is seekable, and the length
         // is known.
-        if mss.is_seekable() {
-            if let Some(end) = mss.byte_len() {
+        if mss.is_seekable().await {
+            if let Some(end) = mss.byte_len().await {
                 // The initial position of the stream will be restored after probing for trailing
                 // metadata.
                 let init_pos = mss.pos();
@@ -485,7 +485,7 @@ impl Probe {
         fmt_opts: &mut FormatOptions,
         meta_opts: MetadataOptions,
     ) -> Result<MediaSourceStream<'s>> {
-        debug_assert!(mss.is_seekable());
+        debug_assert!(mss.is_seekable().await);
 
         // The position of the media source stream after a reader successfully reads the stream.
         let mut last_reader_end = 0;

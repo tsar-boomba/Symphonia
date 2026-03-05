@@ -211,21 +211,23 @@ impl<T: ?Sized + Seek + Send> Seek for &mut T {
 ///
 /// Despite requiring the [`std::io::Seek`] trait, seeking is an optional capability that can be
 /// queried at runtime.
+#[async_trait]
 pub trait MediaSource: Read + Seek + Send {
     /// Returns if the source is seekable. This may be an expensive operation.
-    fn is_seekable(&self) -> bool;
+    async fn is_seekable(&self) -> bool;
 
     /// Returns the length in bytes, if available. This may be an expensive operation.
-    fn byte_len(&self) -> Option<u64>;
+    async fn byte_len(&self) -> Option<u64>;
 }
 
 #[cfg(feature = "std")]
+#[async_trait]
 impl MediaSource for FromStd<std::fs::File> {
     /// Returns if the `std::io::File` backing the `MediaSource` is seekable.
     ///
     /// Note: This operation involves querying the underlying file descriptor for information and
     /// may be moderately expensive. Therefore it is recommended to cache this value if used often.
-    fn is_seekable(&self) -> bool {
+    async fn is_seekable(&self) -> bool {
         // If the file's metadata is available, and the file is a regular file (i.e., not a FIFO,
         // etc.), then the MediaSource will be seekable. Otherwise assume it is not. Note that
         // metadata() follows symlinks.
@@ -239,7 +241,7 @@ impl MediaSource for FromStd<std::fs::File> {
     ///
     /// Note: This operation involves querying the underlying file descriptor for information and
     /// may be moderately expensive. Therefore it is recommended to cache this value if used often.
-    fn byte_len(&self) -> Option<u64> {
+    async fn byte_len(&self) -> Option<u64> {
         match self.inner().metadata() {
             Ok(metadata) => Some(metadata.len()),
             _ => None,
@@ -248,14 +250,14 @@ impl MediaSource for FromStd<std::fs::File> {
 }
 
 #[async_trait]
-impl<T: core::convert::AsRef<[u8]> + Send> MediaSource for Cursor<T> {
+impl<T: core::convert::AsRef<[u8]> + Send + Sync> MediaSource for Cursor<T> {
     /// Always returns true since a `io::Cursor<u8>` is always seekable.
-    fn is_seekable(&self) -> bool {
+    async fn is_seekable(&self) -> bool {
         true
     }
 
     /// Returns the length in bytes of the `io::Cursor<u8>` backing the `MediaSource`.
-    fn byte_len(&self) -> Option<u64> {
+    async fn byte_len(&self) -> Option<u64> {
         // Get the underlying container, usually &Vec<T>.
         let inner = self.get_ref();
         // Get slice from the underlying container, &[T], for the len() function.
@@ -296,15 +298,16 @@ impl<R: Read> io::ErrorType for ReadOnlySource<R> {
     type Error = Error;
 }
 
-impl<R: Read + Send> MediaSource for ReadOnlySource<R>
+#[async_trait]
+impl<R: Read + Send + Sync> MediaSource for ReadOnlySource<R>
 where
     Error: core::convert::From<<R as embedded_io::ErrorType>::Error>,
 {
-    fn is_seekable(&self) -> bool {
+    async fn is_seekable(&self) -> bool {
         false
     }
 
-    fn byte_len(&self) -> Option<u64> {
+    async fn byte_len(&self) -> Option<u64> {
         None
     }
 }

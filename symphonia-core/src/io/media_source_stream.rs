@@ -52,7 +52,7 @@ impl Default for MediaSourceStreamOptions {
 /// buffer cache invalidation. Note that regular a `seek()` will invalidate the buffer cache.
 pub struct MediaSourceStream<'s> {
     /// The source reader.
-    inner: Box<dyn MediaSource<Error = super::Error> + Send + 's>,
+    inner: Box<dyn MediaSource<Error = super::Error> + Send + Sync + 's>,
     /// The ring buffer.
     ring: Box<[u8]>,
     /// The ring buffer's wrap-around mask.
@@ -75,7 +75,7 @@ impl<'s> MediaSourceStream<'s> {
     const MAX_BLOCK_LEN: usize = 32 * 1024;
 
     pub fn new(
-        source: Box<dyn MediaSource<Error = super::Error> + 's>,
+        source: Box<dyn MediaSource<Error = super::Error> + Sync + 's>,
         options: MediaSourceStreamOptions,
     ) -> Self {
         // The buffer length must be a power of 2, and > the maximum read block length.
@@ -186,13 +186,13 @@ impl super::ErrorType for MediaSourceStream<'_> {
 #[async_trait]
 impl MediaSource for MediaSourceStream<'_> {
     #[inline]
-    fn is_seekable(&self) -> bool {
-        self.inner.is_seekable()
+    async fn is_seekable(&self) -> bool {
+        self.inner.is_seekable().await
     }
 
     #[inline]
-    fn byte_len(&self) -> Option<u64> {
-        self.inner.byte_len()
+    async fn byte_len(&self) -> Option<u64> {
+        self.inner.byte_len().await
     }
 }
 
@@ -354,7 +354,7 @@ impl ReadBytes for MediaSourceStream<'_> {
         let ring_len = self.ring.len() as u64;
 
         // Only apply the optimization if seeking 2x or more than the ring-buffer size.
-        while count >= 2 * ring_len && self.is_seekable() {
+        while count >= 2 * ring_len && self.is_seekable().await {
             let delta = count.clamp(0, i64::MAX as u64).sub(ring_len);
             self.seek(SeekFrom::Current(delta as i64)).await?;
             count -= delta;
