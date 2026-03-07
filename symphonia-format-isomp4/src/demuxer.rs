@@ -441,7 +441,7 @@ impl<'s> IsoMp4Reader<'s> {
         // Note, there will always be one segment because the moov atom was converted into a segment
         // when the reader was instantiated.
         let last_seg = self.segs.last().expect("always at least one segment from moov atom");
-        if last_seg.all_tracks_ended() {
+        if !self.moov.is_fragmented() && last_seg.all_tracks_ended() {
             return Ok(false);
         }
 

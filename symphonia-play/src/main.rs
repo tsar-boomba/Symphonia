@@ -136,7 +136,7 @@ fn main() {
         .get_matches();
 
     // For any error, return an exit code -1. Otherwise return the exit code provided.
-    let code = match run(&args) {
+    let code = match futures_executor::block_on(run(&args)) {
         Ok(code) => code,
         Err(err) => {
             error!("{}", err.to_string().to_lowercase());
@@ -147,7 +147,7 @@ fn main() {
     std::process::exit(code)
 }
 
-fn run(args: &ArgMatches) -> Result<i32> {
+async fn run(args: &ArgMatches) -> Result<i32> {
     let path = args.get_one::<PathBuf>("INPUT").expect("path is a required argument");
 
     // Create a hint to help the format registry guess what format reader is appropriate.
@@ -156,7 +156,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
     // If the path string is '-' then read from standard input.
     let source = if path.as_os_str() == "-" {
         Box::new(ReadOnlySource::new(FromStd::new(std::io::stdin())))
-            as Box<dyn MediaSource<Error = symphonia::core::io::Error>>
+            as Box<dyn MediaSource<Error = symphonia::core::io::Error> + Sync>
     }
     else {
         // Othwerise, get a Path from the path string.
@@ -181,7 +181,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
     let meta_opts: MetadataOptions = Default::default();
 
     // Probe the media source stream for metadata and get the format reader.
-    match symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts) {
+    match symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts).await {
         Ok(mut format) => {
             // Dump visuals if requested.
             if args.get_flag("dump-visuals") {
@@ -207,13 +207,13 @@ fn run(args: &ArgMatches) -> Result<i32> {
             else if args.get_flag("verify-only") {
                 // Verify-only mode decodes and verifies the audio, but does not play it.
                 let opts = DecodeOptions { dec_opts: dec_opts.verify(true), track_num };
-                decode_only(format, opts)
+                decode_only(format, opts).await
             }
             else if args.get_flag("decode-only") {
                 // Decode-only mode decodes the audio, but does not play or verify it.
                 let opts = DecodeOptions { dec_opts: dec_opts.verify(false), track_num };
 
-                decode_only(format, opts)
+                decode_only(format, opts).await
             }
             else {
                 // Playback mode.
@@ -238,7 +238,7 @@ fn run(args: &ArgMatches) -> Result<i32> {
                 };
 
                 // Play it!
-                play(format, opts)
+                play(format, opts).await
             }
         }
         Err(err) => {
@@ -256,7 +256,7 @@ struct DecodeOptions {
     track_num: Option<usize>,
 }
 
-fn decode_only(mut reader: Box<dyn FormatReader>, opts: DecodeOptions) -> Result<i32> {
+async fn decode_only(mut reader: Box<dyn FormatReader>, opts: DecodeOptions) -> Result<i32> {
     // If the user provided a track number, select that track if it exists, otherwise, select the
     // default audio track.
     let track = opts
@@ -279,20 +279,20 @@ fn decode_only(mut reader: Box<dyn FormatReader>, opts: DecodeOptions) -> Result
 
     // Create a decoder for the track.
     let mut decoder =
-        symphonia::default::get_codecs().make_audio_decoder(codec_params, &opts.dec_opts)?;
+        symphonia::default::get_codecs().make_audio_decoder(codec_params, &opts.dec_opts).await?;
 
     // Save the track ID to filter demuxed packets.
     let track_id = track.id;
 
     // Decode all packets, ignoring all decode errors.
-    while let Some(packet) = reader.next_packet()? {
+    while let Some(packet) = reader.next_packet().await? {
         // If the packet does not belong to the selected track, skip over it.
         if packet.track_id != track_id {
             continue;
         }
 
         // Decode the packet into audio samples.
-        match decoder.decode(&packet) {
+        match decoder.decode(&packet).await {
             Ok(_decoded) => continue,
             Err(Error::DecodeError(err)) => warn!("decode error: {err}"),
             Err(err) => return Err(err),
@@ -323,7 +323,7 @@ struct PlayTrackOptions {
     no_progress: bool,
 }
 
-fn play(mut reader: Box<dyn FormatReader>, opts: PlayOptions) -> Result<i32> {
+async fn play(mut reader: Box<dyn FormatReader>, opts: PlayOptions) -> Result<i32> {
     // If the user provided a track number, select that track if it exists, otherwise, select the
     // default audio track.
     let track = opts
@@ -347,7 +347,7 @@ fn play(mut reader: Box<dyn FormatReader>, opts: PlayOptions) -> Result<i32> {
 
         // Attempt the seek. If the seek fails, ignore the error and return a seek timestamp of 0 so
         // that no samples are trimmed.
-        match reader.seek(SeekMode::Accurate, seek_to) {
+        match reader.seek(SeekMode::Accurate, seek_to).await {
             Ok(seeked_to) => seeked_to.required_ts,
             Err(Error::ResetRequired) => {
                 // Handle a demuxer reset.
@@ -380,7 +380,7 @@ fn play(mut reader: Box<dyn FormatReader>, opts: PlayOptions) -> Result<i32> {
     let mut audio_output = None;
 
     let result = loop {
-        match play_track(&mut reader, &mut audio_output, track_options) {
+        match play_track(&mut reader, &mut audio_output, track_options).await {
             Err(Error::ResetRequired) => {
                 // Handle a demuxer reset.
                 track_options.track_id = match do_reset(&mut reader) {
@@ -401,7 +401,7 @@ fn play(mut reader: Box<dyn FormatReader>, opts: PlayOptions) -> Result<i32> {
     result
 }
 
-fn play_track(
+async fn play_track(
     reader: &mut Box<dyn FormatReader>,
     audio_output: &mut Option<Box<dyn output::AudioOutput>>,
     opts: PlayTrackOptions,
@@ -420,15 +420,16 @@ fn play_track(
     };
 
     // Create a decoder for the track.
-    let mut decoder =
-        symphonia::default::get_codecs().make_audio_decoder(codec_params, &opts.decoder_opts)?;
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(codec_params, &opts.decoder_opts)
+        .await?;
 
     // Get the selected track's timebase and duration.
     let tb = track.time_base;
     let dur = track.duration;
 
     // Decode and play the packets belonging to the selected track.
-    while let Some(packet) = reader.next_packet()? {
+    while let Some(packet) = reader.next_packet().await? {
         // If the packet does not belong to the selected track, skip it.
         if packet.track_id != opts.track_id {
             continue;
@@ -444,7 +445,7 @@ fn play_track(
         }
 
         // Decode the packet into audio samples.
-        match decoder.decode(&packet) {
+        match decoder.decode(&packet).await {
             Ok(decoded) => {
                 // If the audio output is not open, try to open it.
                 if audio_output.is_none() {
