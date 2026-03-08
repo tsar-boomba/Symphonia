@@ -661,6 +661,7 @@ impl<R: ReadAtom> AtomIterator<R> {
         }
 
         let atom = AtomHeader::read(&mut self.reader).await?;
+        log::trace!("found atom: {:?} @ 0x{:x}", atom.atom_type(), self.reader.pos());
 
         // let indent = 2 * self.stack.len();
         // log::trace!(
