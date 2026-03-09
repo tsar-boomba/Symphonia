@@ -66,7 +66,7 @@ impl LogicalStream {
         LogicalStream {
             mapper,
             packets: Default::default(),
-            part_buf: Default::default(),
+            part_buf: vec![0; 500 * 1024], // Pre-allocate a large buffer to parse ogg faster
             part_len: 0,
             prev_page_info: None,
             start_bound: None,
