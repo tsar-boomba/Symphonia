@@ -8,6 +8,7 @@
 use core::f64::consts;
 
 use alloc::vec::Vec;
+use symphonia_core::Float;
 
 /// For a given window size, generates the curve of the left-half of the window.
 fn generate_win_curve(bs: usize) -> Vec<f32> {

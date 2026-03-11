@@ -6,6 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use alloc::vec::Vec;
+use symphonia_core::Float;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{
     ReadBitsRtl,

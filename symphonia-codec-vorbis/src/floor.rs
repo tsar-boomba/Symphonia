@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use core::cmp::min;
 use hashbrown::HashSet;
 
-use symphonia_core::async_trait;
+use symphonia_core::{async_trait, Float};
 use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BitReaderRtl, ReadBitsRtl};
 
