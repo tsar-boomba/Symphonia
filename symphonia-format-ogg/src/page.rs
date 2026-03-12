@@ -157,7 +157,7 @@ impl PageReader {
         let mut page_reader = PageReader {
             header: Default::default(),
             packet_lens: Vec::new(),
-            page_buf: Vec::new(),
+            page_buf: Vec::with_capacity(8 * 1024),
             page_buf_len: 0,
         };
 

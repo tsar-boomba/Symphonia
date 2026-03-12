@@ -86,6 +86,10 @@ pub trait Mapper: Send + Sync {
     fn is_ready(&self) -> bool {
         true
     }
+
+    fn headers_done(&self) -> bool {
+        true // default: no setup headers needed
+    }
 }
 
 fn make_null_mapper() -> Option<Box<dyn Mapper>> {

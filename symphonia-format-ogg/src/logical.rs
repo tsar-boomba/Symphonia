@@ -318,6 +318,11 @@ impl LogicalStream {
         Ok(side_data)
     }
 
+    /// Returns true if the mapper has all the data it needs from headers
+    pub fn headers_done(&self) -> bool {
+        self.mapper.headers_done()
+    }
+
     /// Returns true if the logical stream has packets buffered.
     pub fn has_packets(&self) -> bool {
         !self.packets.is_empty()

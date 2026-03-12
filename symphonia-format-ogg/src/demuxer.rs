@@ -400,7 +400,7 @@ impl<'s> OggReader<'s> {
                     }
                 }
 
-                if stream.has_packets() {
+                if stream.has_packets() || stream.headers_done() {
                     break;
                 }
             }
@@ -426,11 +426,9 @@ impl<'s> OggReader<'s> {
         if self.reader.is_seekable().await {
             if let Some(total_len) = self.reader.byte_len().await {
                 let t3 = Instant::now();
-                byte_range_end = physical::probe_stream_end(
+                byte_range_end = physical::probe_stream_end_fast(
                     &mut self.reader,
-                    &mut self.pages,
                     &mut self.streams,
-                    byte_range_start,
                     total_len,
                 )
                 .await?;

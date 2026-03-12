@@ -234,6 +234,10 @@ impl Mapper for OpusMapper {
         // Nothing to do.
     }
 
+    fn headers_done(&self) -> bool {
+        !self.need_comment
+    }
+
     fn track(&self) -> &Track {
         &self.track
     }
@@ -250,8 +254,7 @@ impl Mapper for OpusMapper {
         if !self.need_comment {
             let (dur, discard) = OpusPacketParser {}.parse_next_packet_dur(packet).await;
             Ok(MapResult::StreamData { dur, discard })
-        }
-        else {
+        } else {
             let mut reader = BufReader::new(packet);
 
             // Read the header signature.
@@ -263,15 +266,15 @@ impl Mapper for OpusMapper {
                 let mut builder = MetadataBuilder::new(VORBIS_COMMENT_METADATA_INFO);
                 let mut side_data = Default::default();
 
-                vorbis::read_vorbis_comment(&mut reader, &mut builder, &mut side_data, opts).await?;
+                vorbis::read_vorbis_comment(&mut reader, &mut builder, &mut side_data, opts)
+                    .await?;
 
                 let rev = builder.build();
 
                 self.need_comment = false;
 
                 Ok(MapResult::SideData { data: SideData::Metadata { rev, side_data } })
-            }
-            else {
+            } else {
                 warn!("ogg (opus): invalid packet type");
                 Ok(MapResult::Unknown)
             }
