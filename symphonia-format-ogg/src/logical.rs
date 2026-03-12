@@ -635,9 +635,9 @@ impl LogicalStream {
 
     /// Returns false if the packet was skipped because its too big
     fn save_partial_packet(&mut self, buf: &[u8], opts: &MetadataOptions) -> Result<bool> {
-        const INIT_MAX_PACKET_LEN: usize = 64 * 1024;
+        const INIT_MAX_PACKET_LEN: usize = 8 * 1024;
         let new_part_len = self.part_len + buf.len();
-        log::info!("partial packet len: {}; new_part_len: {}", buf.len(), new_part_len);
+        log::info!("partial packet len: {}; new_part_len: {}; limit: {:?}", buf.len(), new_part_len, opts.limit_visual_bytes);
 
         // If user wants to ignore all visuals, we definitely need to skip this
         if opts.limit_visual_bytes == Limit::Maximum(0) && new_part_len > INIT_MAX_PACKET_LEN {
