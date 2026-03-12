@@ -9,6 +9,7 @@ use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 
 use alloc::vec::Vec;
+use symphonia_core::common::Limit;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::Track;
 use symphonia_core::meta::MetadataOptions;
@@ -223,7 +224,10 @@ impl LogicalStream {
         // If the page contains partial packet data, then save the partial packet data for later
         // as the packet will be completed on a later page.
         if let Some(buf) = iter.partial_packet() {
-            self.save_partial_packet(buf)?;
+            let skipped = !self.save_partial_packet(buf, opts)?;
+            if skipped {
+                log::debug!("skipped partial packet!");
+            }
         }
 
         // If one or more bitstream packets ended in this page, process them.
@@ -611,8 +615,17 @@ impl LogicalStream {
         }
     }
 
-    fn save_partial_packet(&mut self, buf: &[u8]) -> Result<()> {
+    /// Returns false if the packet was skipped because its too big
+    fn save_partial_packet(&mut self, buf: &[u8], opts: &MetadataOptions) -> Result<bool> {
+        const INIT_MAX_PACKET_LEN: usize = 64 * 1024;
         let new_part_len = self.part_len + buf.len();
+
+        // If user wants to ignore all visuals, we definitely need to skip this 
+        if opts.limit_visual_bytes == Limit::Maximum(0) && new_part_len > INIT_MAX_PACKET_LEN {
+            // Too large, discard and signal the mapper to move on
+            self.part_len = 0;
+            return Ok(false); // false = abandoned
+        }
 
         if new_part_len > self.part_buf.len() {
             // Do not exceed an a certain limit to prevent unbounded memory growth.
@@ -630,6 +643,6 @@ impl LogicalStream {
         self.part_buf[self.part_len..new_part_len].copy_from_slice(buf);
         self.part_len = new_part_len;
 
-        Ok(())
+        Ok(true)
     }
 }

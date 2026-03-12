@@ -416,7 +416,7 @@ impl<'s> OggReader<'s> {
         // Probe the logical streams for their start and end pages.
         let t2 = Instant::now();
         physical::probe_stream_start(&mut self.reader, &mut self.pages, &mut streams).await;
-        info!("setup pages: {}ms", (Instant::now() - t2).as_millis());
+        info!("probe stream start: {}ms", (Instant::now() - t2).as_millis());
 
 
         let mut byte_range_end = Default::default();
