@@ -127,11 +127,7 @@ impl<'s> OggReader<'s> {
 
         if let Some(stream) = self.streams.get_mut(&page.header.serial) {
             // TODO: Process side data.
-<<<<<<< Updated upstream
-            let _side_data = stream.read_page(&page).await?;
-=======
             let _side_data = stream.read_page(&page, &self.meta_options).await?;
->>>>>>> Stashed changes
         } else {
             // If there is no associated logical stream with this page, then this is a
             // completely random page within the physical stream. Discard it.

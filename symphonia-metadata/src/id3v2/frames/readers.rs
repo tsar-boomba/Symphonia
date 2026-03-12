@@ -11,10 +11,7 @@ use alloc::sync::Arc;
 use core::char;
 use core::str;
 use symphonia_core::Lazy;
-<<<<<<< Updated upstream
-=======
 use symphonia_core::meta::MetadataOptions;
->>>>>>> Stashed changes
 
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};

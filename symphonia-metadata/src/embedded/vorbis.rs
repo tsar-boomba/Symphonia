@@ -161,12 +161,6 @@ static VORBIS_COMMENT_MAP: Lazy<RawTagParserMap> = Lazy::new(|| {
 });
 
 /// Parse a string containing a base64 encoded FLAC picture block into a visual.
-<<<<<<< Updated upstream
-async fn parse_base64_picture_block(b64: &str) -> Result<ParsedComment> {
-    // Decode the Base64 encoded FLAC metadata block.
-    let Some(data) = base64::decode(b64)
-    else {
-=======
 async fn parse_base64_picture_block(
     b64: &str,
     opts: &MetadataOptions,
@@ -177,7 +171,6 @@ async fn parse_base64_picture_block(
     }
 
     let Some(data) = base64::decode(b64) else {
->>>>>>> Stashed changes
         return decode_error("meta(vorbis): the base64 encoding of a picture block is invalid");
     };
 
@@ -187,12 +180,6 @@ async fn parse_base64_picture_block(
 }
 
 /// Parse a string containing a base64 encoding image file into a visual.
-<<<<<<< Updated upstream
-async fn parse_base64_cover_art(b64: &str) -> Result<ParsedComment> {
-    // Decode the Base64 encoded image data.
-    let Some(data) = base64::decode(b64)
-    else {
-=======
 async fn parse_base64_cover_art(
     b64: &str,
     opts: &MetadataOptions,
@@ -204,7 +191,6 @@ async fn parse_base64_cover_art(
     }
 
     let Some(data) = base64::decode(b64) else {
->>>>>>> Stashed changes
         return decode_error("meta (vorbis): the base64 encoding of cover art is invalid");
     };
 
@@ -376,14 +362,8 @@ async fn parse_vorbis_comment(buf: &[u8], opts: &MetadataOptions) -> Result<Opti
 
         if let Some(key) = try_parse_chapter_info_key(&key) {
             // A comment with a key starting with "CHAPTERXXX" is a chapter information comment.
-<<<<<<< Updated upstream
-            Ok(ParsedComment::ChapterInfo(ChapterInfo { key, value: value.to_string() }))
-        }
-        else if key.eq_ignore_ascii_case("metadata_block_picture") {
-=======
             Ok(Some(ParsedComment::ChapterInfo(ChapterInfo { key, value: value.to_string() })))
         } else if key.eq_ignore_ascii_case("metadata_block_picture") {
->>>>>>> Stashed changes
             // A comment with a key "METADATA_BLOCK_PICTURE" is a FLAC picture block encoded in
             // base64. Attempt to decode it as such.
             parse_base64_picture_block(value, opts).await
