@@ -11,6 +11,7 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 
 use alloc::vec::Vec;
+use embassy_time::Instant;
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
 use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
@@ -335,6 +336,7 @@ impl<'s> OggReader<'s> {
 
         info!("starting new physical stream");
         debug!("Header: {:?}", self.pages.page().header);
+        let t0 = Instant::now();
 
         // The first page of each logical stream, marked with the first page flag, must contain the
         // identification packet for the encapsulated codec bitstream. The first page for each
@@ -407,8 +409,14 @@ impl<'s> OggReader<'s> {
             self.pages.try_next_page(&mut self.reader).await?;
         }
 
+        info!("header pages: {}ms", (Instant::now() - t0).as_millis());
+
+
         // Probe the logical streams for their start and end pages.
+        let t1 = Instant::now();
         physical::probe_stream_start(&mut self.reader, &mut self.pages, &mut streams).await;
+        info!("setup pages: {}ms", (Instant::now() - t1).as_millis());
+
 
         let mut byte_range_end = Default::default();
 
@@ -416,12 +424,14 @@ impl<'s> OggReader<'s> {
         // logical stream, and the length in bytes of the physical stream.
         if self.reader.is_seekable().await {
             if let Some(total_len) = self.reader.byte_len().await {
+                let t3 = Instant::now();
                 byte_range_end = physical::probe_stream_end_fast(
                     &mut self.reader,
                     &mut self.streams,
                     total_len,
                 )
                 .await?;
+            info!("probe_end: {}ms", (Instant::now() - t3).as_millis());
             }
         }
 

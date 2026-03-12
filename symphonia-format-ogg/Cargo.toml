@@ -17,6 +17,7 @@ version.workspace = true
 log = "0.4"
 symphonia-core = { version = "0.6.0", path = "../symphonia-core" }
 symphonia-common = { version = "0.6.0", path = "../symphonia-common" }
+embassy-time = "0.5.0"
 
 [dependencies.symphonia-metadata]
 version = "0.6.0"
