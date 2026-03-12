@@ -232,8 +232,7 @@ fn parse_chapter_timestamp(time: &str) -> Result<Time> {
             // The string slice after stripping the leading or trailing zeros is empty. Only one
             // zero digit was significant.
             Ok((0, 1))
-        }
-        else {
+        } else {
             buf.bytes()
                 .try_fold(0u32, |num, digit| match digit {
                     b'0'..=b'9' => {
@@ -247,12 +246,10 @@ fn parse_chapter_timestamp(time: &str) -> Result<Time> {
     }
 
     // Hours, minutes, and integer seconds are mandatory.
-    let Some((h_str, rem)) = time.split_once(':')
-    else {
+    let Some((h_str, rem)) = time.split_once(':') else {
         return Err(FMT_ERR);
     };
-    let Some((m_str, rem)) = rem.split_once(':')
-    else {
+    let Some((m_str, rem)) = rem.split_once(':') else {
         return Err(FMT_ERR);
     };
     // Fractional seconds are optional.
@@ -375,8 +372,7 @@ async fn parse_vorbis_comment(buf: &[u8], opts: &MetadataOptions) -> Result<Opti
             // standard tag.
             Ok(Some(ParsedComment::Tag(RawTag::new(key, value))))
         }
-    }
-    else {
+    } else {
         decode_error("meta (vorbis): malformed comment")
     }
 }
@@ -401,8 +397,14 @@ pub async fn read_vorbis_comment<B: ReadBytes>(
 
     // Read each comment.
     for _ in 0..num_comments {
-        // Read the comment string length in bytes.
-        let comment_length = reader.read_u32().await?;
+        // Read the comment string length in bytes. Must gracefully handle eof
+        // so that OGG reader can pass in incomplete data when skipping large metadata
+        // (e.g. images)
+        let comment_length = match reader.read_u32().await {
+            Ok(len) => len,
+            Err(e) if e.is_eof() => break,
+            Err(e) => return Err(e.into()),
+        };
 
         // If this comment is too long for both limits, just ignore it
         if !opts
@@ -412,13 +414,20 @@ pub async fn read_vorbis_comment<B: ReadBytes>(
                 .limit_metadata_bytes
                 .within_limit_w_default(u64::from(comment_length), DEFAULT_MAX_META_SIZE)
         {
-            reader.ignore_bytes(u64::from(comment_length)).await?;
-            continue;
+            match reader.ignore_bytes(u64::from(comment_length)).await {
+                Ok(_) => continue,
+                Err(e) if e.is_eof() => break,
+                Err(e) => return Err(e.into()),
+            }
         }
 
         // Read the comment string.
         let mut comment_data = vec![0; comment_length as usize];
-        reader.read_buf_exact(&mut comment_data).await?;
+        match reader.read_buf_exact(&mut comment_data).await {
+            Ok(_) => (),
+            Err(e) if e.is_eof() => break,
+            Err(e) => return Err(e.into()),
+        }
 
         // Parse the Vorbis comment and handle the parsed output.
         match parse_vorbis_comment(&comment_data, opts).await {
@@ -464,11 +473,9 @@ pub async fn read_vorbis_comment<B: ReadBytes>(
                             // "NAME" and "URL" are the only standardized keys for chapters.
                             let std_tag = if key.eq_ignore_ascii_case("name") {
                                 Some(StandardTag::ChapterTitle(value.clone()))
-                            }
-                            else if key.eq_ignore_ascii_case("url") {
+                            } else if key.eq_ignore_ascii_case("url") {
                                 Some(StandardTag::Url(value.clone()))
-                            }
-                            else {
+                            } else {
                                 None
                             };
 
