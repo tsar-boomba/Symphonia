@@ -71,8 +71,8 @@ pub struct MediaSourceStream<'s> {
 }
 
 impl<'s> MediaSourceStream<'s> {
-    const MIN_BLOCK_LEN: usize = 1 * 1024;
-    const MAX_BLOCK_LEN: usize = 32 * 1024;
+    const MIN_BLOCK_LEN: usize = 512;
+    const MAX_BLOCK_LEN: usize = 4 * 1024;
 
     pub fn new(
         source: Box<dyn MediaSource<Error = super::Error> + Sync + 's>,
@@ -80,7 +80,7 @@ impl<'s> MediaSourceStream<'s> {
     ) -> Self {
         // The buffer length must be a power of 2, and > the maximum read block length.
         assert!(options.buffer_len.count_ones() == 1);
-        assert!(options.buffer_len > Self::MAX_BLOCK_LEN);
+        assert!(options.buffer_len >= Self::MAX_BLOCK_LEN);
 
         MediaSourceStream {
             inner: source,
