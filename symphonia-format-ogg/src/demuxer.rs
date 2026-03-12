@@ -378,7 +378,9 @@ impl<'s> OggReader<'s> {
         // Reading pages consumes these headers and returns any relevant data as side data. Read
         // pages until all headers are consumed and the first bitstream packets are buffered.
         let t1 = Instant::now();
+        let mut setup_iters = 0;
         loop {
+            setup_iters += 1;
             let page = self.pages.page();
 
             if let Some(stream) = streams.get_mut(&page.header.serial) {
@@ -411,7 +413,7 @@ impl<'s> OggReader<'s> {
 
             self.pages.try_next_page(&mut self.reader).await?;
         }
-        info!("setup pages: {}ms", (Instant::now() - t1).as_millis());
+        info!("setup pages: {}ms ({} iters)", (Instant::now() - t1).as_millis(), setup_iters);
 
         // Probe the logical streams for their start and end pages.
         let t2 = Instant::now();
