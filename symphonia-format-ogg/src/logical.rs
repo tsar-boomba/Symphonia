@@ -59,6 +59,7 @@ pub struct LogicalStream {
     prev_page_info: Option<PageInfo>,
     start_bound: Option<Bound>,
     end_bound: Option<Bound>,
+    part_abandoned: bool,
 }
 
 impl LogicalStream {
@@ -73,6 +74,7 @@ impl LogicalStream {
             prev_page_info: None,
             start_bound: None,
             end_bound: None,
+            part_abandoned: false,
         }
     }
 
@@ -173,6 +175,22 @@ impl LogicalStream {
 
         let mut iter = page.packets();
 
+        if page.header.is_continuation && self.part_abandoned {
+            // Still skipping this oversized packet
+            if iter.partial_packet().is_none() {
+                // Packet finally completed, stop abandoning
+                self.part_abandoned = false;
+                self.mapper.force_headers_done();
+            }
+
+            return Ok(side_data);
+        }
+
+        // Clear abandoned state on non-continuation page
+        if !page.header.is_continuation {
+            self.part_abandoned = false;
+        }
+
         // If there is no partial packet data buffered, a continuation page is not expected.
         if page.header.is_continuation && self.part_len == 0 {
             // If the continuation page contains packets, drop the first packet since it would
@@ -226,8 +244,7 @@ impl LogicalStream {
         if let Some(buf) = iter.partial_packet() {
             let skipped = !self.save_partial_packet(buf, opts)?;
             if skipped {
-                self.mapper.force_headers_done();
-                log::debug!("skipped partial packet!");
+                log::info!("skipping partial packet!");
             }
         }
 
@@ -621,11 +638,12 @@ impl LogicalStream {
         const INIT_MAX_PACKET_LEN: usize = 64 * 1024;
         let new_part_len = self.part_len + buf.len();
 
-        // If user wants to ignore all visuals, we definitely need to skip this 
+        // If user wants to ignore all visuals, we definitely need to skip this
         if opts.limit_visual_bytes == Limit::Maximum(0) && new_part_len > INIT_MAX_PACKET_LEN {
             // Too large, discard and signal the mapper to move on
             self.part_len = 0;
-            return Ok(false); // false = abandoned
+            self.part_abandoned = true;
+            return Ok(false);
         }
 
         if new_part_len > self.part_buf.len() {
