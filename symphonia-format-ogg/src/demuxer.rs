@@ -369,12 +369,15 @@ impl<'s> OggReader<'s> {
             // Read the next page.
             self.pages.try_next_page(&mut self.reader).await?;
         }
+        info!("header pages: {}ms", (Instant::now() - t0).as_millis());
+
 
         // Each logical stream may contain additional header packets after the identification packet
         // that contains format-relevant information such as setup and metadata. These packets,
         // for all logical streams, should be grouped together after the identification packets.
         // Reading pages consumes these headers and returns any relevant data as side data. Read
         // pages until all headers are consumed and the first bitstream packets are buffered.
+        let t1 = Instant::now();
         loop {
             let page = self.pages.page();
 
@@ -408,14 +411,12 @@ impl<'s> OggReader<'s> {
 
             self.pages.try_next_page(&mut self.reader).await?;
         }
-
-        info!("header pages: {}ms", (Instant::now() - t0).as_millis());
-
+        info!("setup pages: {}ms", (Instant::now() - t1).as_millis());
 
         // Probe the logical streams for their start and end pages.
-        let t1 = Instant::now();
+        let t2 = Instant::now();
         physical::probe_stream_start(&mut self.reader, &mut self.pages, &mut streams).await;
-        info!("setup pages: {}ms", (Instant::now() - t1).as_millis());
+        info!("setup pages: {}ms", (Instant::now() - t2).as_millis());
 
 
         let mut byte_range_end = Default::default();
@@ -425,9 +426,11 @@ impl<'s> OggReader<'s> {
         if self.reader.is_seekable().await {
             if let Some(total_len) = self.reader.byte_len().await {
                 let t3 = Instant::now();
-                byte_range_end = physical::probe_stream_end_fast(
+                byte_range_end = physical::probe_stream_end(
                     &mut self.reader,
+                    &mut self.pages,
                     &mut self.streams,
+                    byte_range_start,
                     total_len,
                 )
                 .await?;
