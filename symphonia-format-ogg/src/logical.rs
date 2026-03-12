@@ -111,8 +111,17 @@ impl LogicalStream {
         }
     }
 
+    pub fn set_end_granule(&mut self, end_granule: u64) {
+        let end_ts = self.mapper.absgp_to_ts(end_granule);
+        self.mapper.track_mut().with_num_frames(end_ts.get() as u64);
+    }
+
     /// Reads a page.
-    pub async fn read_page(&mut self, page: &Page<'_>, opts: &MetadataOptions) -> Result<Vec<SideData>> {
+    pub async fn read_page(
+        &mut self,
+        page: &Page<'_>,
+        opts: &MetadataOptions,
+    ) -> Result<Vec<SideData>> {
         self.read_page_init(page, false, opts).await
     }
 
@@ -132,8 +141,7 @@ impl LogicalStream {
             if page.header.sequence < last_ts.seq {
                 warn!("detected stream page non-monotonicity");
                 self.part_len = 0;
-            }
-            else if page.header.sequence - last_ts.seq > 1 {
+            } else if page.header.sequence - last_ts.seq > 1 {
                 warn!(
                     "detected stream discontinuity of {} page(s)",
                     page.header.sequence - last_ts.seq
@@ -171,8 +179,7 @@ impl LogicalStream {
             if page.num_packets() > 0 {
                 warn!("unexpected continuation page, ignoring incomplete first packet");
                 iter.next();
-            }
-            else {
+            } else {
                 warn!("unexpected continuation page, ignoring page");
                 return Ok(side_data);
             }
@@ -233,8 +240,7 @@ impl LogicalStream {
                 // The previous page is known and it has a valid end timestamp. Use it as this
                 // page's start timestamp.
                 ts
-            }
-            else {
+            } else {
                 let is_single_page_stream =
                     page.header.is_last_page && (is_init_page || self.is_single_page_stream());
 
@@ -267,13 +273,11 @@ impl LogicalStream {
                         // If the encoder set t > 0 to indicate the media begins later, then no
                         // padding frames will get discarded.
                         Timestamp::from(-(total_pkt_discard.get() as i64))
-                    }
-                    else {
+                    } else {
                         // Stream starts at t > 0.
                         page_start_ts_raw
                     }
-                }
-                else {
+                } else {
                     // In a multi-page stream, all pages other than the last have no padding.
                     // Therefore, the naive calculation is always valid because the total packet
                     // duration would only include valid or discarded frames.
@@ -380,8 +384,7 @@ impl LogicalStream {
                 Some(ts) => ts,
                 _ => return,
             }
-        }
-        else {
+        } else {
             Timestamp::new(-(total_pkt_discard.get() as i64))
         };
 
@@ -428,8 +431,7 @@ impl LogicalStream {
 
                 if let Some(parser) = &mut state.parser {
                     parser
-                }
-                else {
+                } else {
                     debug!("failed to make end bound packet parser");
                     return state;
                 }
@@ -466,8 +468,7 @@ impl LogicalStream {
                     .ts
                     .checked_add(total_pkt_dur)
                     .map(|actual_page_end_ts| actual_page_end_ts.abs_delta(page_end_ts))
-            }
-            else if self.start_bound.is_some_and(|b| b.seq == page.header.sequence) {
+            } else if self.start_bound.is_some_and(|b| b.seq == page.header.sequence) {
                 // The start and end page is the same page. The end delay is the amount of excess
                 // page duration after subtracting the page's end timestamp.
 
@@ -486,14 +487,12 @@ impl LogicalStream {
                 valid_and_padding
                     .zip(valid)
                     .and_then(|(valid_and_padding, valid)| valid_and_padding.checked_sub(valid))
-            }
-            else {
+            } else {
                 // Don't have the timestamp of the previous page so it is not possible to
                 // calculate the end delay.
                 None
             }
-        }
-        else {
+        } else {
             // Only the last page can have an end delay.
             None
         };
@@ -590,8 +589,7 @@ impl LogicalStream {
     fn get_packet(&mut self, packet_buf: &[u8]) -> Box<[u8]> {
         if self.part_len == 0 {
             Box::from(packet_buf)
-        }
-        else {
+        } else {
             let mut buf = vec![0u8; self.part_len + packet_buf.len()];
 
             // Split packet buffer into two portions: saved and new.

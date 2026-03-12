@@ -185,7 +185,6 @@ async fn parse_base64_cover_art(
     opts: &MetadataOptions,
 ) -> Result<Option<ParsedComment>> {
     // Decode the Base64 encoded image data. If its not too big
-
     if !opts.limit_visual_bytes.within_limit_w_default(b64.len() as u64, DEFAULT_MAX_IMAGE_SIZE) {
         return Ok(None);
     }

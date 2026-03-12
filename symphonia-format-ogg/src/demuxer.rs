@@ -416,11 +416,9 @@ impl<'s> OggReader<'s> {
         // logical stream, and the length in bytes of the physical stream.
         if self.reader.is_seekable().await {
             if let Some(total_len) = self.reader.byte_len().await {
-                byte_range_end = physical::probe_stream_end(
+                byte_range_end = physical::probe_stream_end_fast(
                     &mut self.reader,
-                    &mut self.pages,
-                    &mut streams,
-                    byte_range_start,
+                    &mut self.streams,
                     total_len,
                 )
                 .await?;

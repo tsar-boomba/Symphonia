@@ -183,3 +183,53 @@ async fn scan_stream_end(
 
     upper_pos
 }
+
+pub async fn probe_stream_end_fast(
+    reader: &mut MediaSourceStream<'_>,
+    streams: &mut BTreeMap<u32, LogicalStream>,
+    byte_range_end: u64,
+) -> Result<Option<u64>> {
+    let original_pos = reader.pos();
+    
+    // A page header is at most ~27 + 255 bytes. Search the last few KB only.
+    let search_start = byte_range_end.saturating_sub(OGG_PAGE_MAX_SIZE as u64);
+    
+    reader.seek(SeekFrom::Start(search_start)).await?;
+    
+    // Read the search window into a buffer.
+    let buf_len = (byte_range_end - search_start) as usize;
+    let mut buf = vec![0u8; buf_len];
+    reader.read_buf_exact(&mut buf).await?;
+    
+    // Scan backwards for the last OggS magic belonging to our streams.
+    let magic = b"OggS";
+    let mut last_granule = None;
+    
+    // Walk backwards through all OggS occurrences
+    for i in (0..buf.len().saturating_sub(27)).rev() {
+        if &buf[i..i+4] != magic {
+            continue;
+        }
+        
+        // Granule position is at bytes 6-13 of the page header (little-endian u64)
+        let granule = u64::from_le_bytes(buf[i+6..i+14].try_into().unwrap());
+        // Serial number is at bytes 14-17
+        let serial = u32::from_le_bytes(buf[i+14..i+18].try_into().unwrap());
+        
+        if streams.contains_key(&serial) && granule != u64::MAX {
+            last_granule = Some((serial, granule));
+            break; // Found the last valid page for our stream
+        }
+    }
+    
+    // Restore position
+    reader.seek(SeekFrom::Start(original_pos)).await?;
+    
+    // Update stream duration from granule position
+    if let Some((serial, granule)) = last_granule
+        && let Some(stream) = streams.get_mut(&serial) {
+            stream.set_end_granule(granule);
+        }
+    
+    Ok(last_granule.map(|_| byte_range_end))
+}

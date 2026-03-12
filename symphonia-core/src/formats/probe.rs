@@ -442,19 +442,19 @@ impl Probe {
         meta_opts: MetadataOptions,
     ) -> Result<Box<dyn FormatReader + 's>> {
         // Probe for trailing metadata only if the media source stream is seekable, and the length
-        // is known.
-        if mss.is_seekable().await {
-            if let Some(end) = mss.byte_len().await {
-                // The initial position of the stream will be restored after probing for trailing
-                // metadata.
-                let init_pos = mss.pos();
+        // is known. Not really necessary and kills performance for embedded
+        // if mss.is_seekable().await {
+        //     if let Some(end) = mss.byte_len().await {
+        //         // The initial position of the stream will be restored after probing for trailing
+        //         // metadata.
+        //         let init_pos = mss.pos();
 
-                mss = self.probe_trailing(mss, end, &mut fmt_opts, meta_opts).await?;
+        //         mss = self.probe_trailing(mss, end, &mut fmt_opts, meta_opts).await?;
 
-                // Restore position.
-                mss.seek(SeekFrom::Start(init_pos)).await?;
-            }
-        }
+        //         // Restore position.
+        //         mss.seek(SeekFrom::Start(init_pos)).await?;
+        //     }
+        // }
 
         // Loop over all elements in the stream until a container format is found.
         loop {
