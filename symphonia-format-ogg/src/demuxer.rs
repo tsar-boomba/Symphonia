@@ -430,7 +430,7 @@ impl<'s> OggReader<'s> {
                 let t3 = Instant::now();
                 byte_range_end = physical::probe_stream_end_fast(
                     &mut self.reader,
-                    &mut self.streams,
+                    &mut streams,
                     total_len,
                 )
                 .await?;

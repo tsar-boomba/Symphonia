@@ -647,14 +647,9 @@ impl LogicalStream {
         buf: &[u8],
         opts: &MetadataOptions,
     ) -> Result<Option<Box<[u8]>>> {
-        const INIT_MAX_PACKET_LEN: usize = 12 * 1024;
+        // If a partial gets longer than this, it's probably an image and we might wanna skip it
+        const INIT_MAX_PACKET_LEN: usize = 4 * 1020;
         let new_part_len = self.part_len + buf.len();
-        log::info!(
-            "partial packet len: {}; new_part_len: {}; limit: {:?}",
-            buf.len(),
-            new_part_len,
-            opts.limit_visual_bytes
-        );
 
         // If user wants to ignore all visuals, we definitely need to skip reading the whole partial packet
         if opts.limit_visual_bytes == Limit::Maximum(0) && new_part_len > INIT_MAX_PACKET_LEN {
