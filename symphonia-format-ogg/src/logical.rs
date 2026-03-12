@@ -180,7 +180,6 @@ impl LogicalStream {
             if iter.partial_packet().is_none() {
                 // Packet finally completed, stop abandoning
                 self.part_abandoned = false;
-                self.mapper.force_headers_done();
             }
 
             return Ok(side_data);
@@ -644,6 +643,7 @@ impl LogicalStream {
             // Too large, discard and signal the mapper to move on
             self.part_len = 0;
             self.part_abandoned = true;
+            self.mapper.force_headers_done();
             return Ok(false);
         }
 
