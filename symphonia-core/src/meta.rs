@@ -105,7 +105,7 @@ pub struct MetadataInfo {
 }
 
 /// A common set of options that all metadata readers use.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MetadataOptions {
     /// The maximum size limit in bytes that a tag may occupy in memory once decoded. Tags exceeding
     /// this limit will be skipped by the demuxer. Take note that tags in-memory are stored as UTF-8

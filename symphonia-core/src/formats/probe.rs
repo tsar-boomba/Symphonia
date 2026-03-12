@@ -461,7 +461,12 @@ impl Probe {
             match self.next(&mut mss, hint).await? {
                 // If a container format is found, return an instance to it's reader.
                 ProbeMatch::Format { factory, .. } => {
-                    // Instantiate the format reader.
+                    // Instantiate the format reader. Use the provided meta_opts if the user didn't specify any
+                    // for the format reader specifically
+                    if fmt_opts.metadata_options == MetadataOptions::default() {
+                        fmt_opts.metadata_options = meta_opts;
+                    }
+
                     return factory(mss, fmt_opts).await;
                 }
                 // If metadata was found, instantiate the metadata reader, read the metadata, and
