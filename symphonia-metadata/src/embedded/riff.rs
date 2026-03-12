@@ -15,7 +15,7 @@ use hashbrown::HashMap;
 
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::{MetadataBuilder, MetadataRevision, MetadataSideData, RawTag};
+use symphonia_core::meta::{MetadataBuilder, MetadataOptions, MetadataRevision, MetadataSideData, RawTag};
 
 use crate::utils::std_tag::*;
 
@@ -89,8 +89,9 @@ pub fn parse_riff_info_chunk(
 pub async fn read_riff_id3_chunk<B: ReadBytes>(
     reader: &mut B,
     side_data: &mut Vec<MetadataSideData>,
+    opts: &MetadataOptions,
 ) -> Result<MetadataRevision> {
     let mut builder = MetadataBuilder::new(crate::id3v2::ID3V2_METADATA_INFO);
-    crate::id3v2::read_id3v2(reader, &mut builder, side_data).await?;
+    crate::id3v2::read_id3v2(reader, &mut builder, side_data, opts).await?;
     Ok(builder.build())
 }

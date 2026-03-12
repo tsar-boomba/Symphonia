@@ -11,6 +11,10 @@ use alloc::sync::Arc;
 use core::char;
 use core::str;
 use symphonia_core::Lazy;
+<<<<<<< Updated upstream
+=======
+use symphonia_core::meta::MetadataOptions;
+>>>>>>> Stashed changes
 
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
@@ -30,6 +34,7 @@ use smallvec::{SmallVec, smallvec};
 use crate::id3v2::frames::{FrameResult, Id3v2Chapter, Id3v2TableOfContents};
 use crate::id3v2::sub_fields::*;
 use crate::utils::id3v2::get_visual_key_from_picture_type;
+use crate::utils::images::DEFAULT_MAX_IMAGE_SIZE;
 use crate::utils::std_tag::*;
 
 use crate::utils::images::try_get_image_info;
@@ -167,8 +172,7 @@ async fn read_lang_code(reader: &mut BufReader<'_>) -> Result<Option<String>> {
     let code = if code.eq_ignore_ascii_case(b"XXX") {
         // Unknown language code.
         None
-    }
-    else {
+    } else {
         // Convert to lowercase string.
         Some(core::str::from_utf8(&code).unwrap().to_ascii_lowercase())
     };
@@ -298,6 +302,7 @@ pub async fn read_aenc_frame(
 pub async fn read_apic_frame(
     mut reader: BufReader<'_>,
     frame: &FrameInfo<'_>,
+    opts: &MetadataOptions,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the text description.
     let encoding = read_encoding(&mut reader).await?;
@@ -313,8 +318,7 @@ pub async fn read_apic_frame(
             _ => None,
         }
         .map(|s| s.to_string())
-    }
-    else {
+    } else {
         // APIC frames use a null-terminated ASCII media-type string.
         read_string_ignore_empty(&mut reader, Encoding::Iso8859_1)?
     };
@@ -329,9 +333,13 @@ pub async fn read_apic_frame(
         tags.push(Tag::new_from_parts("", "", Some(StandardTag::Description(Arc::from(desc)))));
     }
 
-    // The remainder of the APIC frame is the image data.
-    // TODO: Apply a limit.
-    let data = Box::from(reader.read_buf_bytes_available_ref());
+    // The remainder of the APIC frame is the image data. Skip if its too big.
+    let data = if opts.limit_visual_bytes.within_limit_w_default(reader.bytes_available(), DEFAULT_MAX_IMAGE_SIZE) {
+        Box::from(reader.read_buf_bytes_available_ref())
+    } else {
+        reader.ignore_bytes(reader.bytes_available()).await?;
+        return Ok(FrameResult::Skipped)
+    };
 
     // Try to get information about the image.
     let image_info = try_get_image_info(&data).await;
@@ -389,6 +397,7 @@ pub async fn read_atxt_frame(
 pub async fn read_chap_frame(
     mut reader: BufReader<'_>,
     frame: &FrameInfo<'_>,
+    opts: &MetadataOptions,
 ) -> Result<FrameResult> {
     use crate::id3v2::frames::{
         min_frame_size, read_id3v2p2_frame, read_id3v2p3_frame, read_id3v2p4_frame,
@@ -418,9 +427,9 @@ pub async fn read_chap_frame(
 
     while reader.bytes_available() >= min_frame_size(frame.major_version) {
         let frame = match frame.major_version {
-            2 => read_id3v2p2_frame(&mut reader).await,
-            3 => read_id3v2p3_frame(&mut reader).await,
-            4 => read_id3v2p4_frame(&mut reader).await,
+            2 => read_id3v2p2_frame(&mut reader, opts).await,
+            3 => read_id3v2p3_frame(&mut reader, opts).await,
+            4 => read_id3v2p4_frame(&mut reader, opts).await,
             _ => break,
         }?;
 
@@ -573,6 +582,7 @@ pub async fn read_crm_frame(
 pub async fn read_ctoc_frame(
     mut reader: BufReader<'_>,
     frame: &FrameInfo<'_>,
+    opts: &MetadataOptions,
 ) -> Result<FrameResult> {
     use crate::id3v2::frames::{
         min_frame_size, read_id3v2p2_frame, read_id3v2p3_frame, read_id3v2p4_frame,
@@ -603,9 +613,9 @@ pub async fn read_ctoc_frame(
 
     while reader.bytes_available() >= min_frame_size(frame.major_version) {
         let frame = match frame.major_version {
-            2 => read_id3v2p2_frame(&mut reader).await,
-            3 => read_id3v2p3_frame(&mut reader).await,
-            4 => read_id3v2p4_frame(&mut reader).await,
+            2 => read_id3v2p2_frame(&mut reader, opts).await,
+            3 => read_id3v2p3_frame(&mut reader, opts).await,
+            4 => read_id3v2p4_frame(&mut reader, opts).await,
             _ => break,
         }?;
 
@@ -922,8 +932,7 @@ pub async fn read_tipl_frame(
         }
 
         Ok(FrameResult::MultipleTags(tags))
-    }
-    else {
+    } else {
         // Return as text frame.
         Ok(FrameResult::Tag(Tag::new(raw)))
     }
@@ -1266,6 +1275,7 @@ pub async fn read_frame(
     reader: BufReader<'_>,
     id: &[u8],
     major_version: u8,
+    opts: &MetadataOptions,
 ) -> Result<FrameResult> {
     let raw_tag_parser = get_parser(id);
     let frame = &FrameInfo::new(id, major_version, raw_tag_parser);
@@ -1273,14 +1283,14 @@ pub async fn read_frame(
     // Standardize the ID for matching
     match frame.id.as_bytes() {
         b"AENC" => read_aenc_frame(reader, frame).await,
-        b"APIC" => read_apic_frame(reader, frame).await,
+        b"APIC" => read_apic_frame(reader, frame, opts).await,
         b"ASPI" => read_raw_frame(reader, frame), // TODO: SeekIndex side-data?
         b"ATXT" => read_atxt_frame(reader, frame).await,
-        b"CHAP" => read_chap_frame(reader, frame).await,
+        b"CHAP" => read_chap_frame(reader, frame, opts).await,
         b"COMM" => read_comm_frame(reader, frame).await,
         b"COMR" => read_comr_frame(reader, frame).await,
         b"CRM_" => read_crm_frame(reader, frame).await, // Pseudo-frame to support ID3v2.2 frame
-        b"CTOC" => read_ctoc_frame(reader, frame).await,
+        b"CTOC" => read_ctoc_frame(reader, frame, opts).await,
         b"ENCR" => read_encr_frame(reader, frame).await,
         b"EQU2" => read_raw_frame(reader, frame),
         b"EQUA" => read_raw_frame(reader, frame),

@@ -16,7 +16,7 @@ use symphonia_core::errors::{reset_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_OGG;
-use symphonia_core::meta::{Metadata, MetadataLog, MetadataSideData};
+use symphonia_core::meta::{Metadata, MetadataLog, MetadataOptions, MetadataSideData};
 use symphonia_core::support_format;
 use symphonia_core::{async_trait, io::*};
 
@@ -38,6 +38,7 @@ pub struct OggReader<'s> {
     reader: MediaSourceStream<'s>,
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
+    meta_options: MetadataOptions,
     metadata: MetadataLog,
     /// The page reader.
     pages: PageReader,
@@ -65,6 +66,7 @@ impl<'s> OggReader<'s> {
             tracks: Default::default(),
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
+            meta_options: opts.metadata_options,
             streams: Default::default(),
             pages,
             phys_byte_range_start: 0,
@@ -125,7 +127,11 @@ impl<'s> OggReader<'s> {
 
         if let Some(stream) = self.streams.get_mut(&page.header.serial) {
             // TODO: Process side data.
+<<<<<<< Updated upstream
             let _side_data = stream.read_page(&page).await?;
+=======
+            let _side_data = stream.read_page(&page, &self.meta_options).await?;
+>>>>>>> Stashed changes
         } else {
             // If there is no associated logical stream with this page, then this is a
             // completely random page within the physical stream. Discard it.
@@ -272,7 +278,7 @@ impl<'s> OggReader<'s> {
 
                 // Read in the current page since it contains our timestamp.
                 if s == serial {
-                    stream.read_page(&self.pages.page()).await?;
+                    stream.read_page(&self.pages.page(), &self.meta_options).await?;
                 }
             }
         }
@@ -375,7 +381,7 @@ impl<'s> OggReader<'s> {
             let page = self.pages.page();
 
             if let Some(stream) = streams.get_mut(&page.header.serial) {
-                let side_data = stream.read_page_init(&page, true).await?;
+                let side_data = stream.read_page_init(&page, true, &self.meta_options).await?;
 
                 // Consume each piece of side data.
                 for data in side_data {

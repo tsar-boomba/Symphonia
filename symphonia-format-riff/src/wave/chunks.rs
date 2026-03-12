@@ -21,7 +21,7 @@ use symphonia_core::codecs::audio::well_known::{
 use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
-use symphonia_core::meta::{MetadataBuilder, MetadataRevision};
+use symphonia_core::meta::{MetadataBuilder, MetadataOptions, MetadataRevision};
 
 use symphonia_metadata::embedded::riff;
 
@@ -396,6 +396,7 @@ impl ParseChunk for WaveFormatChunk {
         reader: &mut B,
         _tag: [u8; 4],
         len: u32,
+        _opts: &MetadataOptions,
     ) -> Result<WaveFormatChunk> {
         // WaveFormat has a minimal length of 16 bytes. This may be extended with format specific
         // data later.
@@ -515,7 +516,7 @@ pub struct FactChunk {
 }
 
 impl ParseChunk for FactChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32, _opts: &MetadataOptions,) -> Result<Self> {
         // A Fact chunk is exactly 4 bytes long, though there is some mystery as to whether there
         // can be more fields in the chunk.
         if len != 4 {
@@ -548,7 +549,7 @@ impl ListChunk {
 }
 
 impl ParseChunk for ListChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32, _opts: &MetadataOptions,) -> Result<Self> {
         // A List chunk must contain atleast the list/form identifier. However, an empty list
         // (len == 4) is permissible.
         if len < 4 {
@@ -574,7 +575,7 @@ pub struct InfoChunk {
 }
 
 impl ParseChunk for InfoChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
+    async fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32, opts: &MetadataOptions,) -> Result<InfoChunk> {
         // TODO: Apply limit.
         let buf = reader.read_boxed_slice_exact(len as usize).await?;
         Ok(InfoChunk { tag, buf })
@@ -586,7 +587,7 @@ pub struct DataChunk {
 }
 
 impl ParseChunk for DataChunk {
-    async fn parse<B: ReadBytes>(_: &mut B, _: [u8; 4], len: u32) -> Result<DataChunk> {
+    async fn parse<B: ReadBytes>(_: &mut B, _: [u8; 4], len: u32, _opts: &MetadataOptions) -> Result<DataChunk> {
         // If the length us u32::MAX, that usually indicates the file is streaming and the length
         // is not known.
         Ok(DataChunk { len: Some(len).filter(|&len| len != u32::MAX) })
@@ -639,13 +640,14 @@ pub fn append_fact_params(track: &mut Track, fact: &FactChunk) {
 pub async fn read_info_chunk(
     source: &mut MediaSourceStream<'_>,
     len: u32,
+    opts: &MetadataOptions,
 ) -> Result<MetadataRevision> {
     let mut builder = MetadataBuilder::new(WAVE_METADATA_INFO);
 
     let mut list = ChunksReader::<RiffInfoListChunks>::new(Some(len), ByteOrder::LittleEndian);
 
     while let Some(RiffInfoListChunks::Info(info)) = list.next(source).await? {
-        let info = info.parse(source).await?;
+        let info = info.parse(source, opts).await?;
         // Ignore errors while parsing one chunk.
         let _ = riff::parse_riff_info_chunk(info.tag, &info.buf, &mut builder);
     }

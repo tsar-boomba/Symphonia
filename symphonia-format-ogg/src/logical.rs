@@ -11,6 +11,7 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::Track;
+use symphonia_core::meta::MetadataOptions;
 use symphonia_core::packet::{Packet, PacketBuilder};
 use symphonia_core::units::{Duration, Timestamp};
 
@@ -111,8 +112,8 @@ impl LogicalStream {
     }
 
     /// Reads a page.
-    pub async fn read_page(&mut self, page: &Page<'_>) -> Result<Vec<SideData>> {
-        self.read_page_init(page, false).await
+    pub async fn read_page(&mut self, page: &Page<'_>, opts: &MetadataOptions) -> Result<Vec<SideData>> {
+        self.read_page_init(page, false, opts).await
     }
 
     /// Read a page. Specifying whether this is the initial bitstream page.
@@ -120,6 +121,7 @@ impl LogicalStream {
         &mut self,
         page: &Page<'_>,
         is_init_page: bool,
+        opts: &MetadataOptions,
     ) -> Result<Vec<SideData>> {
         // Side data vector. This will not allocate unless data is pushed to it (normal case).
         let mut side_data = Vec::new();
@@ -188,7 +190,7 @@ impl LogicalStream {
             // Perform packet mapping. If the packet contains stream data, queue it onto the packet
             // queue. If it contains side data, then add it to the side data list. Ignore other
             // types of packet data.
-            match self.mapper.map_packet(&data).await {
+            match self.mapper.map_packet(&data, opts).await {
                 Ok(MapResult::StreamData { dur, discard }) => {
                     total_pkt_dur = total_pkt_dur.saturating_add(dur);
                     total_pkt_discard = total_pkt_discard.saturating_add(discard);

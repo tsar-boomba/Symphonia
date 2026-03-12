@@ -11,6 +11,7 @@ use alloc::sync::Arc;
 use core::fmt;
 use core::num::NonZero;
 use core::str;
+use symphonia_metadata::DEFAULT_MAX_META_SIZE;
 
 use alloc::vec::Vec;
 use symphonia_core::audio::{Channels, layouts};
@@ -21,7 +22,7 @@ use symphonia_core::codecs::audio::well_known::{
 };
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::ReadBytes;
-use symphonia_core::meta::{MetadataRevision, StandardTag, Tag};
+use symphonia_core::meta::{MetadataOptions, MetadataRevision, StandardTag, Tag};
 use symphonia_core::util::text;
 use symphonia_metadata::embedded::riff;
 
@@ -171,7 +172,12 @@ impl CommonChunk {
 }
 
 impl ParseChunk for CommonChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], _: u32) -> Result<CommonChunk> {
+    async fn parse<B: ReadBytes>(
+        reader: &mut B,
+        _tag: [u8; 4],
+        _: u32,
+        _opts: &MetadataOptions,
+    ) -> Result<CommonChunk> {
         let n_channels = reader.read_be_u16().await?;
         let n_sample_frames = reader.read_be_u32().await?;
         let sample_size = reader.read_be_u16().await?;
@@ -226,13 +232,21 @@ impl fmt::Display for CommonChunk {
 }
 
 pub trait CommonChunkParser {
-    async fn parse_aiff<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk>;
+    async fn parse_aiff<B: ReadBytes>(
+        self,
+        reader: &mut B,
+        opts: &MetadataOptions,
+    ) -> Result<CommonChunk>;
     async fn parse_aifc<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk>;
 }
 
 impl CommonChunkParser for ChunkParser<CommonChunk> {
-    async fn parse_aiff<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk> {
-        self.parse(reader).await
+    async fn parse_aiff<B: ReadBytes>(
+        self,
+        reader: &mut B,
+        opts: &MetadataOptions,
+    ) -> Result<CommonChunk> {
+        self.parse(reader, opts).await
     }
 
     async fn parse_aifc<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk> {
@@ -274,7 +288,12 @@ pub struct SoundChunk {
 }
 
 impl ParseChunk for SoundChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, _: [u8; 4], len: u32) -> Result<SoundChunk> {
+    async fn parse<B: ReadBytes>(
+        reader: &mut B,
+        _: [u8; 4],
+        len: u32,
+        _opts: &MetadataOptions,
+    ) -> Result<SoundChunk> {
         // Validate minimum size.
         if len < 8 {
             return decode_error("aiff: invalid chunk size for sound chunk");
@@ -306,7 +325,12 @@ pub struct Marker {
 }
 
 impl ParseChunk for MarkerChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], _len: u32) -> Result<Self> {
+    async fn parse<B: ReadBytes>(
+        reader: &mut B,
+        _tag: [u8; 4],
+        _len: u32,
+        _opts: &MetadataOptions,
+    ) -> Result<Self> {
         let num_markers = reader.read_be_u16().await?;
 
         let mut markers = Vec::with_capacity(usize::from(num_markers));
@@ -329,7 +353,12 @@ pub struct AppSpecificChunk {
 }
 
 impl ParseChunk for AppSpecificChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+    async fn parse<B: ReadBytes>(
+        reader: &mut B,
+        _tag: [u8; 4],
+        len: u32,
+        _opts: &MetadataOptions,
+    ) -> Result<Self> {
         let start_pos = reader.pos();
 
         // The application signature.
@@ -367,7 +396,12 @@ pub struct Comment {
 }
 
 impl ParseChunk for CommentsChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], _len: u32) -> Result<Self> {
+    async fn parse<B: ReadBytes>(
+        reader: &mut B,
+        _tag: [u8; 4],
+        _len: u32,
+        opts: &MetadataOptions,
+    ) -> Result<Self> {
         let num_comments = reader.read_be_u16().await?;
 
         let mut comments = Vec::with_capacity(usize::from(num_comments));
@@ -376,7 +410,15 @@ impl ParseChunk for CommentsChunk {
             let timestamp = reader.read_be_u32().await?;
             let marker_id = reader.read_be_i16().await?;
             let len = reader.read_be_u16().await?;
-            let buf = reader.read_boxed_slice_exact(usize::from(len)).await?;
+            let buf = if opts
+                .limit_metadata_bytes
+                .within_limit_w_default(u64::from(len), DEFAULT_MAX_META_SIZE)
+            {
+                reader.read_boxed_slice_exact(usize::from(len)).await?
+            } else {
+                reader.ignore_bytes(u64::from(len)).await?;
+                continue;
+            };
 
             comments.push(Comment { timestamp, marker_id, text: decode_string(&buf) });
         }
@@ -390,7 +432,12 @@ pub struct TextChunk {
 }
 
 impl ParseChunk for TextChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self> {
+    async fn parse<B: ReadBytes>(
+        reader: &mut B,
+        tag: [u8; 4],
+        len: u32,
+        _opts: &MetadataOptions,
+    ) -> Result<Self> {
         let text = reader.read_boxed_slice_exact(len as usize).await?;
 
         let value = Arc::new(decode_string(&text));
@@ -414,9 +461,14 @@ pub struct Id3Chunk {
 }
 
 impl ParseChunk for Id3Chunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], _len: u32) -> Result<Self> {
+    async fn parse<B: ReadBytes>(
+        reader: &mut B,
+        _tag: [u8; 4],
+        _len: u32,
+        opts: &MetadataOptions,
+    ) -> Result<Self> {
         let mut side_data = Vec::new();
-        let metadata = riff::read_riff_id3_chunk(reader, &mut side_data).await?;
+        let metadata = riff::read_riff_id3_chunk(reader, &mut side_data, opts).await?;
         Ok(Id3Chunk { metadata })
     }
 }

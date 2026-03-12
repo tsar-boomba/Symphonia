@@ -23,15 +23,16 @@ use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::well_known::METADATA_ID_VORBIS_COMMENT;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, MetadataSideData,
-    RawTag, StandardTag, Tag, Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, MetadataOptions,
+    MetadataSideData, RawTag, StandardTag, Tag, Visual,
 };
 use symphonia_core::units::Time;
 use symphonia_core::util::text;
 
+use crate::DEFAULT_MAX_META_SIZE;
 use crate::embedded::flac;
 use crate::utils::base64;
-use crate::utils::images::try_get_image_info;
+use crate::utils::images::{DEFAULT_MAX_IMAGE_SIZE, try_get_image_info};
 use crate::utils::std_tag::*;
 
 pub const VORBIS_COMMENT_METADATA_INFO: MetadataInfo = MetadataInfo {
@@ -160,38 +161,66 @@ static VORBIS_COMMENT_MAP: Lazy<RawTagParserMap> = Lazy::new(|| {
 });
 
 /// Parse a string containing a base64 encoded FLAC picture block into a visual.
+<<<<<<< Updated upstream
 async fn parse_base64_picture_block(b64: &str) -> Result<ParsedComment> {
     // Decode the Base64 encoded FLAC metadata block.
     let Some(data) = base64::decode(b64)
     else {
+=======
+async fn parse_base64_picture_block(
+    b64: &str,
+    opts: &MetadataOptions,
+) -> Result<Option<ParsedComment>> {
+    // Decode the Base64 encoded FLAC metadata block if its not too big.
+    if !opts.limit_visual_bytes.within_limit_w_default(b64.len() as u64, DEFAULT_MAX_IMAGE_SIZE) {
+        return Ok(None);
+    }
+
+    let Some(data) = base64::decode(b64) else {
+>>>>>>> Stashed changes
         return decode_error("meta(vorbis): the base64 encoding of a picture block is invalid");
     };
 
-    flac::read_flac_picture_block(&mut BufReader::new(&data)).await.map(ParsedComment::Visual)
+    flac::read_flac_picture_block(&mut BufReader::new(&data), opts)
+        .await
+        .map(|opt| opt.map(ParsedComment::Visual))
 }
 
 /// Parse a string containing a base64 encoding image file into a visual.
+<<<<<<< Updated upstream
 async fn parse_base64_cover_art(b64: &str) -> Result<ParsedComment> {
     // Decode the Base64 encoded image data.
     let Some(data) = base64::decode(b64)
     else {
+=======
+async fn parse_base64_cover_art(
+    b64: &str,
+    opts: &MetadataOptions,
+) -> Result<Option<ParsedComment>> {
+    // Decode the Base64 encoded image data. If its not too big
+
+    if !opts.limit_visual_bytes.within_limit_w_default(b64.len() as u64, DEFAULT_MAX_IMAGE_SIZE) {
+        return Ok(None);
+    }
+
+    let Some(data) = base64::decode(b64) else {
+>>>>>>> Stashed changes
         return decode_error("meta (vorbis): the base64 encoding of cover art is invalid");
     };
 
     // Try to get image information.
-    let Some(image_info) = try_get_image_info(&data).await
-    else {
+    let Some(image_info) = try_get_image_info(&data).await else {
         return decode_error("meta (vorbis): could not detect cover art image format");
     };
 
-    Ok(ParsedComment::Visual(Visual {
+    Ok(Some(ParsedComment::Visual(Visual {
         media_type: Some(image_info.media_type),
         dimensions: Some(image_info.dimensions),
         color_mode: Some(image_info.color_mode),
         usage: None,
         tags: vec![],
         data,
-    }))
+    })))
 }
 
 /// Parse a chapter timestamp in the HH:MM:SS.SSS format.
@@ -332,7 +361,7 @@ enum ParsedComment {
 }
 
 /// Parse the given Vorbis Comment string into a `Tag`.
-async fn parse_vorbis_comment(buf: &[u8]) -> Result<ParsedComment> {
+async fn parse_vorbis_comment(buf: &[u8], opts: &MetadataOptions) -> Result<Option<ParsedComment>> {
     // Vorbis Comments are stored as <Key>=<Value> pairs where <Key> is a reduced ASCII-only
     // identifier and <Value> is a UTF-8 string value.
     //
@@ -347,22 +376,25 @@ async fn parse_vorbis_comment(buf: &[u8]) -> Result<ParsedComment> {
 
         if let Some(key) = try_parse_chapter_info_key(&key) {
             // A comment with a key starting with "CHAPTERXXX" is a chapter information comment.
+<<<<<<< Updated upstream
             Ok(ParsedComment::ChapterInfo(ChapterInfo { key, value: value.to_string() }))
         }
         else if key.eq_ignore_ascii_case("metadata_block_picture") {
+=======
+            Ok(Some(ParsedComment::ChapterInfo(ChapterInfo { key, value: value.to_string() })))
+        } else if key.eq_ignore_ascii_case("metadata_block_picture") {
+>>>>>>> Stashed changes
             // A comment with a key "METADATA_BLOCK_PICTURE" is a FLAC picture block encoded in
             // base64. Attempt to decode it as such.
-            parse_base64_picture_block(value).await
-        }
-        else if key.eq_ignore_ascii_case("coverart") {
+            parse_base64_picture_block(value, opts).await
+        } else if key.eq_ignore_ascii_case("coverart") {
             // A comment with a key "COVERART" is a base64 encoded image. Attempt to decode it as
             // such.
-            parse_base64_cover_art(value).await
-        }
-        else {
+            parse_base64_cover_art(value, opts).await
+        } else {
             // Add a tag created from the key-value pair, while also attempting to map it to a
             // standard tag.
-            Ok(ParsedComment::Tag(RawTag::new(key, value)))
+            Ok(Some(ParsedComment::Tag(RawTag::new(key, value))))
         }
     }
     else {
@@ -374,6 +406,7 @@ pub async fn read_vorbis_comment<B: ReadBytes>(
     reader: &mut B,
     builder: &mut MetadataBuilder,
     side_data: &mut Vec<MetadataSideData>,
+    opts: &MetadataOptions,
 ) -> Result<()> {
     // Read the vendor string length in bytes.
     let vendor_len = reader.read_u32().await?;
@@ -392,15 +425,25 @@ pub async fn read_vorbis_comment<B: ReadBytes>(
         // Read the comment string length in bytes.
         let comment_length = reader.read_u32().await?;
 
-        // TODO: Apply a limit.
+        // If this comment is too long for both limits, just ignore it
+        if !opts
+            .limit_visual_bytes
+            .within_limit_w_default(u64::from(comment_length), DEFAULT_MAX_IMAGE_SIZE)
+            && !opts
+                .limit_metadata_bytes
+                .within_limit_w_default(u64::from(comment_length), DEFAULT_MAX_META_SIZE)
+        {
+            reader.ignore_bytes(u64::from(comment_length)).await?;
+            continue;
+        }
 
         // Read the comment string.
         let mut comment_data = vec![0; comment_length as usize];
         reader.read_buf_exact(&mut comment_data).await?;
 
         // Parse the Vorbis comment and handle the parsed output.
-        match parse_vorbis_comment(&comment_data).await {
-            Ok(parsed) => match parsed {
+        match parse_vorbis_comment(&comment_data, opts).await {
+            Ok(Some(parsed)) => match parsed {
                 ParsedComment::Tag(raw) => {
                     // Comment was a tag.
                     builder.add_mapped_tags(raw, &VORBIS_COMMENT_MAP);
@@ -415,6 +458,9 @@ pub async fn read_vorbis_comment<B: ReadBytes>(
                     chapters.entry(info.key.num).or_default().push(info);
                 }
             },
+            Ok(None) => {
+                // Comment was skipped because its too large
+            }
             Err(err) => warn!("{err}"),
         }
     }

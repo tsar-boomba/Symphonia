@@ -17,14 +17,15 @@ use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::well_known::METADATA_ID_FLAC;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, Size, StandardTag, Tag,
-    Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, MetadataOptions, Size,
+    StandardTag, Tag, Visual,
 };
 use symphonia_core::units::{TimeBase, Timestamp};
 
+use crate::DEFAULT_MAX_META_SIZE;
 use crate::embedded::vorbis;
 use crate::utils::id3v2::get_visual_key_from_picture_type;
-use crate::utils::images::try_get_image_info;
+use crate::utils::images::{DEFAULT_MAX_IMAGE_SIZE, try_get_image_info};
 
 pub const FLAC_METADATA_INFO: MetadataInfo = MetadataInfo {
     metadata: METADATA_ID_FLAC,
@@ -52,22 +53,32 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
 pub async fn read_flac_comment_block<B: ReadBytes>(
     reader: &mut B,
     builder: &mut MetadataBuilder,
+    opts: &MetadataOptions,
 ) -> Result<()> {
     // Discard side data.
     let mut side_data = Default::default();
-    vorbis::read_vorbis_comment(reader, builder, &mut side_data).await
+    vorbis::read_vorbis_comment(reader, builder, &mut side_data, opts).await
 }
 
 /// Read a picture metadata block.
-pub async fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Visual> {
+pub async fn read_flac_picture_block<B: ReadBytes>(
+    reader: &mut B,
+    opts: &MetadataOptions,
+) -> Result<Option<Visual>> {
     let type_enc = reader.read_be_u32().await?;
 
     // Read the Media Type length in bytes.
-    // TODO: Apply a limit.
     let media_type_len = reader.read_be_u32().await? as usize;
 
     // Read the Media Type bytes
-    let media_type_buf = reader.read_boxed_slice_exact(media_type_len).await?;
+    let media_type_buf = if opts
+        .limit_metadata_bytes
+        .within_limit_w_default(media_type_len as u64, DEFAULT_MAX_META_SIZE)
+    {
+        reader.read_boxed_slice_exact(media_type_len).await?
+    } else {
+        return Ok(None);
+    };
 
     // Convert Media Type bytes to an ASCII string. Non-printable ASCII characters are invalid.
     let media_type = match printable_ascii_to_string(&media_type_buf) {
@@ -81,11 +92,16 @@ pub async fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Vis
     let mut tags = vec![];
 
     // Read the description length in bytes.
-    // TODO: Apply a limit.
     let desc_len = reader.read_be_u32().await? as usize;
 
     // Read the description bytes.
-    let desc_buf = reader.read_boxed_slice_exact(desc_len).await?;
+    let desc_buf =
+        if opts.limit_metadata_bytes.within_limit_w_default(desc_len as u64, DEFAULT_MAX_META_SIZE)
+        {
+            reader.read_boxed_slice_exact(desc_len).await?
+        } else {
+            return Ok(None);
+        };
 
     // Convert to a UTF-8 string.
     let desc = String::from_utf8_lossy(&desc_buf);
@@ -113,24 +129,30 @@ pub async fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Vis
     let _color_mode = reader.read_be_u32().await?;
 
     // Read the image data length in bytes.
-    // TODO: Apply a limit.
     let data_len = reader.read_be_u32().await? as usize;
 
     // Read the image data.
-    let data = reader.read_boxed_slice_exact(data_len).await?;
+    let data = if opts
+        .limit_visual_bytes
+        .within_limit_w_default(data_len as u64, DEFAULT_MAX_IMAGE_SIZE)
+    {
+        reader.read_boxed_slice_exact(data_len).await?
+    } else {
+        return Ok(None);
+    };
 
     // Try to detect the image characteristics from the image data. Detect image characteristics
     // will be preferred over what's been stated in the picture block.
     let image_info = try_get_image_info(&data).await;
 
-    Ok(Visual {
+    Ok(Some(Visual {
         media_type: image_info.as_ref().map(|info| info.media_type.clone()).or(media_type),
         dimensions: image_info.as_ref().map(|info| info.dimensions).or(dimensions),
         color_mode: image_info.as_ref().map(|info| info.color_mode),
         usage: get_visual_key_from_picture_type(type_enc),
         tags,
         data,
-    })
+    }))
 }
 
 /// Read a seek table metadata block as a seek index.
@@ -158,8 +180,7 @@ pub async fn read_flac_seektable_block<B: ReadBytes>(
             // The number of samples in the target frame.
             let num_samples = reader.read_be_u16().await?;
             index.insert(sample, offset, u32::from(num_samples));
-        }
-        else {
+        } else {
             reader.ignore_bytes(10).await?
         }
     }
@@ -328,8 +349,7 @@ async fn read_flac_cuesheet_track<B: ReadBytes>(
         }
 
         Ok(ChapterGroupItem::Group(group))
-    }
-    else {
+    } else {
         let start_ts = n_offset_samples.try_into().unwrap_or_else(|_| {
             warn!("cuesheet track index offset too large, clamping to maximum");
             i64::MAX
@@ -409,8 +429,7 @@ fn escape_identifier(buf: &[u8]) -> String {
     for &byte in buf {
         if byte.is_ascii() && !byte.is_ascii_control() {
             ident.push(char::from(byte));
-        }
-        else {
+        } else {
             let u = (byte & 0xf0) >> 4;
             let l = byte & 0x0f;
             ident.push_str("\\0x");

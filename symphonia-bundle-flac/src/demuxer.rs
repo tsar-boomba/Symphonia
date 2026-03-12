@@ -99,8 +99,7 @@ impl<'s> FlacReader<'s> {
                     // Only a single stream information block is allowed.
                     if track.is_none() {
                         track = Some(read_stream_info_block(&mut block_stream, &mut parser).await?);
-                    }
-                    else {
+                    } else {
                         return decode_error("flac: found more than one stream info block");
                     }
                 }
@@ -116,14 +115,18 @@ impl<'s> FlacReader<'s> {
                         index = Some(
                             read_flac_seektable_block(&mut block_stream, header.block_len).await?,
                         );
-                    }
-                    else {
+                    } else {
                         return decode_error("flac: found more than one seek table block");
                     }
                 }
                 // VorbisComment blocks are parsed into Tags.
                 MetadataBlockType::VorbisComment => {
-                    read_flac_comment_block(&mut block_stream, &mut metadata_builder).await?;
+                    read_flac_comment_block(
+                        &mut block_stream,
+                        &mut metadata_builder,
+                        &opts.metadata_options,
+                    )
+                    .await?;
                 }
                 // Cuesheet blocks are parsed into Cues.
                 MetadataBlockType::Cuesheet => {
@@ -132,14 +135,17 @@ impl<'s> FlacReader<'s> {
                     // since the stream information block must always be the first metadata block.
                     if let Some(tb) = track.as_ref().and_then(|track| track.time_base) {
                         chapters = Some(read_flac_cuesheet_block(&mut block_stream, tb).await?);
-                    }
-                    else {
+                    } else {
                         return decode_error("flac: cuesheet block before stream info");
                     }
                 }
                 // Picture blocks are read as Visuals.
                 MetadataBlockType::Picture => {
-                    metadata_builder.add_visual(read_flac_picture_block(&mut block_stream).await?);
+                    if let Some(visual) =
+                        read_flac_picture_block(&mut block_stream, &opts.metadata_options).await?
+                    {
+                        metadata_builder.add_visual(visual);
+                    }
                 }
                 // Padding blocks are skipped.
                 MetadataBlockType::Padding => {
@@ -250,8 +256,7 @@ impl FormatReader for FlacReader<'_> {
     }
 
     async fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-        let Some(track) = self.tracks.first()
-        else {
+        let Some(track) = self.tracks.first() else {
             return seek_error(SeekErrorKind::Unseekable);
         };
 
@@ -329,13 +334,11 @@ impl FormatReader for FlacReader<'_> {
 
                 if ts < sync.ts {
                     end_byte_offset = mid_byte_offset;
-                }
-                else if ts >= sync.ts && ts < sync.next_ts() {
+                } else if ts >= sync.ts && ts < sync.next_ts() {
                     debug!("seeked to ts={} (delta={})", sync.ts, sync.ts.saturating_delta(ts));
 
                     return Ok(SeekedTo { track_id: 0, actual_ts: sync.ts, required_ts: ts });
-                }
-                else {
+                } else {
                     start_byte_offset = mid_byte_offset;
                 }
             }

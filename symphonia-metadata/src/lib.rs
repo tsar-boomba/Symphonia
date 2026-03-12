@@ -35,6 +35,8 @@
 #[macro_use]
 extern crate alloc;
 
+pub const DEFAULT_MAX_META_SIZE: u64 = 1024;
+
 #[cfg(feature = "ape")]
 pub mod ape;
 #[cfg(feature = "id3v1")]

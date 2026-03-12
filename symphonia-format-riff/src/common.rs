@@ -18,6 +18,7 @@ use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
 use log::{debug, info};
+use symphonia_core::meta::MetadataOptions;
 
 pub enum ByteOrder {
     LittleEndian,
@@ -146,7 +147,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
 
 /// Common trait implemented for all chunks that are parsed by a `ChunkParser`.
 pub trait ParseChunk: Sized {
-    async fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
+    async fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32, opts: &MetadataOptions) -> Result<Self>;
 }
 
 /// `ChunkParser` is a utility struct for unifying the parsing of chunks.
@@ -161,8 +162,8 @@ impl<P: ParseChunk> ChunkParser<P> {
         ChunkParser { tag, len, phantom: PhantomData }
     }
 
-    pub async fn parse<B: ReadBytes>(&self, reader: &mut B) -> Result<P> {
-        P::parse(reader, self.tag, self.len).await
+    pub async fn parse<B: ReadBytes>(&self, reader: &mut B, opts: &MetadataOptions) -> Result<P> {
+        P::parse(reader, self.tag, self.len, opts).await
     }
 }
 

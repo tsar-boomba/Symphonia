@@ -76,17 +76,25 @@ pub enum Limit {
     #[default]
     Default,
     /// Specify the upper limit of the resource. Units are case specific.
-    Maximum(usize),
+    Maximum(u64),
 }
 
 impl Limit {
     /// Gets the numeric limit of the limit, or default value. If there is no limit, None is
     /// returned.
-    pub fn limit_or_default(&self, default: usize) -> Option<usize> {
+    pub fn limit_or_default(&self, default: u64) -> Option<u64> {
         match self {
             Limit::None => None,
             Limit::Default => Some(default),
             Limit::Maximum(max) => Some(*max),
+        }
+    }
+
+    pub fn within_limit_w_default(&self, len: u64, default: u64) -> bool {
+        match self {
+            Limit::None => true,
+            Limit::Default => len < default,
+            Limit::Maximum(max) => len < *max,
         }
     }
 }

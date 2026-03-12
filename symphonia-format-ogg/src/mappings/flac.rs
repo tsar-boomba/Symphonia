@@ -19,7 +19,7 @@ use symphonia_core::codecs::audio::{AudioCodecParameters, VerificationCheck};
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, MonitorStream, ReadBytes};
-use symphonia_core::meta::MetadataBuilder;
+use symphonia_core::meta::{MetadataBuilder, MetadataOptions};
 use symphonia_core::units::Duration;
 use symphonia_metadata::embedded::flac::{
     FLAC_METADATA_INFO, read_flac_comment_block, read_flac_picture_block,
@@ -192,8 +192,7 @@ async fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
         }
 
         frame
-    }
-    else {
+    } else {
         // Variable block size streams sequence blocks by a sample number.
         let sample = match utf8_decode_be_u64(&mut reader_crc8).await? {
             Some(sample) => sample,
@@ -298,7 +297,7 @@ impl Mapper for FlacMapper {
         // Nothing to do.
     }
 
-    async fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
+    async fn map_packet(&mut self, packet: &[u8], opts: &MetadataOptions) -> Result<MapResult> {
         let packet_type = BufReader::new(packet).read_u8().await?;
 
         // A packet type of 0xff is an audio packet.
@@ -310,13 +309,11 @@ impl Mapper for FlacMapper {
             };
 
             Ok(MapResult::StreamData { dur: Duration::from(dur), discard: Duration::ZERO })
-        }
-        else if packet_type == 0x00 || packet_type == 0x80 {
+        } else if packet_type == 0x00 || packet_type == 0x80 {
             // Packet types 0x00 and 0x80 are invalid.
             warn!("ogg (flac): flac packet type {packet_type} unexpected");
             Ok(MapResult::Unknown)
-        }
-        else {
+        } else {
             let mut reader = BufReader::new(packet);
 
             // Packet types in the range 0x01 thru 0x7f, and 0x81 thru 0xfe are metadata blocks.
@@ -326,7 +323,7 @@ impl Mapper for FlacMapper {
                 MetadataBlockType::VorbisComment => {
                     let mut builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
-                    read_flac_comment_block(&mut reader, &mut builder).await?;
+                    read_flac_comment_block(&mut reader, &mut builder, opts).await?;
 
                     let rev = builder.build();
 
@@ -335,7 +332,9 @@ impl Mapper for FlacMapper {
                 MetadataBlockType::Picture => {
                     let mut builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
-                    builder.add_visual(read_flac_picture_block(&mut reader).await?);
+                    if let Some(visual) = read_flac_picture_block(&mut reader, opts).await? {
+                        builder.add_visual(visual);
+                    }
 
                     let rev = builder.build();
 

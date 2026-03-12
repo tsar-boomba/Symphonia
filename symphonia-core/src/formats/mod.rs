@@ -16,7 +16,7 @@ use crate::codecs::{CodecParameters, audio, subtitle, video};
 use crate::common::FourCc;
 use crate::errors::Result;
 use crate::io::MediaSourceStream;
-use crate::meta::{ChapterGroup, Metadata, MetadataLog};
+use crate::meta::{ChapterGroup, Metadata, MetadataLog, MetadataOptions};
 use crate::packet::Packet;
 use crate::units::{Duration, Time, TimeBase, Timestamp};
 
@@ -144,6 +144,9 @@ pub struct FormatOptions {
     /// External, supplementary, data related to the media container read before the start of the
     /// container, or provided through some other side-channel.
     pub external_data: ExternalFormatData,
+    /// Some formats (like FLAC) have metadata parsed by the format reader. We still want to properly
+    /// support limits in that case, so they can be set here.
+    pub metadata_options: MetadataOptions,
 }
 
 /// `ExternalFormatData` contains supplementary data related to the media container that was read
@@ -166,6 +169,7 @@ impl Default for FormatOptions {
             seek_index_fill_rate: 20,
             enable_gapless: false,
             external_data: Default::default(),
+            metadata_options: Default::default(),
         }
     }
 }

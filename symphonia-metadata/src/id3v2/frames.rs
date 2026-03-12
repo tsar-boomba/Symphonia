@@ -17,7 +17,7 @@ use hashbrown::HashMap;
 use symphonia_core::Lazy;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{BufReader, FiniteStream, ReadBytes};
-use symphonia_core::meta::RawTagSubField;
+use symphonia_core::meta::{MetadataOptions, RawTagSubField};
 use symphonia_core::meta::{Chapter, RawValue, Tag, Visual};
 
 use log::warn;
@@ -322,9 +322,10 @@ fn legacy_id_to_modern(id: [u8; 3]) -> [u8; 4] {
 }
 
 /// Read an ID3v2.2 frame.
-pub fn read_id3v2p2_frame<B: ReadBytes>(
-    reader: &mut B,
-) -> Pin<Box<dyn Future<Output = Result<FrameResult>> + Send + '_>> {
+pub fn read_id3v2p2_frame<'a, B: ReadBytes>(
+    reader: &'a mut B,
+    opts: &'a MetadataOptions,
+) -> Pin<Box<dyn Future<Output = Result<FrameResult>> + Send + 'a>> {
     Box::pin(async {
         let id = reader.read_triple_bytes().await?;
 
@@ -356,7 +357,7 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(
         let data = reader.read_boxed_slice_exact(size as usize).await?;
 
         // An error while reading the frame from the frame buffer is not fatal.
-        match read_frame(BufReader::new(&data), &id, 2).await {
+        match read_frame(BufReader::new(&data), &id, 2, opts).await {
             Ok(result) => Ok(result),
             Err(err) => {
                 // On error, skip the frame.
@@ -368,9 +369,10 @@ pub fn read_id3v2p2_frame<B: ReadBytes>(
 }
 
 /// Read an ID3v2.3 frame.
-pub fn read_id3v2p3_frame<B: ReadBytes>(
-    reader: &mut B,
-) -> Pin<Box<dyn Future<Output = Result<FrameResult>> + Send + '_>> {
+pub fn read_id3v2p3_frame<'a, B: ReadBytes>(
+    reader: &'a mut B,
+    opts: &'a MetadataOptions,
+) -> Pin<Box<dyn Future<Output = Result<FrameResult>> + Send + 'a>> {
     Box::pin(async {
         let id = reader.read_quad_bytes().await?;
 
@@ -447,7 +449,7 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(
         let data = reader.read_boxed_slice_exact(data_size as usize).await?;
 
         // Read the frame from the frame buffer. An error here is not fatal.
-        match read_frame(BufReader::new(&data), &id, 3).await {
+        match read_frame(BufReader::new(&data), &id, 3, opts).await {
             Ok(mut result) => {
                 // Add the sub-fields to the tag if the frame is grouped or encrypted.
                 if is_grouped || is_encrypted {
@@ -465,9 +467,10 @@ pub fn read_id3v2p3_frame<B: ReadBytes>(
 }
 
 /// Read an ID3v2.4 frame.
-pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(
-    reader: &mut B,
-) -> Pin<Box<dyn Future<Output = Result<FrameResult>> + Send + '_>> {
+pub fn read_id3v2p4_frame<'a, B: ReadBytes + FiniteStream>(
+    reader: &'a mut B,
+    opts: &'a MetadataOptions,
+) -> Pin<Box<dyn Future<Output = Result<FrameResult>> + Send + 'a>> {
     Box::pin(async {
         let id = reader.read_quad_bytes().await?;
 
@@ -560,11 +563,11 @@ pub fn read_id3v2p4_frame<B: ReadBytes + FiniteStream>(
             // unencoded form in-place before parsing.
             let unsync_data = decode_unsynchronisation(&mut data);
 
-            read_frame(BufReader::new(unsync_data), &id, 4).await
+            read_frame(BufReader::new(unsync_data), &id, 4, opts).await
         }
         else {
             // The frame body has not been unsynchronised.
-            read_frame(BufReader::new(&data), &id, 4).await
+            read_frame(BufReader::new(&data), &id, 4, opts).await
         };
 
         // An error while reading the frame from the frame buffer is not fatal.

@@ -16,6 +16,8 @@ use symphonia_core::meta::{ColorMode, ColorModel, ColorPaletteInfo, Size};
 
 use log::debug;
 
+pub const DEFAULT_MAX_IMAGE_SIZE: u64 = 500 * 1024;
+
 /// Image information.
 #[derive(Clone, Debug)]
 pub struct ImageInfo {
@@ -40,7 +42,7 @@ pub async fn try_get_image_info(buf: &[u8]) -> Option<ImageInfo> {
     const BITMAP_MARKER: &[u8] = &[0x42, 0x4d];
     const JPEG_MARKER: &[u8] = &[0xff, 0xd8];
     const GIF_MARKER_1: &[u8] = &[0x47, 0x49, 0x46, 0x38, 0x37, 0x61];
-    const GIF_MARKER_2: &[u8] = &[0x47, 0x49, 0x46, 0x38, 0x37, 0x61];
+    const GIF_MARKER_2: &[u8] = &[0x47, 0x49, 0x46, 0x38, 0x39, 0x61];
     const PNG_MARKER: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
     debug!("detecting format of image starting with: {:02x?}", &buf[..8.min(buf.len())]);

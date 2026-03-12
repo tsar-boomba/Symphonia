@@ -11,6 +11,7 @@ use alloc::boxed::Box;
 use symphonia_core::async_trait;
 use symphonia_core::errors::Result;
 use symphonia_core::formats::Track;
+use symphonia_core::meta::MetadataOptions;
 use symphonia_core::units::{Duration, Timestamp};
 
 mod flac;
@@ -78,7 +79,7 @@ pub trait Mapper: Send + Sync {
     fn make_parser(&self) -> Option<Box<dyn PacketParser>>;
 
     /// Map a packet.
-    async fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult>;
+    async fn map_packet(&mut self, packet: &[u8], opts: &MetadataOptions) -> Result<MapResult>;
 
     /// Returns `true` if the stream can is ready for usage. If the stream is not ready then the
     /// mapper needs to consume more setup packets.
@@ -123,7 +124,7 @@ impl Mapper for NullMapper {
         Some(Box::new(NullPacketParser {}))
     }
 
-    async fn map_packet(&mut self, _: &[u8]) -> Result<MapResult> {
+    async fn map_packet(&mut self, _: &[u8], _opts: &MetadataOptions) -> Result<MapResult> {
         Ok(MapResult::Unknown)
     }
 }

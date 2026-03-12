@@ -287,6 +287,7 @@ async fn read_id3v2_body<B: ReadBytes + FiniteStream>(
     header: &Header,
     metadata: &mut MetadataBuilder,
     side_data: &mut Vec<MetadataSideData>,
+    opts: &MetadataOptions,
 ) -> Result<()> {
     // If there is an extended header, read and parse it based on the major version of the tag.
     if header.has_extended_header {
@@ -305,9 +306,9 @@ async fn read_id3v2_body<B: ReadBytes + FiniteStream>(
     loop {
         // Read frames based on the major version of the tag.
         let frame = match header.major_version {
-            2 => read_id3v2p2_frame(reader).await,
-            3 => read_id3v2p3_frame(reader).await,
-            4 => read_id3v2p4_frame(reader).await,
+            2 => read_id3v2p2_frame(reader, opts).await,
+            3 => read_id3v2p3_frame(reader, opts).await,
+            4 => read_id3v2p4_frame(reader, opts).await,
             _ => break,
         }?;
 
@@ -358,6 +359,7 @@ pub(crate) async fn read_id3v2<B: ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
     side_data: &mut Vec<MetadataSideData>,
+    opts: &MetadataOptions,
 ) -> Result<()> {
     // Read the (sorta) version agnostic tag header.
     let header = read_id3v2_header(reader).await?;
@@ -367,7 +369,7 @@ pub(crate) async fn read_id3v2<B: ReadBytes>(
     let mut scoped = if header.unsynchronisation && header.major_version < 4 {
         let mut unsync = UnsyncStream::new(ScopedStream::new(reader, u64::from(header.size)));
 
-        read_id3v2_body(&mut unsync, &header, metadata, side_data).await?;
+        read_id3v2_body(&mut unsync, &header, metadata, side_data, opts).await?;
 
         unsync.into_inner()
     }
@@ -376,7 +378,7 @@ pub(crate) async fn read_id3v2<B: ReadBytes>(
     else {
         let mut scoped = ScopedStream::new(reader, u64::from(header.size));
 
-        read_id3v2_body(&mut scoped, &header, metadata, side_data).await?;
+        read_id3v2_body(&mut scoped, &header, metadata, side_data, opts).await?;
 
         scoped
     };
@@ -547,11 +549,12 @@ pub(crate) const ID3V2_METADATA_INFO: MetadataInfo =
 /// ID3v2 tag reader.
 pub struct Id3v2Reader<'s> {
     reader: MediaSourceStream<'s>,
+    opts: MetadataOptions,
 }
 
 impl<'s> Id3v2Reader<'s> {
-    pub fn try_new(mss: MediaSourceStream<'s>, _opts: MetadataOptions) -> Result<Self> {
-        Ok(Self { reader: mss })
+    pub fn try_new(mss: MediaSourceStream<'s>, opts: MetadataOptions) -> Result<Self> {
+        Ok(Self { reader: mss, opts })
     }
 }
 
@@ -592,7 +595,7 @@ impl<'s> MetadataReader for Id3v2Reader<'s> {
         let mut builder = MetadataBuilder::new(ID3V2_METADATA_INFO);
         let mut side_data = Vec::new();
 
-        read_id3v2(&mut self.reader, &mut builder, &mut side_data).await?;
+        read_id3v2(&mut self.reader, &mut builder, &mut side_data, &self.opts).await?;
 
         Ok(MetadataBuffer { revision: builder.build(), side_data })
     }

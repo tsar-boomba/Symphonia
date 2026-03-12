@@ -18,7 +18,7 @@ use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia_core::errors::Result;
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, ReadBytes};
-use symphonia_core::meta::MetadataBuilder;
+use symphonia_core::meta::{MetadataBuilder, MetadataOptions};
 
 use symphonia_core::units::Duration;
 use symphonia_metadata::embedded::vorbis::{self, VORBIS_COMMENT_METADATA_INFO};
@@ -246,7 +246,7 @@ impl Mapper for OpusMapper {
         Some(Box::new(OpusPacketParser {}))
     }
 
-    async fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
+    async fn map_packet(&mut self, packet: &[u8], opts: &MetadataOptions) -> Result<MapResult> {
         if !self.need_comment {
             let (dur, discard) = OpusPacketParser {}.parse_next_packet_dur(packet).await;
             Ok(MapResult::StreamData { dur, discard })
@@ -263,7 +263,7 @@ impl Mapper for OpusMapper {
                 let mut builder = MetadataBuilder::new(VORBIS_COMMENT_METADATA_INFO);
                 let mut side_data = Default::default();
 
-                vorbis::read_vorbis_comment(&mut reader, &mut builder, &mut side_data).await?;
+                vorbis::read_vorbis_comment(&mut reader, &mut builder, &mut side_data, opts).await?;
 
                 let rev = builder.build();
 
