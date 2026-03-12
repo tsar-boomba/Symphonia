@@ -20,10 +20,10 @@ mod vorbis;
 
 /// Detect a `Mapper` for a logical stream given the identification packet of the stream.
 pub async fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
-    let mapper = flac::detect(serial, buf)
+    let mapper = opus::detect(serial, buf).await?
         .await?
+        .or(flac::detect(serial, buf).await?)
         .or(vorbis::detect(serial, buf).await?)
-        .or(opus::detect(serial, buf).await?)
         .or_else(make_null_mapper);
 
     Ok(mapper)
