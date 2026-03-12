@@ -240,10 +240,19 @@ impl LogicalStream {
 
         // If the page contains partial packet data, then save the partial packet data for later
         // as the packet will be completed on a later page.
-        if let Some(buf) = iter.partial_packet() {
-            let skipped = !self.save_partial_packet(buf, opts)?;
-            if skipped {
-                log::info!("skipping partial packet!");
+        if let Some(buf) = iter.partial_packet()
+            && let Some(partial_packet) = self.save_partial_packet(buf, opts)?
+        {
+            log::info!("skipping partial packet!");
+            match self.mapper.map_packet(&partial_packet, opts).await {
+                Ok(MapResult::StreamData { .. }) => {
+                    unreachable!("Should only discard large metadata, not data!");
+                }
+                Ok(MapResult::SideData { data }) => side_data.push(data),
+                Err(e) => {
+                    warn!("mapping packet failed ({e}), skipping")
+                }
+                _ => (),
             }
         }
 
@@ -632,19 +641,28 @@ impl LogicalStream {
         }
     }
 
-    /// Returns false if the packet was skipped because its too big
-    fn save_partial_packet(&mut self, buf: &[u8], opts: &MetadataOptions) -> Result<bool> {
-        const INIT_MAX_PACKET_LEN: usize = 8 * 1024;
+    /// Returns `Some` with what we have of the partial so far and gives up on the rest
+    fn save_partial_packet(
+        &mut self,
+        buf: &[u8],
+        opts: &MetadataOptions,
+    ) -> Result<Option<Box<[u8]>>> {
+        const INIT_MAX_PACKET_LEN: usize = 12 * 1024;
         let new_part_len = self.part_len + buf.len();
-        log::info!("partial packet len: {}; new_part_len: {}; limit: {:?}", buf.len(), new_part_len, opts.limit_visual_bytes);
+        log::info!(
+            "partial packet len: {}; new_part_len: {}; limit: {:?}",
+            buf.len(),
+            new_part_len,
+            opts.limit_visual_bytes
+        );
 
-        // If user wants to ignore all visuals, we definitely need to skip this
+        // If user wants to ignore all visuals, we definitely need to skip reading the whole partial packet
         if opts.limit_visual_bytes == Limit::Maximum(0) && new_part_len > INIT_MAX_PACKET_LEN {
             // Too large, discard and signal the mapper to move on
+            let partial = self.get_partial_assembled(buf);
             self.part_len = 0;
             self.part_abandoned = true;
-            self.mapper.force_headers_done();
-            return Ok(false);
+            return Ok(Some(partial));
         }
 
         if new_part_len > self.part_buf.len() {
@@ -663,6 +681,13 @@ impl LogicalStream {
         self.part_buf[self.part_len..new_part_len].copy_from_slice(buf);
         self.part_len = new_part_len;
 
-        Ok(true)
+        Ok(None)
+    }
+
+    fn get_partial_assembled(&mut self, new_buf: &[u8]) -> Box<[u8]> {
+        let mut out = vec![0u8; self.part_len + new_buf.len()];
+        out[..self.part_len].copy_from_slice(&self.part_buf[..self.part_len]);
+        out[self.part_len..].copy_from_slice(new_buf);
+        out.into_boxed_slice()
     }
 }
