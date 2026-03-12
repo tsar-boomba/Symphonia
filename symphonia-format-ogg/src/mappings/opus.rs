@@ -238,6 +238,10 @@ impl Mapper for OpusMapper {
         !self.need_comment
     }
 
+    fn force_headers_done(&mut self) {
+        self.need_comment = false;
+    }
+
     fn track(&self) -> &Track {
         &self.track
     }

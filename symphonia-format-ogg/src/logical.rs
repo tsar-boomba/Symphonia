@@ -226,6 +226,7 @@ impl LogicalStream {
         if let Some(buf) = iter.partial_packet() {
             let skipped = !self.save_partial_packet(buf, opts)?;
             if skipped {
+                self.mapper.force_headers_done();
                 log::debug!("skipped partial packet!");
             }
         }
