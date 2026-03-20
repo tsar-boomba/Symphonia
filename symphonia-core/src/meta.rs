@@ -646,6 +646,8 @@ impl core::fmt::Debug for Visual {
         f.debug_struct("Visual")
             .field("media_type", &self.media_type)
             .field("dimensions", &self.dimensions)
+            .field("usage", &self.usage)
+            .field("tags", &self.tags)
             .finish()
     }
 }
