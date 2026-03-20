@@ -144,6 +144,7 @@ impl<'s> FlacReader<'s> {
                     if let Some(visual) =
                         read_flac_picture_block(&mut block_stream, &opts.metadata_options).await?
                     {
+                        debug!("flac adding visual");
                         metadata_builder.add_visual(visual);
                     }
                 }

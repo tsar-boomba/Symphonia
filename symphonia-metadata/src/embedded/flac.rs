@@ -77,6 +77,7 @@ pub async fn read_flac_picture_block<B: ReadBytes>(
     {
         reader.read_boxed_slice_exact(media_type_len).await?
     } else {
+        log::debug!("Skipping flac image type");
         reader.ignore_bytes(media_type_len as u64).await?;
         return Ok(None);
     };
@@ -101,6 +102,7 @@ pub async fn read_flac_picture_block<B: ReadBytes>(
         {
             reader.read_boxed_slice_exact(desc_len).await?
         } else {
+            log::debug!("Skipping flac image desc");
             reader.ignore_bytes(desc_len as u64).await?;
             return Ok(None);
         };
@@ -140,6 +142,7 @@ pub async fn read_flac_picture_block<B: ReadBytes>(
     {
         reader.read_boxed_slice_exact(data_len).await?
     } else {
+        log::debug!("Skipping flac image data");
         reader.ignore_bytes(data_len as u64).await?;
         return Ok(None);
     };
