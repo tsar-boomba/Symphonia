@@ -619,7 +619,7 @@ pub enum ColorMode {
 }
 
 /// A `Visual` is any 2 dimensional graphic.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Visual {
     /// The Media Type (MIME Type) used to encode the `Visual`.
     pub media_type: Option<String>,
@@ -639,6 +639,15 @@ pub struct Visual {
     pub tags: Vec<Tag>,
     /// The data of the `Visual`, encoded as per `media_type`.
     pub data: Box<[u8]>,
+}
+
+impl core::fmt::Debug for Visual {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Visual")
+            .field("media_type", &self.media_type)
+            .field("dimensions", &self.dimensions)
+            .finish()
+    }
 }
 
 /// A group of chapters and/or other chapter groups.
