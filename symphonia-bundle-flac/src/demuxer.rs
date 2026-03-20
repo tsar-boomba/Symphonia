@@ -142,7 +142,7 @@ impl<'s> FlacReader<'s> {
                 // Picture blocks are read as Visuals.
                 MetadataBlockType::Picture => {
                     if let Some(visual) =
-                        read_flac_picture_block(&mut block_stream, &opts.metadata_options).await?
+                        read_flac_picture_block(&mut block_stream, &opts.metadata_options, true).await?
                     {
                         debug!("flac adding visual");
                         metadata_builder.add_visual(visual);

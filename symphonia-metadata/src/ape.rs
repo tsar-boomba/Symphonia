@@ -24,8 +24,7 @@ use symphonia_core::io::{
 };
 use symphonia_core::meta::well_known::{METADATA_ID_APEV1, METADATA_ID_APEV2};
 use symphonia_core::meta::{
-    MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, RawTag,
-    RawValue, StandardTag, StandardVisualKey, Tag, Visual,
+    ImageData, MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, RawTag, RawValue, StandardTag, StandardVisualKey, Tag, Visual
 };
 use symphonia_core::util::text;
 use symphonia_core::{Lazy, async_trait, support_metadata};
@@ -413,11 +412,9 @@ impl MetadataReader for ApeReader<'_> {
 
                     builder.add_visual(Visual {
                         media_type: image_info.as_ref().map(|info| info.media_type.clone()),
-                        dimensions: image_info.as_ref().map(|info| info.dimensions),
-                        color_mode: image_info.as_ref().map(|info| info.color_mode),
                         usage: Some(std_key),
                         tags,
-                        data,
+                        data: ImageData::Data(Some(data)), // TODO: consider using Location variant here
                     });
 
                     continue;

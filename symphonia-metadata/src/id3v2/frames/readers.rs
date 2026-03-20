@@ -8,6 +8,7 @@
 //! Frame body readers.
 
 use alloc::sync::Arc;
+use symphonia_core::meta::ImageData;
 use core::char;
 use core::str;
 use symphonia_core::Lazy;
@@ -331,23 +332,16 @@ pub async fn read_apic_frame(
     }
 
     // The remainder of the APIC frame is the image data. Skip if its too big.
-    let data = if opts.limit_visual_bytes.within_limit_w_default(reader.bytes_available(), DEFAULT_MAX_IMAGE_SIZE) {
-        Box::from(reader.read_buf_bytes_available_ref())
-    } else {
-        reader.ignore_bytes(reader.bytes_available()).await?;
-        return Ok(FrameResult::Skipped)
-    };
+    let data_pos = reader.pos();
+    let data_len = reader.bytes_available() as usize;
 
-    // Try to get information about the image.
-    let image_info = try_get_image_info(&data).await;
+    reader.ignore_bytes(reader.bytes_available()).await?;
 
     let visual = Visual {
-        media_type: image_info.as_ref().map(|info| info.media_type.clone()).or(media_type),
-        dimensions: image_info.as_ref().map(|info| info.dimensions),
-        color_mode: image_info.as_ref().map(|info| info.color_mode),
+        media_type,
         usage,
         tags,
-        data,
+        data: ImageData::Location { pos: data_pos, len: data_len },
     };
 
     Ok(FrameResult::Visual(visual))

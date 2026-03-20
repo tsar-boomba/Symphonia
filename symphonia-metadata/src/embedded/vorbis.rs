@@ -23,8 +23,7 @@ use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::well_known::METADATA_ID_VORBIS_COMMENT;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, MetadataOptions,
-    MetadataSideData, RawTag, StandardTag, Tag, Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, ImageData, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataSideData, RawTag, StandardTag, Tag, Visual
 };
 use symphonia_core::units::Time;
 use symphonia_core::util::text;
@@ -174,7 +173,7 @@ async fn parse_base64_picture_block(
         return decode_error("meta(vorbis): the base64 encoding of a picture block is invalid");
     };
 
-    flac::read_flac_picture_block(&mut BufReader::new(&data), opts)
+    flac::read_flac_picture_block(&mut BufReader::new(&data), opts, false)
         .await
         .map(|opt| opt.map(ParsedComment::Visual))
 }
@@ -200,11 +199,9 @@ async fn parse_base64_cover_art(
 
     Ok(Some(ParsedComment::Visual(Visual {
         media_type: Some(image_info.media_type),
-        dimensions: Some(image_info.dimensions),
-        color_mode: Some(image_info.color_mode),
         usage: None,
         tags: vec![],
-        data,
+        data: ImageData::Data(Some(data)),
     })))
 }
 

@@ -17,8 +17,8 @@ use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::well_known::METADATA_ID_FLAC;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, MetadataOptions, Size,
-    StandardTag, Tag, Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, ImageData, MetadataBuilder, MetadataInfo,
+    MetadataOptions, Size, StandardTag, Tag, Visual,
 };
 use symphonia_core::units::{TimeBase, Timestamp};
 
@@ -64,6 +64,7 @@ pub async fn read_flac_comment_block<B: ReadBytes>(
 pub async fn read_flac_picture_block<B: ReadBytes>(
     reader: &mut B,
     opts: &MetadataOptions,
+    image_data_location: bool,
 ) -> Result<Option<Visual>> {
     let type_enc = reader.read_be_u32().await?;
 
@@ -122,9 +123,6 @@ pub async fn read_flac_picture_block<B: ReadBytes>(
     let width = reader.read_be_u32().await?;
     let height = reader.read_be_u32().await?;
 
-    // If either the width or height is 0, then the size is invalid.
-    let dimensions = if width > 0 && height > 0 { Some(Size { width, height }) } else { None };
-
     // Read bits-per-pixel of the visual.
     let _bits_per_pixel = NonZeroU8::new(reader.read_be_u32().await? as u8);
 
@@ -136,29 +134,34 @@ pub async fn read_flac_picture_block<B: ReadBytes>(
     let data_len = reader.read_be_u32().await? as usize;
 
     // Read the image data.
-    let data = if opts
-        .limit_visual_bytes
-        .within_limit_w_default(data_len as u64, DEFAULT_MAX_IMAGE_SIZE)
-    {
-        reader.read_boxed_slice_exact(data_len).await?
-    } else {
-        log::debug!("Skipping flac image data");
+    let image_data_position = reader.pos();
+
+    if image_data_location {
         reader.ignore_bytes(data_len as u64).await?;
-        return Ok(None);
-    };
 
-    // Try to detect the image characteristics from the image data. Detect image characteristics
-    // will be preferred over what's been stated in the picture block.
-    let image_info = try_get_image_info(&data).await;
+        Ok(Some(Visual {
+            media_type,
+            usage: get_visual_key_from_picture_type(type_enc),
+            tags,
+            data: ImageData::Location { pos: image_data_position, len: data_len },
+        }))
+    } else {
+        let data = if opts
+            .limit_visual_bytes
+            .within_limit_w_default(data_len as u64, DEFAULT_MAX_IMAGE_SIZE)
+        {
+            Some(reader.read_boxed_slice_exact(data_len).await?)
+        } else {
+            None
+        };
 
-    Ok(Some(Visual {
-        media_type: image_info.as_ref().map(|info| info.media_type.clone()).or(media_type),
-        dimensions: image_info.as_ref().map(|info| info.dimensions).or(dimensions),
-        color_mode: image_info.as_ref().map(|info| info.color_mode),
-        usage: get_visual_key_from_picture_type(type_enc),
-        tags,
-        data,
-    }))
+        Ok(Some(Visual {
+            media_type,
+            usage: get_visual_key_from_picture_type(type_enc),
+            tags,
+            data: ImageData::Data(data),
+        }))
+    }
 }
 
 /// Read a seek table metadata block as a seek index.

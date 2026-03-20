@@ -332,7 +332,7 @@ impl Mapper for FlacMapper {
                 MetadataBlockType::Picture => {
                     let mut builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
-                    if let Some(visual) = read_flac_picture_block(&mut reader, opts).await? {
+                    if let Some(visual) = read_flac_picture_block(&mut reader, opts, false).await? {
                         builder.add_visual(visual);
                     }
 
