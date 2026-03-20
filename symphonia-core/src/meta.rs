@@ -642,7 +642,7 @@ pub struct Visual {
 }
 
 impl core::fmt::Debug for Visual {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> core::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Visual")
             .field("media_type", &self.media_type)
             .field("dimensions", &self.dimensions)
