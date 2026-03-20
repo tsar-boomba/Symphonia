@@ -23,7 +23,8 @@ use symphonia_core::errors::{Error, Result, decode_error};
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::well_known::METADATA_ID_VORBIS_COMMENT;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, ImageData, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataSideData, RawTag, StandardTag, Tag, Visual
+    Chapter, ChapterGroup, ChapterGroupItem, ImageData, MetadataBuilder, MetadataInfo,
+    MetadataOptions, MetadataSideData, RawTag, StandardTag, Tag, Visual,
 };
 use symphonia_core::units::Time;
 use symphonia_core::util::text;
@@ -185,7 +186,12 @@ async fn parse_base64_cover_art(
 ) -> Result<Option<ParsedComment>> {
     // Decode the Base64 encoded image data. If its not too big
     if !opts.limit_visual_bytes.within_limit_w_default(b64.len() as u64, DEFAULT_MAX_IMAGE_SIZE) {
-        return Ok(None);
+        return Ok(Some(ParsedComment::Visual(Visual {
+            media_type: None,
+            usage: None,
+            tags: vec![],
+            data: ImageData::Data(None),
+        })));
     }
 
     let Some(data) = base64::decode(b64) else {

@@ -32,7 +32,6 @@ use smallvec::{SmallVec, smallvec};
 use crate::id3v2::frames::{FrameResult, Id3v2Chapter, Id3v2TableOfContents};
 use crate::id3v2::sub_fields::*;
 use crate::utils::id3v2::get_visual_key_from_picture_type;
-use crate::utils::images::DEFAULT_MAX_IMAGE_SIZE;
 use crate::utils::std_tag::*;
 
 use crate::utils::images::try_get_image_info;
@@ -300,7 +299,7 @@ pub async fn read_aenc_frame(
 pub async fn read_apic_frame(
     mut reader: BufReader<'_>,
     frame: &FrameInfo<'_>,
-    opts: &MetadataOptions,
+    _opts: &MetadataOptions,
 ) -> Result<FrameResult> {
     // The first byte of the frame is the encoding of the text description.
     let encoding = read_encoding(&mut reader).await?;
@@ -331,17 +330,18 @@ pub async fn read_apic_frame(
         tags.push(Tag::new_from_parts("", "", Some(StandardTag::Description(Arc::from(desc)))));
     }
 
-    // The remainder of the APIC frame is the image data. Skip if its too big.
-    let data_pos = reader.pos();
+    // The remainder of the APIC frame is the image data.
     let data_len = reader.bytes_available() as usize;
 
-    reader.ignore_bytes(reader.bytes_available()).await?;
+    let data = reader.read_boxed_slice_exact(data_len).await?;
+
+    let image_info = try_get_image_info(&data).await;
 
     let visual = Visual {
-        media_type,
+        media_type: image_info.map(|i| i.media_type).or(media_type),
         usage,
         tags,
-        data: ImageData::Location { pos: data_pos, len: data_len },
+        data: ImageData::Data(Some(data)),
     };
 
     Ok(FrameResult::Visual(visual))
