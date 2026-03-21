@@ -333,6 +333,9 @@ impl Atom for AudioSampleEntry {
                     let atom = it.read_atom::<WaveAtom>().await?;
                     atom.fill_audio_sample_entry(&mut entry).await?;
                 }
+                AtomType::BitRate => {
+                    // Do nothing with this right now, but still valid
+                }
                 _ => {
                     debug!("unknown audio sample entry sub-atom: {:?}.", entry_header.atom_type());
                 }
