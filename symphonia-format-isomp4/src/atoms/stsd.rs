@@ -12,7 +12,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use log::debug;
 use symphonia_core::audio::{Channels, Position};
-use symphonia_core::codecs::audio::well_known::CODEC_ID_MP3;
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP3, CODEC_ID_OPUS};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_S8, CODEC_ID_PCM_U8};
@@ -437,6 +437,9 @@ async fn read_audio_sample_entry<B: ReadBytes>(
                 // types of sub-atoms to store decoder parameters.
                 let atom = iter.read_atom::<WaveAtom>().await?;
                 atom.fill_audio_sample_entry(&mut entry)?;
+            }
+            AtomType::BitRate => {
+                // Do nothing with this right now, but still valid
             }
             _ => {
                 debug!("unknown audio sample entry sub-atom: {:?}.", entry_header.atom_type());
