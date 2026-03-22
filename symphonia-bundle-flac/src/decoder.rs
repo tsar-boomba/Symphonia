@@ -513,7 +513,7 @@ async fn decode_linear<B: ReadBitsLtr>(
 
             // Use 32-bit math when sample size is smaller. This will be much faster on CPUs that
             // don't have instructions for 64-bit math
-            if bps <= 24 {
+            if bps <= 20 {
                 lpc_predict_i32(order as usize, coeffs_n, coeff_shift as u32, buf);
             } else {
                 lpc_predict_i64::<N>(order as usize, coeffs_n, coeff_shift as u32, buf);
