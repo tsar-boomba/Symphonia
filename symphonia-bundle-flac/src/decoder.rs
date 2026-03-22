@@ -513,7 +513,7 @@ async fn decode_linear<B: ReadBitsLtr>(
 
             // Use 32-bit math when sample size is smaller. This will be much faster on CPUs that
             // don't have instructions for 64-bit math
-            if bps <= 26 {
+            if bps <= 24 {
                 lpc_predict_i32(order as usize, coeffs_n, coeff_shift as u32, buf);
             } else {
                 lpc_predict_i64::<N>(order as usize, coeffs_n, coeff_shift as u32, buf);
@@ -799,7 +799,7 @@ macro_rules! make_lpc_predict {
                 let mut acc: $type = 0;
                 for j in 0..coeffs.len() {
                     acc =
-                        acc.wrapping_add(<$type>::from(coeffs[j]) * <$type>::from(buf[i - N + j]));
+                        acc.wrapping_add(<$type>::from(coeffs[j]).wrapping_mul(<$type>::from(buf[i - N + j])));
                 }
 
                 buf[i] = buf[i].wrapping_add((acc >> coeff_shift) as i32);
