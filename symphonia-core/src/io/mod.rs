@@ -41,6 +41,8 @@ pub use monitor_stream::{Monitor, MonitorStream};
 pub use scoped_stream::ScopedStream;
 #[cfg(feature = "std")]
 pub use utils::FromStd;
+#[cfg(feature = "tokio")]
+pub use utils::FromTokio;
 pub use utils::{BorrowedBuf, BorrowedCursor, Cursor, IoSliceMut};
 
 pub type Result<T> = core::result::Result<T, Error>;
@@ -248,6 +250,36 @@ impl MediaSource for FromStd<std::fs::File> {
         }
     }
 }
+
+#[cfg(feature = "tokio")]
+#[async_trait]
+impl MediaSource for FromTokio<tokio::fs::File> {
+    /// Returns if the `std::io::File` backing the `MediaSource` is seekable.
+    ///
+    /// Note: This operation involves querying the underlying file descriptor for information and
+    /// may be moderately expensive. Therefore it is recommended to cache this value if used often.
+    async fn is_seekable(&self) -> bool {
+        // If the file's metadata is available, and the file is a regular file (i.e., not a FIFO,
+        // etc.), then the MediaSource will be seekable. Otherwise assume it is not. Note that
+        // metadata() follows symlinks.
+        match self.inner().metadata().await {
+            Ok(metadata) => metadata.is_file(),
+            _ => false,
+        }
+    }
+
+    /// Returns the length in bytes of the `std::io::File` backing the `MediaSource`.
+    ///
+    /// Note: This operation involves querying the underlying file descriptor for information and
+    /// may be moderately expensive. Therefore it is recommended to cache this value if used often.
+    async fn byte_len(&self) -> Option<u64> {
+        match self.inner().metadata().await {
+            Ok(metadata) => Some(metadata.len()),
+            _ => None,
+        }
+    }
+}
+
 
 #[async_trait]
 impl<T: core::convert::AsRef<[u8]> + Send + Sync> MediaSource for Cursor<T> {
