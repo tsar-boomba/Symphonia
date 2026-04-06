@@ -19,6 +19,8 @@ default = []
 std = ["embedded-io/std", "embedded-io-adapters/std", "once_cell/std"]
 defmt = ["embedded-io/defmt"]
 
+tokio = ["dep:tokio", "std"]
+
 # SIMD support.
 opt-simd-sse = ["rustfft/sse"]
 opt-simd-avx = ["rustfft/avx"]
@@ -49,6 +51,8 @@ num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 smallvec = "1.13.1"
 # Use critical-section feature for no_std support, but when std is enabled uses std::sync
 once_cell = { version = "1.21", default-features = false, features = ["critical-section"] }
+
+tokio = { version = "1", default-features = false, optional = true, features = ["fs", "io-util"] }
 
 [dependencies.rustfft]
 version = "6.1.0"

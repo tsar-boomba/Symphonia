@@ -22,6 +22,7 @@ all-features = true
 default = ["all-meta", "adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav", "std"]
 
 std = ["symphonia-core/std"]
+tokio = ["symphonia-core/tokio"]
 
 # Feature flags to enable specific codecs, container, and standalone metadata formats.
 aac = ["dep:symphonia-codec-aac"]

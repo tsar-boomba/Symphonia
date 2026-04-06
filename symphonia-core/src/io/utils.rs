@@ -3,6 +3,8 @@
 use async_trait::async_trait;
 #[cfg(feature = "std")]
 pub use from_std::FromStd;
+#[cfg(feature = "tokio")]
+pub use from_tokio::FromTokio;
 #[cfg(not(feature = "std"))]
 pub use io_slice::IoSliceMut;
 #[cfg(feature = "std")]
@@ -133,6 +135,98 @@ mod from_std {
 
         async fn stream_position(&mut self) -> Result<u64, Self::Error> {
             Ok(self.inner.stream_position()?)
+        }
+    }
+}
+
+#[cfg(feature = "tokio")]
+mod from_tokio {
+    use super::{default_read_vectored, IoSliceMut};
+    use alloc::{boxed::Box, vec::Vec};
+    use async_trait::async_trait;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct FromTokio<T> {
+        inner: T,
+    }
+
+    impl<T> FromTokio<T> {
+        pub const fn new(inner: T) -> Self {
+            Self { inner }
+        }
+
+        pub fn into_inner(self) -> T {
+            self.inner
+        }
+
+        pub const fn inner(&self) -> &T {
+            &self.inner
+        }
+
+        pub const fn inner_mut(&mut self) -> &mut T {
+            &mut self.inner
+        }
+    }
+
+    impl<T> super::ErrorType for FromTokio<T> {
+        type Error = super::Error;
+    }
+
+    #[async_trait]
+    impl<T: tokio::io::AsyncReadExt + Send + Unpin> super::Read for FromTokio<T> {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+            Ok(self.inner.read(buf).await?)
+        }
+
+        async fn read_exact(
+            &mut self,
+            buf: &mut [u8],
+        ) -> Result<(), super::ReadExactError<Self::Error>> {
+            match self.inner.read_exact(buf).await {
+                Ok(_n) => Ok(()),
+                Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    Err(super::ReadExactError::UnexpectedEof)
+                }
+                Err(err) => Err(super::ReadExactError::Other(err.into())),
+            }
+        }
+
+        async fn read_vectored(
+            &mut self,
+            bufs: &mut [IoSliceMut<'_>],
+        ) -> Result<usize, Self::Error> {
+            default_read_vectored(self, bufs).await
+        }
+
+        async fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize, Self::Error> {
+            self.inner.read_to_end(buf).await.map_err(Into::into)
+        }
+    }
+
+    #[async_trait]
+    impl<T: tokio::io::AsyncBufReadExt + Send + Unpin> super::BufRead for FromTokio<T> {
+        async fn fill_buf(&mut self) -> Result<&[u8], Self::Error> {
+            Ok(self.inner.fill_buf().await?)
+        }
+
+        fn consume(&mut self, amt: usize) {
+            self.inner.consume(amt)
+        }
+    }
+
+    #[async_trait]
+    impl<T: tokio::io::AsyncSeekExt + Send + Unpin> super::Seek for FromTokio<T> {
+        async fn seek(&mut self, pos: super::SeekFrom) -> Result<u64, Self::Error> {
+            Ok(self.inner.seek(pos.into()).await?)
+        }
+
+        async fn rewind(&mut self) -> Result<(), Self::Error> {
+            self.inner.rewind().await?;
+            Ok(())
+        }
+
+        async fn stream_position(&mut self) -> Result<u64, Self::Error> {
+            Ok(self.inner.stream_position().await?)
         }
     }
 }
