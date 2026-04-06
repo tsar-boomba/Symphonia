@@ -65,7 +65,7 @@ pub type Result<T> = core::result::Result<T, EbmlError>;
 
 /// A super-trait of `ReadBytes` and `SeekBuffered` that all readers of `EbmlIterator` must
 /// implement.
-pub(crate) trait ReadEbml: ReadBytes + SeekBuffered {}
+pub trait ReadEbml: ReadBytes + SeekBuffered {}
 
 /// EBML data types.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
