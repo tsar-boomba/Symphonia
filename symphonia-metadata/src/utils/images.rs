@@ -54,7 +54,7 @@ pub async fn try_get_image_info(buf: &[u8]) -> Option<ImageInfo> {
         parse_gif(BufReader::new(&buf[GIF_MARKER_1.len()..])).await.ok()
     }
     else if buf.starts_with(PNG_MARKER) {
-        parse_png(BufReader::new(&buf[BITMAP_MARKER.len()..])).await.ok()
+        parse_png(BufReader::new(&buf[PNG_MARKER.len()..])).await.ok()
     }
     else {
         None
