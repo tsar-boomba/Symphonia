@@ -11,7 +11,6 @@ use super::{MapResult, Mapper, PacketParser};
 
 use alloc::boxed::Box;
 use symphonia_common::xiph::audio::flac::{MetadataBlockHeader, MetadataBlockType, StreamInfo};
-use symphonia_core::async_trait;
 use symphonia_core::checksum::Crc8Ccitt;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_FLAC;
@@ -42,7 +41,7 @@ const OGG_FLAC_PACKET_TYPE: u8 = 0x7f;
 /// The native FLAC signature.
 const FLAC_SIGNATURE: &[u8] = b"fLaC";
 
-pub async fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
+pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The packet shall be exactly the expected length.
     if buf.len() != OGG_FLAC_HEADER_PACKET_SIZE {
         return Ok(None);
@@ -51,36 +50,36 @@ pub async fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> 
     let mut reader = BufReader::new(buf);
 
     // The first byte indicates the packet type and must be 0x7f.
-    if reader.read_u8().await? != OGG_FLAC_PACKET_TYPE {
+    if reader.read_u8()? != OGG_FLAC_PACKET_TYPE {
         return Ok(None);
     }
 
     // Next, the OGG FLAC signature, in ASCII, must be "FLAC".
-    if reader.read_quad_bytes().await? != OGG_FLAC_HEADER_SIGNATURE {
+    if reader.read_quad_bytes()? != OGG_FLAC_HEADER_SIGNATURE {
         return Ok(None);
     }
 
     // Next, a one-byte binary major version number for the mapping, only version 1 is supported.
-    if reader.read_u8().await? != OGG_FLAC_MAPPING_MAJOR_VERSION {
+    if reader.read_u8()? != OGG_FLAC_MAPPING_MAJOR_VERSION {
         return Ok(None);
     }
 
     // Next, a one-byte minor version number for the mapping. This is ignored because we support all
     // version 1 features.
-    let _minor = reader.read_u8().await?;
+    let _minor = reader.read_u8()?;
 
     // Next, a two-byte, big-endian number signifying the number of header (non-audio) packets, not
     // including the identification packet. This number may be 0 to signify it is unknown.
-    let _ = reader.read_be_u16().await?;
+    let _ = reader.read_be_u16()?;
 
     // Last, the four-byte ASCII native FLAC signature "fLaC".
-    if reader.read_quad_bytes().await? != FLAC_SIGNATURE {
+    if reader.read_quad_bytes()? != FLAC_SIGNATURE {
         return Ok(None);
     }
 
     // Following the previous OGG FLAC identification data is the stream information block as a
     // native FLAC metadata block.
-    let header = MetadataBlockHeader::read(&mut reader).await?;
+    let header = MetadataBlockHeader::read(&mut reader)?;
 
     if header.block_type != MetadataBlockType::StreamInfo {
         return Ok(None);
@@ -92,8 +91,8 @@ pub async fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> 
         return Ok(None);
     }
 
-    let extra_data = reader.read_boxed_slice_exact(header.block_len as usize).await?;
-    let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data)).await?;
+    let extra_data = reader.read_boxed_slice_exact(header.block_len as usize)?;
+    let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
 
     // Populate the codec parameters with the information read from the stream information block.
     let mut codec_params = AudioCodecParameters::new();
@@ -127,9 +126,9 @@ pub async fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> 
 }
 
 /// Decodes a big-endian unsigned integer encoded via extended UTF8.
-async fn utf8_decode_be_u64<B: ReadBytes>(src: &mut B) -> Result<Option<u64>> {
+fn utf8_decode_be_u64<B: ReadBytes>(src: &mut B) -> Result<Option<u64>> {
     // NOTE: See the symphonia-bundle-flac crate for a detailed description of this function.
-    let mut state = u64::from(src.read_u8().await?);
+    let mut state = u64::from(src.read_u8()?);
 
     let mask: u8 = match state {
         0x00..=0x7f => return Ok(Some(state)),
@@ -145,7 +144,7 @@ async fn utf8_decode_be_u64<B: ReadBytes>(src: &mut B) -> Result<Option<u64>> {
     state &= u64::from(mask);
 
     for _ in 2..mask.leading_zeros() {
-        state = (state << 6) | u64::from(src.read_u8().await? & 0x3f);
+        state = (state << 6) | u64::from(src.read_u8()? & 0x3f);
     }
 
     Ok(Some(state))
@@ -158,12 +157,12 @@ struct FrameHeader {
 }
 
 /// Try to decode a FLAC frame header from the provided buffer.
-async fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
+fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
     // The FLAC frame header is checksummed with a CRC-8 hash.
     let mut reader_crc8 = MonitorStream::new(BufReader::new(buf), Crc8Ccitt::new(0));
 
     // Read the sync word.
-    let sync = reader_crc8.read_be_u16().await?;
+    let sync = reader_crc8.read_be_u16()?;
 
     // Within an OGG packet the frame should be synchronized.
     if sync & 0xfffc != 0xfff8 {
@@ -171,7 +170,7 @@ async fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
     }
 
     // Read all the standard frame description fields as one 16-bit value and extract the fields.
-    let desc = reader_crc8.read_be_u16().await?;
+    let desc = reader_crc8.read_be_u16()?;
 
     // Reserved bit field.
     if desc & 0x0001 == 1 {
@@ -183,7 +182,7 @@ async fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
 
     let block_sequence = if is_fixed_block_size {
         // Fixed block size stream sequence blocks by a frame number.
-        let frame = match utf8_decode_be_u64(&mut reader_crc8).await? {
+        let frame = match utf8_decode_be_u64(&mut reader_crc8)? {
             Some(frame) => frame,
             None => return decode_error("ogg (flac): frame sequence number is not valid"),
         };
@@ -197,7 +196,7 @@ async fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
     }
     else {
         // Variable block size streams sequence blocks by a sample number.
-        let sample = match utf8_decode_be_u64(&mut reader_crc8).await? {
+        let sample = match utf8_decode_be_u64(&mut reader_crc8)? {
             Some(sample) => sample,
             None => return decode_error("ogg: sample sequence number is not valid"),
         };
@@ -216,9 +215,9 @@ async fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
     let block_size = match block_size_enc {
         0x1 => 192,
         0x2..=0x5 => 576 * (1 << (block_size_enc - 2)),
-        0x6 => u64::from(reader_crc8.read_u8().await?) + 1,
+        0x6 => u64::from(reader_crc8.read_u8()?) + 1,
         0x7 => {
-            let block_size = reader_crc8.read_be_u16().await?;
+            let block_size = reader_crc8.read_be_u16()?;
             if block_size == 0xffff {
                 return decode_error("ogg (flac): block size not allowed to be greater than 65535");
             }
@@ -235,13 +234,13 @@ async fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
 
     match sample_rate_enc {
         0xc => {
-            reader_crc8.read_u8().await?;
+            reader_crc8.read_u8()?;
         }
         0xd => {
-            reader_crc8.read_be_u16().await?;
+            reader_crc8.read_be_u16()?;
         }
         0xe => {
-            reader_crc8.read_be_u16().await?;
+            reader_crc8.read_be_u16()?;
         }
         _ => (),
     }
@@ -250,7 +249,7 @@ async fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
     let crc8_computed = reader_crc8.monitor().crc();
 
     // Read the expected CRC-8 checksum from the frame header.
-    let crc8_expected = reader_crc8.into_inner().read_u8().await?;
+    let crc8_expected = reader_crc8.into_inner().read_u8()?;
 
     if crc8_expected != crc8_computed && cfg!(not(fuzzing)) {
         return decode_error("ogg (flac): computed frame header CRC does not match expected CRC");
@@ -263,10 +262,9 @@ async fn decode_frame_header(buf: &[u8]) -> Result<FrameHeader> {
 
 struct FlacPacketParser {}
 
-#[async_trait]
 impl PacketParser for FlacPacketParser {
-    async fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
-        let dur = match decode_frame_header(packet).await.ok() {
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
+        let dur = match decode_frame_header(packet).ok() {
             Some(header) => header.dur,
             _ => 0,
         };
@@ -278,7 +276,6 @@ struct FlacMapper {
     track: Track,
 }
 
-#[async_trait]
 impl Mapper for FlacMapper {
     fn name(&self) -> &'static str {
         "flac"
@@ -300,13 +297,13 @@ impl Mapper for FlacMapper {
         // Nothing to do.
     }
 
-    async fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
-        let packet_type = BufReader::new(packet).read_u8().await?;
+    fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
+        let packet_type = BufReader::new(packet).read_u8()?;
 
         // A packet type of 0xff is an audio packet.
         if packet_type == 0xff {
             // Parse the packet duration.
-            let dur = match decode_frame_header(packet).await.ok() {
+            let dur = match decode_frame_header(packet).ok() {
                 Some(header) => header.dur,
                 _ => 0,
             };
@@ -322,13 +319,13 @@ impl Mapper for FlacMapper {
             let mut reader = BufReader::new(packet);
 
             // Packet types in the range 0x01 thru 0x7f, and 0x81 thru 0xfe are metadata blocks.
-            let header = MetadataBlockHeader::read(&mut reader).await?;
+            let header = MetadataBlockHeader::read(&mut reader)?;
 
             match header.block_type {
                 MetadataBlockType::VorbisComment => {
                     let mut builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
-                    read_flac_comment_block(&mut reader, &mut builder).await?;
+                    read_flac_comment_block(&mut reader, &mut builder)?;
 
                     let rev = builder.build();
 
@@ -337,7 +334,7 @@ impl Mapper for FlacMapper {
                 MetadataBlockType::Picture => {
                     let mut builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
-                    builder.add_visual(read_flac_picture_block(&mut reader).await?);
+                    builder.add_visual(read_flac_picture_block(&mut reader)?);
 
                     let rev = builder.build();
 

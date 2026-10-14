@@ -18,8 +18,8 @@ use symphonia_core::io::ReadBitsLtr;
 pub struct LtpData {}
 
 impl LtpData {
-    pub async fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
-        let predictor_data_present = bs.read_bool().await?;
+    pub fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Self>> {
+        let predictor_data_present = bs.read_bool()?;
 
         if !predictor_data_present {
             return Ok(None);
@@ -27,21 +27,21 @@ impl LtpData {
 
         /*
         if is_main {
-            let predictor_reset                         = bs.read_bit().await?;
+            let predictor_reset                         = bs.read_bit()?;
             if predictor_reset {
-                let predictor_reset_group_number        = bs.read_bits_leq32(5).await?;
+                let predictor_reset_group_number        = bs.read_bits_leq32(5)?;
             }
             for sfb in 0..max_sfb.min(PRED_SFB_MAX) {
-                prediction_used[sfb]                    = bs.read_bit().await?;
+                prediction_used[sfb]                    = bs.read_bit()?;
             }
         }
         else {
-            let ltp_data_present                        = bs.read_bit().await?;
+            let ltp_data_present                        = bs.read_bit()?;
             if ltp_data_present {
                 //ltp data
             }
             if common_window {
-                let ltp_data_present                    = bs.read_bit().await?;
+                let ltp_data_present                    = bs.read_bit()?;
                 if ltp_data_present {
                     //ltp data
                 }

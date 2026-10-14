@@ -41,8 +41,8 @@ impl<B: ReadBytes> ScopedStream<B> {
     }
 
     /// Ignores the remainder of the `ScopedStream`.
-    pub async fn ignore(&mut self) -> super::Result<()> {
-        self.inner.ignore_bytes(self.len - self.read).await
+    pub fn ignore(&mut self) -> super::Result<()> {
+        self.inner.ignore_bytes(self.len - self.read)
     }
 
     /// Convert the `ScopedStream` to the inner stream.
@@ -70,83 +70,83 @@ impl<B: ReadBytes> FiniteStream for ScopedStream<B> {
 
 impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
     #[inline(always)]
-    async fn read_byte(&mut self) -> super::Result<u8> {
+    fn read_byte(&mut self) -> super::Result<u8> {
         if self.len - self.read < 1 {
             return out_of_bounds_error();
         }
 
         self.read += 1;
-        self.inner.read_byte().await
+        self.inner.read_byte()
     }
 
     #[inline(always)]
-    async fn read_double_bytes(&mut self) -> super::Result<[u8; 2]> {
+    fn read_double_bytes(&mut self) -> super::Result<[u8; 2]> {
         if self.len - self.read < 2 {
             return out_of_bounds_error();
         }
 
         self.read += 2;
-        self.inner.read_double_bytes().await
+        self.inner.read_double_bytes()
     }
 
     #[inline(always)]
-    async fn read_triple_bytes(&mut self) -> super::Result<[u8; 3]> {
+    fn read_triple_bytes(&mut self) -> super::Result<[u8; 3]> {
         if self.len - self.read < 3 {
             return out_of_bounds_error();
         }
 
         self.read += 3;
-        self.inner.read_triple_bytes().await
+        self.inner.read_triple_bytes()
     }
 
     #[inline(always)]
-    async fn read_quad_bytes(&mut self) -> super::Result<[u8; 4]> {
+    fn read_quad_bytes(&mut self) -> super::Result<[u8; 4]> {
         if self.len - self.read < 4 {
             return out_of_bounds_error();
         }
 
         self.read += 4;
-        self.inner.read_quad_bytes().await
+        self.inner.read_quad_bytes()
     }
 
-    async fn read_buf(&mut self, buf: &mut [u8]) -> super::Result<usize> {
+    fn read_buf(&mut self, buf: &mut [u8]) -> super::Result<usize> {
         // Limit read_buf() to the remainder of the scoped bytes if buf has a greater length.
         let scoped_len = cmp::min(self.len - self.read, buf.len() as u64) as usize;
-        let result = self.inner.read_buf(&mut buf[0..scoped_len]).await?;
+        let result = self.inner.read_buf(&mut buf[0..scoped_len])?;
         self.read += result as u64;
         Ok(result)
     }
 
-    async fn read_buf_exact(&mut self, buf: &mut [u8]) -> super::Result<()> {
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> super::Result<()> {
         if self.len - self.read < buf.len() as u64 {
             return out_of_bounds_error();
         }
 
-        self.inner.read_buf_exact(buf).await?;
+        self.inner.read_buf_exact(buf)?;
         self.read += buf.len() as u64;
         Ok(())
     }
 
-    async fn read_boxed_slice(&mut self, len: usize) -> super::Result<Box<[u8]>> {
+    fn read_boxed_slice(&mut self, len: usize) -> super::Result<Box<[u8]>> {
         // Limit read_boxed_slice() to the remainder of the scoped bytes if len is greater.
         let scoped_len = cmp::min(self.len - self.read, len as u64) as usize;
-        let data = self.inner.read_boxed_slice(scoped_len).await?;
+        let data = self.inner.read_boxed_slice(scoped_len)?;
         self.read += data.len() as u64;
         Ok(data)
     }
 
-    async fn read_boxed_slice_exact(&mut self, len: usize) -> super::Result<Box<[u8]>> {
+    fn read_boxed_slice_exact(&mut self, len: usize) -> super::Result<Box<[u8]>> {
         if self.len - self.read < len as u64 {
             return out_of_bounds_error();
         }
 
-        let data = self.inner.read_boxed_slice_exact(len).await?;
+        let data = self.inner.read_boxed_slice_exact(len)?;
         self.read += len as u64;
         Ok(data)
     }
 
     #[inline(always)]
-    async fn scan_bytes_aligned<'a>(
+    fn scan_bytes_aligned<'a>(
         &mut self,
         pattern: &[u8],
         align: usize,
@@ -156,19 +156,19 @@ impl<B: ReadBytes> ReadBytes for ScopedStream<B> {
             return out_of_bounds_error();
         }
 
-        let result = self.inner.scan_bytes_aligned(pattern, align, buf).await?;
+        let result = self.inner.scan_bytes_aligned(pattern, align, buf)?;
         self.read += result.len() as u64;
         Ok(result)
     }
 
     #[inline(always)]
-    async fn ignore_bytes(&mut self, count: u64) -> super::Result<()> {
+    fn ignore_bytes(&mut self, count: u64) -> super::Result<()> {
         if self.len - self.read < count {
             return out_of_bounds_error();
         }
 
         self.read += count;
-        self.inner.ignore_bytes(count).await
+        self.inner.ignore_bytes(count)
     }
 
     #[inline(always)]

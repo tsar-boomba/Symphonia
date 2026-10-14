@@ -17,7 +17,7 @@ use crate::common::Tier;
 use crate::errors::{Error, Result, unsupported_error};
 use crate::formats::{FormatInfo, FormatOptions, FormatReader};
 use crate::io::{
-    MediaSource, MediaSourceStream, ReadBytes, ScopedStream, Seek, SeekBuffered, SeekFrom,
+    AsyncReadBytes, AsyncScopedStream, MediaSource, MediaSourceStream, Seek, SeekBuffered, SeekFrom,
 };
 use crate::meta::{MetadataInfo, MetadataOptions, MetadataReader, MetadataSideData};
 
@@ -181,7 +181,7 @@ enum ProbeMatch {
 
 /// A function pointer to the score function of the registered probeable.
 type ScoreFn = for<'a, 'b> fn(
-    src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+    src: AsyncScopedStream<&'a mut MediaSourceStream<'b>>,
 ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>>;
 
 /// Private/internal generalized representation of a probeable format or metadata reader.
@@ -234,7 +234,7 @@ pub trait Scoreable {
     /// kind) are treated as if [`Score::Unsupported`] was returned. All other IO errors abort
     /// the probe operation.
     fn score<'a, 'b>(
-        src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+        src: AsyncScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>>;
 }
 
@@ -737,7 +737,7 @@ async fn score(
     let init_pos = mss.pos();
 
     // Perform the scoring operation.
-    let result = match (candidate.score)(ScopedStream::new(mss, u64::from(max_depth))).await {
+    let result = match (candidate.score)(AsyncScopedStream::new(mss, u64::from(max_depth))).await {
         Err(Error::IoError(err)) if err.is_eof() => {
             // IO errors that are not an unexpected end-of-file (or out-of-bounds) error, abort the
             // entire probe operation.

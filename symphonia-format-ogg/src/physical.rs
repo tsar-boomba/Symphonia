@@ -8,7 +8,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 
 use symphonia_core::errors::Result;
 use symphonia_core::io::{
-    MediaSourceStream, ReadBytes, ScopedStream, Seek, SeekBuffered, SeekFrom,
+    AsyncReadBytes, AsyncScopedStream, MediaSourceStream, Seek, SeekBuffered, SeekFrom,
 };
 
 use super::logical::{InspectState, LogicalStream};
@@ -38,8 +38,10 @@ pub async fn probe_stream_start(
     }
 
     // Scope the reader the prevent overruning the seekback region.
-    let mut scoped_reader =
-        ScopedStream::new(reader, OGG_PAGE_MAX_SIZE as u64 - (original_pos - byte_range_start));
+    let mut scoped_reader = AsyncScopedStream::new(
+        reader,
+        OGG_PAGE_MAX_SIZE as u64 - (original_pos - byte_range_start),
+    );
 
     let mut probed = BTreeSet::<u32>::new();
     let mut page_changed = false;
@@ -61,7 +63,7 @@ pub async fn probe_stream_start(
         // If the stream hasn't been marked as probed.
         if !probed.contains(&page.header.serial) {
             // Probe the first page of the logical stream.
-            stream.inspect_start_page(&page).await;
+            stream.inspect_start_page(&page);
             // Mark the logical stream as probed.
             probed.insert(page.header.serial);
         }
@@ -176,7 +178,7 @@ async fn scan_stream_end(
 ) -> Option<u64> {
     let scoped_len = byte_range_end - reader.pos();
 
-    let mut scoped_reader = ScopedStream::new(reader, scoped_len);
+    let mut scoped_reader = AsyncScopedStream::new(reader, scoped_len);
 
     let mut upper_pos = None;
 
@@ -195,7 +197,7 @@ async fn scan_stream_end(
         };
 
         // Inspect the end page.
-        stream.inspect_end_page(states.entry(page.header.serial).or_default(), &page).await;
+        stream.inspect_end_page(states.entry(page.header.serial).or_default(), &page);
 
         // The new end of the physical stream is the position after this page.
         upper_pos = Some(scoped_reader.pos());

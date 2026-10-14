@@ -8,7 +8,9 @@
 use alloc::vec::Vec;
 use symphonia_core::checksum::Crc32;
 use symphonia_core::errors::{Error, Result, decode_error};
-use symphonia_core::io::{BufReader, Monitor, MonitorStream, ReadBytes, SeekBuffered};
+use symphonia_core::io::{
+    AsyncMonitorStream, AsyncReadBytes, BufReader, Monitor, ReadBytes, SeekBuffered,
+};
 
 use log::{debug, warn};
 
@@ -32,33 +34,33 @@ pub struct PageHeader {
 }
 
 /// Reads a `PageHeader` from the the provided reader.
-async fn read_page_header<B: ReadBytes>(reader: &mut B) -> Result<PageHeader> {
+fn read_page_header<B: ReadBytes>(reader: &mut B) -> Result<PageHeader> {
     // The OggS marker should be present.
-    let marker = reader.read_quad_bytes().await?;
+    let marker = reader.read_quad_bytes()?;
 
     if marker != OGG_PAGE_MARKER {
         return decode_error("ogg: missing ogg stream marker");
     }
 
-    let version = reader.read_byte().await?;
+    let version = reader.read_byte()?;
 
     // There is only one OGG version, and that is version 0.
     if version != 0 {
         return decode_error("ogg: invalid ogg version");
     }
 
-    let flags = reader.read_byte().await?;
+    let flags = reader.read_byte()?;
 
     // Only the first 3 least-significant bits are used for flags.
     if flags & 0xf8 != 0 {
         return decode_error("ogg: invalid flag bits set");
     }
 
-    let ts = reader.read_u64().await?;
-    let serial = reader.read_u32().await?;
-    let sequence = reader.read_u32().await?;
-    let crc = reader.read_u32().await?;
-    let n_segments = reader.read_byte().await?;
+    let ts = reader.read_u64()?;
+    let serial = reader.read_u32()?;
+    let sequence = reader.read_u32()?;
+    let crc = reader.read_u32()?;
+    let n_segments = reader.read_byte()?;
 
     Ok(PageHeader {
         version,
@@ -75,7 +77,7 @@ async fn read_page_header<B: ReadBytes>(reader: &mut B) -> Result<PageHeader> {
 
 /// Quickly synchronizes the provided reader to the next OGG page capture pattern, but does not
 /// perform any further verification.
-async fn sync_page<B: ReadBytes>(reader: &mut B) -> Result<()> {
+async fn sync_page<B: AsyncReadBytes>(reader: &mut B) -> Result<()> {
     let mut marker = u32::from_be_bytes(reader.read_quad_bytes().await?);
 
     while marker.to_be_bytes() != OGG_PAGE_MARKER {
@@ -152,7 +154,7 @@ pub struct PageReader {
 impl PageReader {
     pub async fn try_new<B>(reader: &mut B) -> Result<Self>
     where
-        B: ReadBytes + SeekBuffered,
+        B: AsyncReadBytes + SeekBuffered,
     {
         let mut page_reader = PageReader {
             header: Default::default(),
@@ -169,7 +171,7 @@ impl PageReader {
     /// Attempts to read the next page. If the page is corrupted or invalid, returns an error.
     pub async fn try_next_page<B>(&mut self, reader: &mut B) -> Result<()>
     where
-        B: ReadBytes + SeekBuffered,
+        B: AsyncReadBytes + SeekBuffered,
     {
         let mut header_buf = [0u8; OGG_PAGE_HEADER_SIZE];
         header_buf[..4].copy_from_slice(&OGG_PAGE_MARKER);
@@ -185,7 +187,7 @@ impl PageReader {
         reader.read_buf_exact(&mut header_buf[4..]).await?;
 
         // Parse the page header buffer.
-        let header = read_page_header(&mut BufReader::new(&header_buf)).await?;
+        let header = read_page_header(&mut BufReader::new(&header_buf))?;
 
         // debug!(
         //     "page {{ version={}, absgp={}, serial={}, sequence={}, crc={:#x}, n_segments={}, \
@@ -210,7 +212,7 @@ impl PageReader {
         crc32.process_buf_bytes(&header_buf);
 
         // The remainder of the page will be checksummed as it is read.
-        let mut crc32_reader = MonitorStream::new(reader, crc32);
+        let mut crc32_reader = AsyncMonitorStream::new(reader, crc32);
 
         // Read segment table.
         let mut page_body_len = 0;
@@ -261,7 +263,7 @@ impl PageReader {
     /// the reader tries again until a valid page is read or end-of-stream.
     pub async fn next_page<B>(&mut self, reader: &mut B) -> Result<()>
     where
-        B: ReadBytes + SeekBuffered,
+        B: AsyncReadBytes + SeekBuffered,
     {
         loop {
             match self.try_next_page(reader).await {
@@ -277,7 +279,7 @@ impl PageReader {
     /// page is discarded and the reader tries again until a valid page is read or end-of-stream.
     pub async fn next_page_for_serial<B>(&mut self, reader: &mut B, serial: u32) -> Result<()>
     where
-        B: ReadBytes + SeekBuffered,
+        B: AsyncReadBytes + SeekBuffered,
     {
         loop {
             // Exit if a page with the specific serial is found.
@@ -311,7 +313,11 @@ impl PageReader {
         }
     }
 
-    async fn read_page_body<B: ReadBytes>(&mut self, reader: &mut B, len: usize) -> Result<()> {
+    async fn read_page_body<B: AsyncReadBytes>(
+        &mut self,
+        reader: &mut B,
+        len: usize,
+    ) -> Result<()> {
         // This is precondition.
         assert!(len <= 255 * 255);
 

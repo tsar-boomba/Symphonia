@@ -305,7 +305,7 @@ impl Atom for AudioSampleEntry {
             match entry_header.atom_type {
                 AtomType::Esds => {
                     let atom = it.read_atom::<EsdsAtom>().await?;
-                    atom.fill_audio_sample_entry(&mut entry).await?;
+                    atom.fill_audio_sample_entry(&mut entry)?;
                 }
                 AtomType::Ac3Config => {
                     let atom = it.read_atom::<Dac3Atom>().await?;
@@ -313,7 +313,7 @@ impl Atom for AudioSampleEntry {
                 }
                 AtomType::AudioSampleEntryAlac => {
                     let atom = it.read_atom::<AlacAtom>().await?;
-                    atom.fill_audio_sample_entry(&mut entry).await;
+                    atom.fill_audio_sample_entry(&mut entry);
                 }
                 AtomType::Eac3Config => {
                     let atom = it.read_atom::<Dec3Atom>().await?;
@@ -325,13 +325,13 @@ impl Atom for AudioSampleEntry {
                 }
                 AtomType::OpusDsConfig => {
                     let atom = it.read_atom::<OpusAtom>().await?;
-                    atom.fill_audio_sample_entry(&mut entry).await;
+                    atom.fill_audio_sample_entry(&mut entry);
                 }
                 AtomType::AudioSampleEntryQtWave => {
                     // The QuickTime WAVE (aka. siDecompressionParam) atom may contain many
                     // different types of sub-atoms to store decoder parameters.
                     let atom = it.read_atom::<WaveAtom>().await?;
-                    atom.fill_audio_sample_entry(&mut entry).await?;
+                    atom.fill_audio_sample_entry(&mut entry)?;
                 }
                 AtomType::BitRate => {
                     // Do nothing with this right now, but still valid

@@ -1,0 +1,211 @@
+// Symphonia
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+use alloc::boxed::Box;
+use core::cmp;
+
+use super::{AsyncReadBytes, FiniteStream, SeekBuffered};
+
+#[inline(always)]
+fn out_of_bounds_error<T>() -> super::Result<T> {
+    Err(super::Error::other("out of bounds"))
+}
+
+/// An `AsyncScopedStream` is the asynchronous counterpart of [`ScopedStream`](super::ScopedStream).
+/// It restricts the number of bytes that may be read to an upper limit.
+pub struct AsyncScopedStream<B: AsyncReadBytes> {
+    inner: B,
+    start: u64,
+    len: u64,
+    read: u64,
+}
+
+impl<B: AsyncReadBytes> AsyncScopedStream<B> {
+    /// Instantiates a new `AsyncScopedStream` with an upper limit on the number of bytes that can be
+    /// read from the inner source.
+    pub fn new(inner: B, len: u64) -> Self {
+        AsyncScopedStream { start: inner.pos(), inner, len, read: 0 }
+    }
+
+    /// Returns an immutable reference to the inner stream.
+    pub fn inner(&self) -> &B {
+        &self.inner
+    }
+
+    /// Returns a mutable reference to the inner stream.
+    pub fn inner_mut(&mut self) -> &mut B {
+        &mut self.inner
+    }
+
+    /// Ignores the remainder of the `AsyncScopedStream`.
+    pub async fn ignore(&mut self) -> super::Result<()> {
+        self.inner.ignore_bytes(self.len - self.read).await
+    }
+
+    /// Convert the `AsyncScopedStream` to the inner stream.
+    pub fn into_inner(self) -> B {
+        self.inner
+    }
+}
+
+impl<B: AsyncReadBytes> FiniteStream for AsyncScopedStream<B> {
+    /// Returns the length of the the `AsyncScopedStream`.
+    fn byte_len(&self) -> u64 {
+        self.len
+    }
+
+    /// Returns the number of bytes read.
+    fn bytes_read(&self) -> u64 {
+        self.read
+    }
+
+    /// Returns the number of bytes available to read.
+    fn bytes_available(&self) -> u64 {
+        self.len - self.read
+    }
+}
+
+impl<B: AsyncReadBytes> AsyncReadBytes for AsyncScopedStream<B> {
+    #[inline(always)]
+    async fn read_byte(&mut self) -> super::Result<u8> {
+        if self.len - self.read < 1 {
+            return out_of_bounds_error();
+        }
+
+        self.read += 1;
+        self.inner.read_byte().await
+    }
+
+    #[inline(always)]
+    async fn read_double_bytes(&mut self) -> super::Result<[u8; 2]> {
+        if self.len - self.read < 2 {
+            return out_of_bounds_error();
+        }
+
+        self.read += 2;
+        self.inner.read_double_bytes().await
+    }
+
+    #[inline(always)]
+    async fn read_triple_bytes(&mut self) -> super::Result<[u8; 3]> {
+        if self.len - self.read < 3 {
+            return out_of_bounds_error();
+        }
+
+        self.read += 3;
+        self.inner.read_triple_bytes().await
+    }
+
+    #[inline(always)]
+    async fn read_quad_bytes(&mut self) -> super::Result<[u8; 4]> {
+        if self.len - self.read < 4 {
+            return out_of_bounds_error();
+        }
+
+        self.read += 4;
+        self.inner.read_quad_bytes().await
+    }
+
+    async fn read_buf(&mut self, buf: &mut [u8]) -> super::Result<usize> {
+        // Limit read_buf() to the remainder of the scoped bytes if buf has a greater length.
+        let scoped_len = cmp::min(self.len - self.read, buf.len() as u64) as usize;
+        let result = self.inner.read_buf(&mut buf[0..scoped_len]).await?;
+        self.read += result as u64;
+        Ok(result)
+    }
+
+    async fn read_buf_exact(&mut self, buf: &mut [u8]) -> super::Result<()> {
+        if self.len - self.read < buf.len() as u64 {
+            return out_of_bounds_error();
+        }
+
+        self.inner.read_buf_exact(buf).await?;
+        self.read += buf.len() as u64;
+        Ok(())
+    }
+
+    async fn read_boxed_slice(&mut self, len: usize) -> super::Result<Box<[u8]>> {
+        // Limit read_boxed_slice() to the remainder of the scoped bytes if len is greater.
+        let scoped_len = cmp::min(self.len - self.read, len as u64) as usize;
+        let data = self.inner.read_boxed_slice(scoped_len).await?;
+        self.read += data.len() as u64;
+        Ok(data)
+    }
+
+    async fn read_boxed_slice_exact(&mut self, len: usize) -> super::Result<Box<[u8]>> {
+        if self.len - self.read < len as u64 {
+            return out_of_bounds_error();
+        }
+
+        let data = self.inner.read_boxed_slice_exact(len).await?;
+        self.read += len as u64;
+        Ok(data)
+    }
+
+    #[inline(always)]
+    async fn scan_bytes_aligned<'a>(
+        &mut self,
+        pattern: &[u8],
+        align: usize,
+        buf: &'a mut [u8],
+    ) -> super::Result<&'a mut [u8]> {
+        if self.len - self.read < buf.len() as u64 {
+            return out_of_bounds_error();
+        }
+
+        let result = self.inner.scan_bytes_aligned(pattern, align, buf).await?;
+        self.read += result.len() as u64;
+        Ok(result)
+    }
+
+    #[inline(always)]
+    async fn ignore_bytes(&mut self, count: u64) -> super::Result<()> {
+        if self.len - self.read < count {
+            return out_of_bounds_error();
+        }
+
+        self.read += count;
+        self.inner.ignore_bytes(count).await
+    }
+
+    #[inline(always)]
+    fn pos(&self) -> u64 {
+        self.inner.pos()
+    }
+}
+
+impl<B: AsyncReadBytes + SeekBuffered> SeekBuffered for AsyncScopedStream<B> {
+    #[inline(always)]
+    fn ensure_seekback_buffer(&mut self, len: usize) {
+        self.inner.ensure_seekback_buffer(len)
+    }
+
+    #[inline(always)]
+    fn unread_buffer_len(&self) -> usize {
+        self.inner.unread_buffer_len().min((self.len - self.read) as usize)
+    }
+
+    #[inline(always)]
+    fn read_buffer_len(&self) -> usize {
+        self.inner.read_buffer_len().min(self.read as usize)
+    }
+
+    #[inline(always)]
+    fn seek_buffered(&mut self, pos: u64) -> u64 {
+        // Clamp the seekable position to within the bounds of the AsyncScopedStream.
+        self.inner.seek_buffered(pos.clamp(self.start, self.start + self.len))
+    }
+
+    #[inline(always)]
+    fn seek_buffered_rel(&mut self, delta: isize) -> u64 {
+        // Clamp the delta value such that the absolute position after the buffered seek will be
+        // within the bounds of the AsyncScopedStream.
+        let max_back = self.read.min(isize::MAX as u64) as isize;
+        let max_forward = (self.len - self.read).min(isize::MAX as u64) as isize;
+        self.inner.seek_buffered_rel(delta.clamp(-max_back, max_forward))
+    }
+}

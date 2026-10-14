@@ -160,18 +160,18 @@ static VORBIS_COMMENT_MAP: Lazy<RawTagParserMap> = Lazy::new(|| {
 });
 
 /// Parse a string containing a base64 encoded FLAC picture block into a visual.
-async fn parse_base64_picture_block(b64: &str) -> Result<ParsedComment> {
+fn parse_base64_picture_block(b64: &str) -> Result<ParsedComment> {
     // Decode the Base64 encoded FLAC metadata block.
     let Some(data) = base64::decode(b64)
     else {
         return decode_error("meta(vorbis): the base64 encoding of a picture block is invalid");
     };
 
-    flac::read_flac_picture_block(&mut BufReader::new(&data)).await.map(ParsedComment::Visual)
+    flac::read_flac_picture_block(&mut BufReader::new(&data)).map(ParsedComment::Visual)
 }
 
 /// Parse a string containing a base64 encoding image file into a visual.
-async fn parse_base64_cover_art(b64: &str) -> Result<ParsedComment> {
+fn parse_base64_cover_art(b64: &str) -> Result<ParsedComment> {
     // Decode the Base64 encoded image data.
     let Some(data) = base64::decode(b64)
     else {
@@ -179,7 +179,7 @@ async fn parse_base64_cover_art(b64: &str) -> Result<ParsedComment> {
     };
 
     // Try to get image information.
-    let Some(image_info) = try_get_image_info(&data).await
+    let Some(image_info) = try_get_image_info(&data)
     else {
         return decode_error("meta (vorbis): could not detect cover art image format");
     };
@@ -332,7 +332,7 @@ enum ParsedComment {
 }
 
 /// Parse the given Vorbis Comment string into a `Tag`.
-async fn parse_vorbis_comment(buf: &[u8]) -> Result<ParsedComment> {
+fn parse_vorbis_comment(buf: &[u8]) -> Result<ParsedComment> {
     // Vorbis Comments are stored as <Key>=<Value> pairs where <Key> is a reduced ASCII-only
     // identifier and <Value> is a UTF-8 string value.
     //
@@ -352,12 +352,12 @@ async fn parse_vorbis_comment(buf: &[u8]) -> Result<ParsedComment> {
         else if key.eq_ignore_ascii_case("metadata_block_picture") {
             // A comment with a key "METADATA_BLOCK_PICTURE" is a FLAC picture block encoded in
             // base64. Attempt to decode it as such.
-            parse_base64_picture_block(value).await
+            parse_base64_picture_block(value)
         }
         else if key.eq_ignore_ascii_case("coverart") {
             // A comment with a key "COVERART" is a base64 encoded image. Attempt to decode it as
             // such.
-            parse_base64_cover_art(value).await
+            parse_base64_cover_art(value)
         }
         else {
             // Add a tag created from the key-value pair, while also attempting to map it to a
@@ -370,34 +370,34 @@ async fn parse_vorbis_comment(buf: &[u8]) -> Result<ParsedComment> {
     }
 }
 
-pub async fn read_vorbis_comment<B: ReadBytes>(
+pub fn read_vorbis_comment<B: ReadBytes>(
     reader: &mut B,
     builder: &mut MetadataBuilder,
     side_data: &mut Vec<MetadataSideData>,
 ) -> Result<()> {
     // Read the vendor string length in bytes.
-    let vendor_len = reader.read_u32().await?;
+    let vendor_len = reader.read_u32()?;
 
     // Ignore the vendor string.
-    reader.ignore_bytes(u64::from(vendor_len)).await?;
+    reader.ignore_bytes(u64::from(vendor_len))?;
 
     // Map of chapter number to a vector of chapter information.
     let mut chapters: BTreeMap<u32, Vec<ChapterInfo>> = Default::default();
 
     // Read the number of comments.
-    let num_comments = reader.read_u32().await? as usize;
+    let num_comments = reader.read_u32()? as usize;
 
     // Read each comment.
     for _ in 0..num_comments {
         // Read the comment string length in bytes.
-        let comment_length = reader.read_u32().await?;
+        let comment_length = reader.read_u32()?;
 
         // Read the comment string.
         // TODO: Apply a limit.
-        let comment_data = reader.read_boxed_slice_exact(comment_length as usize).await?;
+        let comment_data = reader.read_boxed_slice_exact(comment_length as usize)?;
 
         // Parse the Vorbis comment and handle the parsed output.
-        match parse_vorbis_comment(&comment_data).await {
+        match parse_vorbis_comment(&comment_data) {
             Ok(parsed) => match parsed {
                 ParsedComment::Tag(raw) => {
                     // Comment was a tag.

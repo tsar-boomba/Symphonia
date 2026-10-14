@@ -1,0 +1,118 @@
+// Symphonia
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+use alloc::boxed::Box;
+
+use super::{AsyncReadBytes, Monitor};
+
+/// An `AsyncMonitorStream` is the asynchronous counterpart of
+/// [`MonitorStream`](super::MonitorStream). It is a passive stream that observes all operations performed on the inner
+/// stream and forwards an immutable reference of the result to a [`Monitor`].
+pub struct AsyncMonitorStream<B: AsyncReadBytes, M: Monitor> {
+    inner: B,
+    monitor: M,
+}
+
+impl<B: AsyncReadBytes, M: Monitor> AsyncMonitorStream<B, M> {
+    pub fn new(inner: B, monitor: M) -> AsyncMonitorStream<B, M> {
+        AsyncMonitorStream { inner, monitor }
+    }
+
+    pub fn inner(&self) -> &B {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &mut B {
+        &mut self.inner
+    }
+
+    pub fn into_inner(self) -> B {
+        self.inner
+    }
+
+    pub fn monitor(&self) -> &M {
+        &self.monitor
+    }
+
+    pub fn monitor_mut(&mut self) -> &mut M {
+        &mut self.monitor
+    }
+}
+
+impl<B: AsyncReadBytes, M: Monitor + Send> AsyncReadBytes for AsyncMonitorStream<B, M> {
+    #[inline(always)]
+    async fn read_byte(&mut self) -> super::Result<u8> {
+        let byte = self.inner.read_byte().await?;
+        self.monitor.process_byte(byte);
+        Ok(byte)
+    }
+
+    #[inline(always)]
+    async fn read_double_bytes(&mut self) -> super::Result<[u8; 2]> {
+        let bytes = self.inner.read_double_bytes().await?;
+        self.monitor.process_double_bytes(bytes);
+        Ok(bytes)
+    }
+
+    #[inline(always)]
+    async fn read_triple_bytes(&mut self) -> super::Result<[u8; 3]> {
+        let bytes = self.inner.read_triple_bytes().await?;
+        self.monitor.process_triple_bytes(bytes);
+        Ok(bytes)
+    }
+
+    #[inline(always)]
+    async fn read_quad_bytes(&mut self) -> super::Result<[u8; 4]> {
+        let bytes = self.inner.read_quad_bytes().await?;
+        self.monitor.process_quad_bytes(bytes);
+        Ok(bytes)
+    }
+
+    async fn read_buf(&mut self, buf: &mut [u8]) -> super::Result<usize> {
+        let len = self.inner.read_buf(buf).await?;
+        self.monitor.process_buf_bytes(&buf[0..len]);
+        Ok(len)
+    }
+
+    async fn read_buf_exact(&mut self, buf: &mut [u8]) -> super::Result<()> {
+        self.inner.read_buf_exact(buf).await?;
+        self.monitor.process_buf_bytes(buf);
+        Ok(())
+    }
+
+    async fn read_boxed_slice(&mut self, len: usize) -> super::Result<Box<[u8]>> {
+        let data = self.inner.read_boxed_slice(len).await?;
+        self.monitor.process_buf_bytes(&data);
+        Ok(data)
+    }
+
+    async fn read_boxed_slice_exact(&mut self, len: usize) -> super::Result<Box<[u8]>> {
+        let data = self.inner.read_boxed_slice_exact(len).await?;
+        self.monitor.process_buf_bytes(&data);
+        Ok(data)
+    }
+
+    async fn scan_bytes_aligned<'a>(
+        &mut self,
+        pattern: &[u8],
+        align: usize,
+        buf: &'a mut [u8],
+    ) -> super::Result<&'a mut [u8]> {
+        let result = self.inner.scan_bytes_aligned(pattern, align, buf).await?;
+        self.monitor.process_buf_bytes(result);
+        Ok(result)
+    }
+
+    async fn ignore_bytes(&mut self, count: u64) -> super::Result<()> {
+        self.inner.ignore_bytes(count).await
+    }
+
+    #[inline(always)]
+    fn pos(&self) -> u64 {
+        self.inner.pos()
+    }
+}

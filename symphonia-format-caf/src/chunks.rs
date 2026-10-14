@@ -12,7 +12,7 @@ use symphonia_core::{
     audio::{AmbisonicBFormat, ChannelLabel, Channels, Position, layouts},
     codecs::audio::{AudioCodecId, well_known::*},
     errors::{Error, Result, decode_error, unsupported_error},
-    io::{MediaSourceStream, ReadBytes},
+    io::{AsyncReadBytes, MediaSourceStream},
     units::{Duration, Timestamp},
 };
 

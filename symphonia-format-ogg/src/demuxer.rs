@@ -100,7 +100,7 @@ impl<'s> OggReader<'s> {
 
         if let Some(stream) = self.streams.get_mut(&page.header.serial) {
             // TODO: Process side data.
-            let _side_data = stream.read_page(&page).await?;
+            let _side_data = stream.read_page(&page)?;
         }
         else {
             // If there is no associated logical stream with this page, then this is a
@@ -213,7 +213,7 @@ impl<'s> OggReader<'s> {
                 }
 
                 // Probe the page to get the start and end timestamp.
-                let (start_ts, end_ts) = stream.inspect_page(&self.pages.page()).await;
+                let (start_ts, end_ts) = stream.inspect_page(&self.pages.page());
 
                 debug!(
                     "seek: bisect step: page={{ start_ts={start_ts}, end_ts={end_ts} }} \
@@ -257,7 +257,7 @@ impl<'s> OggReader<'s> {
 
                 // Read in the current page since it contains our timestamp.
                 if s == serial {
-                    stream.read_page(&self.pages.page()).await?;
+                    stream.read_page(&self.pages.page())?;
                 }
             }
         }
@@ -335,7 +335,7 @@ impl<'s> OggReader<'s> {
             // There should only be a single packet, the identification packet, in the first page.
             if let Some(pkt) = self.pages.first_packet() {
                 // If a stream mapper has been detected, create a logical stream with it.
-                if let Some(mapper) = mappings::detect(header.serial, pkt).await? {
+                if let Some(mapper) = mappings::detect(header.serial, pkt)? {
                     info!(
                         "selected {} mapper for stream with serial={:#x}",
                         mapper.name(),
@@ -359,7 +359,7 @@ impl<'s> OggReader<'s> {
             let page = self.pages.page();
 
             if let Some(stream) = streams.get_mut(&page.header.serial) {
-                let side_data = stream.read_page_init(&page, true).await?;
+                let side_data = stream.read_page_init(&page, true)?;
 
                 // Consume each piece of side data.
                 for data in side_data {
@@ -449,7 +449,7 @@ pub struct OggFormat;
 
 impl Scoreable for OggFormat {
     fn score<'a, 'b>(
-        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+        _src: AsyncScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
         Box::pin(async { Ok(Score::Supported(255)) })
     }

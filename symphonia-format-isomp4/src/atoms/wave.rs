@@ -29,9 +29,9 @@ impl Atom for WaveAtom {
 }
 
 impl WaveAtom {
-    pub async fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) -> Result<()> {
+    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) -> Result<()> {
         if let Some(esds) = self.esds {
-            esds.fill_audio_sample_entry(entry).await?;
+            esds.fill_audio_sample_entry(entry)?;
         }
 
         Ok(())

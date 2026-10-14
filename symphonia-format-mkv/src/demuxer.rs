@@ -316,7 +316,7 @@ impl<'s> MkvReader<'s> {
 
             tr.with_flags(track.flags);
 
-            if let Some(codec_params) = make_track_codec_params(track).await? {
+            if let Some(codec_params) = make_track_codec_params(track)? {
                 tr.with_codec_params(codec_params);
             }
 
@@ -539,9 +539,7 @@ impl<'s> MkvReader<'s> {
                             cluster_ts,
                             &self.track_states,
                             &mut self.frames,
-                        )
-                        .await?
-                        {
+                        )? {
                             warn!("pts for block is too large");
                             return Ok(false);
                         }
@@ -562,7 +560,7 @@ pub struct MkvFormat;
 
 impl Scoreable for MkvFormat {
     fn score<'a, 'b>(
-        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+        _src: AsyncScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
         Box::pin(async { Ok(Score::Supported(255)) })
     }

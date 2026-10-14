@@ -51,11 +51,11 @@ impl Atom for AlacAtom {
 }
 
 impl AlacAtom {
-    pub async fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
+    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
         entry.codec_id = CODEC_ID_ALAC;
 
         // Try to parse the magic cookie.
-        if let Ok(cookie) = MagicCookie::read(&self.extra_data).await {
+        if let Ok(cookie) = MagicCookie::read(&self.extra_data) {
             entry.channels = Some(cookie.channels);
             entry.sample_rate = f64::from(cookie.sample_rate);
         }

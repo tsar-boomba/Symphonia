@@ -188,7 +188,7 @@ pub struct WavFormat;
 
 impl Scoreable for WavFormat {
     fn score<'a, 'b>(
-        mut src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+        mut src: AsyncScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
         Box::pin(async move {
             // Perform simple scoring by testing that the RIFF stream marker and RIFF form are both

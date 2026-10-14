@@ -20,7 +20,7 @@ use symphonia_core::formats::probe::{
     Anchors, ProbeMetadataData, ProbeableMetadata, Score, Scoreable,
 };
 use symphonia_core::io::{
-    MediaSourceStream, ReadBytes, ScopedStream, Seek, SeekBuffered, SeekFrom,
+    AsyncReadBytes, AsyncScopedStream, MediaSourceStream, Seek, SeekBuffered, SeekFrom,
 };
 use symphonia_core::meta::well_known::{METADATA_ID_APEV1, METADATA_ID_APEV2};
 use symphonia_core::meta::{
@@ -181,7 +181,7 @@ struct ApeHeader {
 
 impl ApeHeader {
     /// Read and verify the APE tag preamble and version.
-    async fn read_identity<B: ReadBytes>(reader: &mut B) -> Result<ApeVersion> {
+    async fn read_identity<B: AsyncReadBytes>(reader: &mut B) -> Result<ApeVersion> {
         let mut preamble = [0; 8];
         reader.read_buf_exact(&mut preamble).await?;
 
@@ -200,7 +200,7 @@ impl ApeHeader {
     }
 
     /// Read an APE tag header.
-    async fn read<B: ReadBytes>(reader: &mut B) -> Result<ApeHeader> {
+    async fn read<B: AsyncReadBytes>(reader: &mut B) -> Result<ApeHeader> {
         let version = ApeHeader::read_identity(reader).await?;
 
         // The size of the tag excluding any header.
@@ -247,7 +247,7 @@ struct ApeItem {
 
 impl ApeItem {
     /// Try to read and return an APE tag item.
-    async fn read<B: ReadBytes>(reader: &mut B, header: &ApeHeader) -> Result<ApeItem> {
+    async fn read<B: AsyncReadBytes>(reader: &mut B, header: &ApeHeader) -> Result<ApeItem> {
         // The length of the value in bytes.
         let len = reader.read_u32().await? as usize;
 
@@ -301,7 +301,7 @@ pub struct ApeFormat;
 
 impl Scoreable for ApeFormat {
     fn score<'a, 'b>(
-        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+        _src: AsyncScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
         Box::pin(async { Ok(Score::Supported(255)) })
     }
@@ -401,7 +401,7 @@ impl MetadataReader for ApeReader<'_> {
 
                     // Try to parse the image data to obtain information about the image. This may
                     // alter the image buffer if extra information was attached to it.
-                    let (data, image_info) = try_parse_image_data(data, &mut tags).await;
+                    let (data, image_info) = try_parse_image_data(data, &mut tags);
 
                     builder.add_visual(Visual {
                         media_type: image_info.as_ref().map(|info| info.media_type.clone()),
@@ -461,7 +461,7 @@ impl MetadataReader for ApeReader<'_> {
     }
 }
 
-async fn read_key<B: ReadBytes>(reader: &mut B) -> Result<String> {
+async fn read_key<B: AsyncReadBytes>(reader: &mut B) -> Result<String> {
     // A key is recommended to be between 2-16 characters.
     let mut key = String::with_capacity(16);
 
@@ -484,23 +484,20 @@ async fn read_key<B: ReadBytes>(reader: &mut B) -> Result<String> {
     Ok(key)
 }
 
-async fn read_utf8_value<B: ReadBytes>(reader: &mut B, len: usize) -> Result<String> {
+async fn read_utf8_value<B: AsyncReadBytes>(reader: &mut B, len: usize) -> Result<String> {
     match String::from_utf8(reader.read_boxed_slice_exact(len).await?.into_vec()) {
         Ok(value) => Ok(value),
         Err(_) => decode_error("ape: item value is valid not utf-8"),
     }
 }
 
-async fn try_parse_image_data(
-    buf: Box<[u8]>,
-    tags: &mut Vec<Tag>,
-) -> (Box<[u8]>, Option<ImageInfo>) {
+fn try_parse_image_data(buf: Box<[u8]>, tags: &mut Vec<Tag>) -> (Box<[u8]>, Option<ImageInfo>) {
     // It appears that the buffer stored by some binary tag items start with a null-terminated
     // filename of unspecified encoding (though UTF-8 seems likely). This is not documented
     // anywhere. Try to get this filename and strip it from the binary data.
 
     // Try to detect an image at the start of the data buffer.
-    if let Some(info) = try_get_image_info(&buf).await {
+    if let Some(info) = try_get_image_info(&buf) {
         // Image detected, return the original buffer back with the image information.
         return (buf, Some(info));
     }
@@ -514,7 +511,7 @@ async fn try_parse_image_data(
         let right = right.split_first().expect("right starts with null byte at pos").1;
 
         // Try to detect an image after the null-terminator.
-        if let Some(info) = try_get_image_info(right).await {
+        if let Some(info) = try_get_image_info(right) {
             // Try to interpret the bytes preceeding the null-terminator as a UTF-8 encoded filename
             // and add it to the visual's tags if successful.
             if let Ok(name) = str::from_utf8(left) {

@@ -20,7 +20,7 @@ use symphonia_core::codecs::audio::well_known::{
 };
 use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
 use symphonia_core::formats::Track;
-use symphonia_core::io::{MediaSourceStream, ReadBytes};
+use symphonia_core::io::{AsyncReadBytes, MediaSourceStream};
 use symphonia_core::meta::{MetadataBuilder, MetadataRevision};
 
 use symphonia_metadata::embedded::riff;
@@ -52,7 +52,7 @@ pub struct WaveFormatChunk {
 }
 
 impl WaveFormatChunk {
-    async fn read_pcm_fmt<B: ReadBytes>(
+    async fn read_pcm_fmt<B: AsyncReadBytes>(
         reader: &mut B,
         block_align: u16,
         bits_per_sample: u16,
@@ -116,7 +116,7 @@ impl WaveFormatChunk {
         }))
     }
 
-    async fn read_adpcm_fmt<B: ReadBytes>(
+    async fn read_adpcm_fmt<B: AsyncReadBytes>(
         reader: &mut B,
         block_align: u16,
         bits_per_sample: u16,
@@ -150,7 +150,7 @@ impl WaveFormatChunk {
         Ok(FormatData::Adpcm(FormatAdpcm { block_align, bits_per_sample, channels, codec }))
     }
 
-    async fn read_ieee_fmt<B: ReadBytes>(
+    async fn read_ieee_fmt<B: AsyncReadBytes>(
         reader: &mut B,
         bits_per_sample: u16,
         num_channels: u16,
@@ -190,7 +190,7 @@ impl WaveFormatChunk {
         Ok(FormatData::IeeeFloat(FormatIeeeFloat { channels, codec }))
     }
 
-    async fn read_ext_fmt<B: ReadBytes>(
+    async fn read_ext_fmt<B: AsyncReadBytes>(
         reader: &mut B,
         bits_per_sample: u16,
         num_channels: u16,
@@ -361,7 +361,7 @@ impl WaveFormatChunk {
         }))
     }
 
-    async fn read_alaw_pcm_fmt<B: ReadBytes>(
+    async fn read_alaw_pcm_fmt<B: AsyncReadBytes>(
         reader: &mut B,
         num_channels: u16,
         len: u32,
@@ -380,7 +380,7 @@ impl WaveFormatChunk {
         Ok(FormatData::ALaw(FormatALaw { codec: CODEC_ID_PCM_ALAW, channels }))
     }
 
-    async fn read_mulaw_pcm_fmt<B: ReadBytes>(
+    async fn read_mulaw_pcm_fmt<B: AsyncReadBytes>(
         reader: &mut B,
         num_channels: u16,
         len: u32,
@@ -412,7 +412,7 @@ impl WaveFormatChunk {
 }
 
 impl ParseChunk for WaveFormatChunk {
-    async fn parse<B: ReadBytes>(
+    async fn parse<B: AsyncReadBytes>(
         reader: &mut B,
         _tag: [u8; 4],
         len: u32,
@@ -553,7 +553,7 @@ pub struct FactChunk {
 }
 
 impl ParseChunk for FactChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+    async fn parse<B: AsyncReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
         // A Fact chunk is exactly 4 bytes long, though there is some mystery as to whether there
         // can be more fields in the chunk.
         if len != 4 {
@@ -578,7 +578,7 @@ pub struct ListChunk {
 }
 
 impl ListChunk {
-    pub async fn skip<B: ReadBytes>(&self, reader: &mut B) -> Result<()> {
+    pub async fn skip<B: AsyncReadBytes>(&self, reader: &mut B) -> Result<()> {
         ChunksReader::<NullChunks>::new(Some(self.len), ByteOrder::LittleEndian)
             .finish(reader)
             .await
@@ -586,7 +586,7 @@ impl ListChunk {
 }
 
 impl ParseChunk for ListChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+    async fn parse<B: AsyncReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
         // A List chunk must contain atleast the list/form identifier. However, an empty list
         // (len == 4) is permissible.
         if len < 4 {
@@ -612,7 +612,7 @@ pub struct InfoChunk {
 }
 
 impl ParseChunk for InfoChunk {
-    async fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
+    async fn parse<B: AsyncReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<InfoChunk> {
         // TODO: Apply limit.
         let buf = reader.read_boxed_slice_exact(len as usize).await?;
         Ok(InfoChunk { tag, buf })
@@ -624,7 +624,7 @@ pub struct DataChunk {
 }
 
 impl ParseChunk for DataChunk {
-    async fn parse<B: ReadBytes>(_: &mut B, _: [u8; 4], len: u32) -> Result<DataChunk> {
+    async fn parse<B: AsyncReadBytes>(_: &mut B, _: [u8; 4], len: u32) -> Result<DataChunk> {
         // If the length us u32::MAX, that usually indicates the file is streaming and the length
         // is not known.
         Ok(DataChunk { len: Some(len).filter(|&len| len != u32::MAX) })

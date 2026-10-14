@@ -8,7 +8,7 @@
 use symphonia_core::errors::Result;
 use symphonia_core::io::{self, FiniteStream, ReadBytes};
 
-pub async fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u8) -> Result<u32> {
+pub fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u8) -> Result<u32> {
     debug_assert!(bit_width <= 32);
 
     let mut result = 0u32;
@@ -20,7 +20,7 @@ pub async fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u8) ->
         bits_read += next_read;
         // The mask should have of the bits below 2 ^ nex_read set to 1
         let mask = (1 << next_read) - 1;
-        result |= u32::from(reader.read_u8().await? & mask) << (bit_width - bits_read);
+        result |= u32::from(reader.read_u8()? & mask) << (bit_width - bits_read);
     }
 
     Ok(result)
@@ -84,48 +84,43 @@ impl<B: ReadBytes + FiniteStream> FiniteStream for UnsyncStream<B> {
 }
 
 impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
-    async fn read_byte(&mut self) -> io::Result<u8> {
+    fn read_byte(&mut self) -> io::Result<u8> {
         let last = self.byte;
 
-        self.byte = self.inner.read_byte().await?;
+        self.byte = self.inner.read_byte()?;
 
         // If the last byte was 0xff, and the current byte is 0x00, the current byte should be
         // dropped and the next byte read instead.
         if last == 0xff && self.byte == 0x00 {
-            self.byte = self.inner.read_byte().await?;
+            self.byte = self.inner.read_byte()?;
         }
 
         Ok(self.byte)
     }
 
-    async fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
-        Ok([self.read_byte().await?, self.read_byte().await?])
+    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+        Ok([self.read_byte()?, self.read_byte()?])
     }
 
-    async fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
-        Ok([self.read_byte().await?, self.read_byte().await?, self.read_byte().await?])
+    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+        Ok([self.read_byte()?, self.read_byte()?, self.read_byte()?])
     }
 
-    async fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
-        Ok([
-            self.read_byte().await?,
-            self.read_byte().await?,
-            self.read_byte().await?,
-            self.read_byte().await?,
-        ])
+    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+        Ok([self.read_byte()?, self.read_byte()?, self.read_byte()?, self.read_byte()?])
     }
 
-    async fn read_buf(&mut self, _: &mut [u8]) -> io::Result<usize> {
+    fn read_buf(&mut self, _: &mut [u8]) -> io::Result<usize> {
         // Not required.
         unimplemented!();
     }
 
-    async fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         let len = buf.len();
 
         if len > 0 {
             // Fill the provided buffer directly from the underlying reader.
-            self.inner.read_buf_exact(buf).await?;
+            self.inner.read_buf_exact(buf)?;
 
             // If the last seen byte was 0xff, and the first byte in buf is 0x00, skip the first
             // byte of buf.
@@ -156,7 +151,7 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
             // If dst < len, then buf is not full. Read the remaining bytes manually to completely
             // fill buf.
             while dst < len {
-                buf[dst] = self.read_byte().await?;
+                buf[dst] = self.read_byte()?;
                 dst += 1;
             }
         }
@@ -164,7 +159,7 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
         Ok(())
     }
 
-    async fn scan_bytes_aligned<'a>(
+    fn scan_bytes_aligned<'a>(
         &mut self,
         _: &[u8],
         _: usize,
@@ -174,9 +169,9 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
         unimplemented!();
     }
 
-    async fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
+    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
         for _ in 0..count {
-            self.inner.read_byte().await?;
+            self.inner.read_byte()?;
         }
         Ok(())
     }
@@ -192,22 +187,22 @@ mod tests {
     use super::read_syncsafe_leq32;
     use symphonia_core::io::BufReader;
 
-    #[futures_test::test]
-    async fn verify_read_syncsafe_leq32() {
+    #[test]
+    fn verify_read_syncsafe_leq32() {
         let mut stream = BufReader::new(&[3, 4, 80, 1, 15]);
-        assert_eq!(101875743, read_syncsafe_leq32(&mut stream, 32).await.unwrap());
+        assert_eq!(101875743, read_syncsafe_leq32(&mut stream, 32).unwrap());
 
         // Special case: for a bit depth that is not a multiple of 7 such as 32
         // we need to ensure the mask is correct.
         // In this case, the final iteration should read 4 bits and have a mask of 0b0000_1111.
         // 0b0000_1111 has a 0 in 16's place so testing mask & 16 will ensure this is working.
         let mut stream = BufReader::new(&[16, 16, 16, 16, 16]);
-        assert_eq!(541098240, read_syncsafe_leq32(&mut stream, 32).await.unwrap());
+        assert_eq!(541098240, read_syncsafe_leq32(&mut stream, 32).unwrap());
 
         let mut stream = BufReader::new(&[3, 4, 80, 1]);
-        assert_eq!(6367233, read_syncsafe_leq32(&mut stream, 28).await.unwrap());
+        assert_eq!(6367233, read_syncsafe_leq32(&mut stream, 28).unwrap());
 
         let mut stream = BufReader::new(&[3, 4, 80, 1]);
-        assert_eq!(0, read_syncsafe_leq32(&mut stream, 0).await.unwrap());
+        assert_eq!(0, read_syncsafe_leq32(&mut stream, 0).unwrap());
     }
 }

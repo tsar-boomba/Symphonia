@@ -31,7 +31,7 @@ pub struct MagicCookie {
 
 impl MagicCookie {
     /// Read the ALAC magic cookie from the provided buffer.
-    pub async fn read(mut buf: &[u8]) -> Result<MagicCookie> {
+    pub fn read(mut buf: &[u8]) -> Result<MagicCookie> {
         // The magic cookie must be atleast 24 bytes long.
         if buf.len() < 24 {
             return unsupported_error("common (alac): magic cookie size too small");
@@ -55,17 +55,17 @@ impl MagicCookie {
         let mut reader = BufReader::new(buf);
 
         let mut config = MagicCookie {
-            frame_length: reader.read_be_u32().await?,
-            compatible_version: reader.read_u8().await?,
-            bit_depth: reader.read_u8().await?,
-            pb: reader.read_u8().await?,
-            mb: reader.read_u8().await?,
-            kb: reader.read_u8().await?,
-            num_channels: reader.read_u8().await?,
-            max_run: reader.read_be_u16().await?,
-            max_frame_bytes: reader.read_be_u32().await?,
-            avg_bit_rate: reader.read_be_u32().await?,
-            sample_rate: reader.read_be_u32().await?,
+            frame_length: reader.read_be_u32()?,
+            compatible_version: reader.read_u8()?,
+            bit_depth: reader.read_u8()?,
+            pb: reader.read_u8()?,
+            mb: reader.read_u8()?,
+            kb: reader.read_u8()?,
+            num_channels: reader.read_u8()?,
+            max_run: reader.read_be_u16()?,
+            max_frame_bytes: reader.read_be_u32()?,
+            avg_bit_rate: reader.read_be_u32()?,
+            sample_rate: reader.read_be_u32()?,
             channels: Default::default(),
         };
 
@@ -89,23 +89,23 @@ impl MagicCookie {
         // channel layout from the number of channels.
         config.channels = if reader.byte_len() == 48 {
             // The first field is the size of the channel layout info. This should always be 24.
-            if reader.read_be_u32().await? != 24 {
+            if reader.read_be_u32()? != 24 {
                 return decode_error("common (alac): invalid channel layout info size");
             }
 
             // The channel layout info identifier should be the ascii string "chan".
-            if reader.read_quad_bytes().await? != *b"chan" {
+            if reader.read_quad_bytes()? != *b"chan" {
                 return decode_error("common (alac): invalid channel layout info id");
             }
 
             // The channel layout info version must be 0.
-            if reader.read_be_u32().await? != 0 {
+            if reader.read_be_u32()? != 0 {
                 return decode_error("common (alac): invalid channel layout info version");
             }
 
             // Read the channel layout tag. The numerical value of this tag is defined by the Apple
             // CoreAudio API.
-            let layout_channels = match reader.read_be_u32().await? {
+            let layout_channels = match reader.read_be_u32()? {
                 // 100 << 16
                 0x64_0001 => layouts::CHANNEL_LAYOUT_MONO,
                 // 101 << 16
@@ -134,7 +134,7 @@ impl MagicCookie {
             }
 
             // The next two fields are reserved and should be 0.
-            if reader.read_be_u32().await? != 0 || reader.read_be_u32().await? != 0 {
+            if reader.read_be_u32()? != 0 || reader.read_be_u32()? != 0 {
                 return decode_error(
                     "common (alac): reserved values in channel layout info are not 0",
                 );

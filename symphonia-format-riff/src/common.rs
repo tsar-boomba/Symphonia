@@ -19,7 +19,7 @@ use symphonia_core::codecs::audio::well_known::{
 use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters};
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::prelude::*;
-use symphonia_core::io::{MediaSourceStream, ReadBytes};
+use symphonia_core::io::{AsyncReadBytes, MediaSourceStream};
 
 use log::{debug, info};
 
@@ -63,7 +63,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
         ChunksReader { len: len.map(u64::from), byte_order, consumed: 0, phantom: PhantomData }
     }
 
-    pub async fn next<B: ReadBytes>(&mut self, reader: &mut B) -> Result<Option<T>> {
+    pub async fn next<B: AsyncReadBytes>(&mut self, reader: &mut B) -> Result<Option<T>> {
         // Loop until a chunk is recognized and returned, or the end of stream is reached.
         loop {
             // Check if at the end of the parent chunk.
@@ -129,7 +129,7 @@ impl<T: ParseChunkTag> ChunksReader<T> {
         }
     }
 
-    pub async fn finish<B: ReadBytes>(&mut self, reader: &mut B) -> Result<()> {
+    pub async fn finish<B: AsyncReadBytes>(&mut self, reader: &mut B) -> Result<()> {
         // If data is remaining in the parent chunk, skip it.
         if let Some(parent_len) = self.len {
             if self.consumed < parent_len {
@@ -151,10 +151,10 @@ impl<T: ParseChunkTag> ChunksReader<T> {
 /// Common trait implemented for all chunks that are parsed by a `ChunkParser`.
 pub trait ParseChunk: Sized {
     /// Parse the chunk.
-    async fn parse<B: ReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
+    async fn parse<B: AsyncReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
 
     /// Parse the chunk and discard any unread data in the chunk.
-    async fn parse_and_skip_unread<B: ReadBytes>(
+    async fn parse_and_skip_unread<B: AsyncReadBytes>(
         reader: &mut B,
         tag: [u8; 4],
         len: u32,
@@ -186,11 +186,11 @@ impl<P: ParseChunk> ChunkParser<P> {
         ChunkParser { tag, len, phantom: PhantomData }
     }
 
-    pub async fn parse<B: ReadBytes>(&self, reader: &mut B) -> Result<P> {
+    pub async fn parse<B: AsyncReadBytes>(&self, reader: &mut B) -> Result<P> {
         P::parse(reader, self.tag, self.len).await
     }
 
-    pub async fn parse_and_skip_unread<B: ReadBytes>(&self, reader: &mut B) -> Result<P> {
+    pub async fn parse_and_skip_unread<B: AsyncReadBytes>(&self, reader: &mut B) -> Result<P> {
         P::parse_and_skip_unread(reader, self.tag, self.len).await
     }
 }

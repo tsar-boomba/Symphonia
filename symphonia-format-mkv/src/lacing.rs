@@ -34,11 +34,11 @@ fn parse_flags(flags: u8) -> Result<Lacing> {
     }
 }
 
-async fn read_ebml_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Result<Vec<u64>> {
+fn read_ebml_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Result<Vec<u64>> {
     let mut sizes: Vec<u64> = Vec::with_capacity(num_frames);
     for _ in 0..num_frames {
         if let Some(last_size) = sizes.last().copied() {
-            let delta = read_signed_vint(&mut reader).await?;
+            let delta = read_signed_vint(&mut reader)?;
 
             // Do not allow the size to overflow or become negative.
             let Some(size) = last_size.checked_add_signed(delta)
@@ -49,7 +49,7 @@ async fn read_ebml_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Resu
             sizes.push(size)
         }
         else {
-            let size = read_unsigned_vint(&mut reader).await?;
+            let size = read_unsigned_vint(&mut reader)?;
             sizes.push(size);
         }
     }
@@ -57,14 +57,11 @@ async fn read_ebml_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Resu
     Ok(sizes)
 }
 
-pub(crate) async fn read_xiph_sizes<R: ReadBytes>(
-    mut reader: R,
-    num_frames: usize,
-) -> Result<Vec<u64>> {
+pub(crate) fn read_xiph_sizes<R: ReadBytes>(mut reader: R, num_frames: usize) -> Result<Vec<u64>> {
     let mut sizes = Vec::with_capacity(num_frames);
     let mut prefixes = 0;
     while sizes.len() < num_frames {
-        let byte = reader.read_byte().await? as u64;
+        let byte = reader.read_byte()? as u64;
         if byte == 255 {
             prefixes += 1;
         }
@@ -142,7 +139,7 @@ impl FrameDurationIter {
     }
 }
 
-pub(crate) async fn extract_frames(
+pub(crate) fn extract_frames(
     block: &[u8],
     block_duration: Option<TrackTicks>,
     cluster_ts: SegmentTicks,
@@ -150,9 +147,9 @@ pub(crate) async fn extract_frames(
     frames: &mut VecDeque<Frame>,
 ) -> Result<bool> {
     let mut reader = BufReader::new(block);
-    let track_num = read_unsigned_vint(&mut reader).await? as u32;
-    let block_rel_ts = SignedTrackTicks::from((reader.read_be_u16().await? as i16) as i64);
-    let flags = reader.read_byte().await?;
+    let track_num = read_unsigned_vint(&mut reader)? as u32;
+    let block_rel_ts = SignedTrackTicks::from((reader.read_be_u16()? as i16) as i64);
+    let flags = reader.read_byte()?;
     let lacing = parse_flags(flags)?;
 
     // Get the track associated with the block. It's an error if the track doesn't exist.
@@ -166,17 +163,17 @@ pub(crate) async fn extract_frames(
 
     match lacing {
         Lacing::None => {
-            let data = reader.read_boxed_slice_exact(block.len() - reader.pos() as usize).await?;
+            let data = reader.read_boxed_slice_exact(block.len() - reader.pos() as usize)?;
             let dur = FrameDurationIter::new(block_duration, track, 1).next();
             frames.push_back(Frame { track_num, pts, data, dur });
         }
         Lacing::Xiph | Lacing::Ebml => {
             // Read number of stored sizes which is actually `number of frames` - 1
             // since size of the last frame is deduced from block size.
-            let num_frames = reader.read_byte().await? as usize;
+            let num_frames = reader.read_byte()? as usize;
             let sizes = match lacing {
-                Lacing::Xiph => read_xiph_sizes(&mut reader, num_frames).await?,
-                Lacing::Ebml => read_ebml_sizes(&mut reader, num_frames).await?,
+                Lacing::Xiph => read_xiph_sizes(&mut reader, num_frames)?,
+                Lacing::Ebml => read_ebml_sizes(&mut reader, num_frames)?,
                 _ => unreachable!(),
             };
 
@@ -192,7 +189,7 @@ pub(crate) async fn extract_frames(
             let mut dur_it = FrameDurationIter::new(block_duration, track, num_frames as u64 + 1);
 
             for frame_size in sizes {
-                let data = reader.read_boxed_slice_exact(frame_size as usize).await?;
+                let data = reader.read_boxed_slice_exact(frame_size as usize)?;
                 let dur = dur_it.next();
 
                 frames.push_back(Frame { track_num, pts, data, dur });
@@ -206,11 +203,11 @@ pub(crate) async fn extract_frames(
 
             // Size of last frame is not provided so we read to the end of the block.
             let size = block.len() - reader.pos() as usize;
-            let data = reader.read_boxed_slice_exact(size).await?;
+            let data = reader.read_boxed_slice_exact(size)?;
             frames.push_back(Frame { track_num, pts, data, dur: dur_it.next() });
         }
         Lacing::FixedSize => {
-            let num_frames = reader.read_byte().await? as usize + 1;
+            let num_frames = reader.read_byte()? as usize + 1;
             let total_size = block.len() - reader.pos() as usize;
             if total_size % num_frames != 0 {
                 return decode_error("mkv: invalid block size");
@@ -220,7 +217,7 @@ pub(crate) async fn extract_frames(
 
             let frame_size = total_size / num_frames;
             for _ in 0..num_frames {
-                let data = reader.read_boxed_slice_exact(frame_size).await?;
+                let data = reader.read_boxed_slice_exact(frame_size)?;
                 let dur = dur_it.next();
 
                 frames.push_back(Frame { track_num, pts, data, dur });

@@ -18,7 +18,7 @@ use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::formats::probe::{
     Anchors, ProbeMetadataData, ProbeableMetadata, Score, Scoreable,
 };
-use symphonia_core::io::{MediaSourceStream, ReadBytes, ScopedStream};
+use symphonia_core::io::{AsyncReadBytes, AsyncScopedStream, MediaSourceStream};
 use symphonia_core::meta::well_known::METADATA_ID_ID3V1;
 use symphonia_core::meta::{
     MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, StandardTag,
@@ -29,7 +29,10 @@ use symphonia_core::{async_trait, support_metadata};
 
 use crate::utils::id3v1::get_genre_name;
 
-async fn read_id3v1<B: ReadBytes>(reader: &mut B, builder: &mut MetadataBuilder) -> Result<()> {
+async fn read_id3v1<B: AsyncReadBytes>(
+    reader: &mut B,
+    builder: &mut MetadataBuilder,
+) -> Result<()> {
     // Read the "TAG" header.
     let marker = reader.read_triple_bytes().await?;
 
@@ -121,7 +124,7 @@ pub struct Id3v1Format;
 
 impl Scoreable for Id3v1Format {
     fn score<'a, 'b>(
-        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+        _src: AsyncScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
         Box::pin(async { Ok(Score::Supported(255)) })
     }

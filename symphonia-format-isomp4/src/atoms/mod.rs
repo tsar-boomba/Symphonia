@@ -10,7 +10,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::num::NonZeroU64;
 
-use symphonia_core::io::{MediaSource, ReadBytes, SeekBuffered, SeekFrom};
+use symphonia_core::io::{AsyncReadBytes, MediaSource, SeekBuffered, SeekFrom};
 
 /// Atom parsing limits.
 pub mod limits {
@@ -497,9 +497,9 @@ pub(crate) fn unsupported_error<T>(feature: &'static str) -> Result<T> {
     Err(AtomError::Other(symphonia_core::errors::Error::Unsupported(feature)))
 }
 
-/// A super-trait of `ReadBytes` and `SeekBuffered` that all readers of `AtomIterator` must
+/// A super-trait of `AsyncReadBytes` and `SeekBuffered` that all readers of `AtomIterator` must
 /// implement.
-pub trait ReadAtom: ReadBytes + SeekBuffered {}
+pub trait ReadAtom: AsyncReadBytes + SeekBuffered {}
 
 /// Atom header.
 #[derive(Copy, Clone, Debug)]
@@ -521,7 +521,7 @@ impl AtomHeader {
     const LARGE_HEADER_SIZE: u8 = AtomHeader::HEADER_SIZE + 8;
 
     /// Reads an atom header from the provided `ByteStream`.
-    pub async fn read<R: ReadBytes>(reader: &mut R) -> Result<AtomHeader> {
+    pub async fn read<R: AsyncReadBytes>(reader: &mut R) -> Result<AtomHeader> {
         let atom_pos = reader.pos();
 
         let atom_len = u64::from(reader.read_be_u32().await?);

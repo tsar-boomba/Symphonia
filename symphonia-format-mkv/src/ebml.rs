@@ -10,7 +10,9 @@ use core::pin::Pin;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use symphonia_core::io::{MediaSource, ReadBytes, SeekBuffered, SeekFrom};
+use symphonia_core::io::{
+    AsyncReadBytes, BufReader, MediaSource, ReadBytes, SeekBuffered, SeekFrom,
+};
 use symphonia_core::util::bits::sign_extend_leq64_to_i64;
 
 /// `EbmlError` provides an enumeration of all possible EBML iterator errors.
@@ -63,9 +65,9 @@ impl From<symphonia_core::io::Error> for EbmlError {
 
 pub type Result<T> = core::result::Result<T, EbmlError>;
 
-/// A super-trait of `ReadBytes` and `SeekBuffered` that all readers of `EbmlIterator` must
+/// A super-trait of `AsyncReadBytes` and `SeekBuffered` that all readers of `EbmlIterator` must
 /// implement.
-pub trait ReadEbml: ReadBytes + SeekBuffered {}
+pub trait ReadEbml: AsyncReadBytes + SeekBuffered {}
 
 /// EBML data types.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -165,7 +167,11 @@ impl<S: EbmlSchema> EbmlElementHeader<S> {
     pub const MIN_SIZE: u64 = 2;
 
     /// Read an EBML element header from the stream.
-    pub(crate) async fn read<R: ReadBytes>(reader: &mut R, depth: u8, schema: &S) -> Result<Self> {
+    pub(crate) async fn read<R: AsyncReadBytes>(
+        reader: &mut R,
+        depth: u8,
+        schema: &S,
+    ) -> Result<Self> {
         // Read the variable width element ID.
         let (id, id_len) = read_element_id(reader).await?;
 
@@ -926,7 +932,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
 
 /// Read an EBML element ID (as in RFC8794) from the current position of the reader and returns
 /// its value, and length in bytes (1-4).
-async fn read_element_id<R: ReadBytes>(reader: &mut R) -> Result<(u32, u8)> {
+async fn read_element_id<R: AsyncReadBytes>(reader: &mut R) -> Result<(u32, u8)> {
     // Read the leading byte of the element ID.
     let byte = reader.read_byte().await?;
 
@@ -950,8 +956,8 @@ async fn read_element_id<R: ReadBytes>(reader: &mut R) -> Result<(u32, u8)> {
 }
 
 /// Read the size of an EBML element.
-async fn read_element_data_size<R: ReadBytes>(reader: &mut R) -> Result<Option<u64>> {
-    let (size, len) = read_vint(reader).await?;
+async fn read_element_data_size<R: AsyncReadBytes>(reader: &mut R) -> Result<Option<u64>> {
+    let (size, len) = read_vint_from_stream(reader).await?;
 
     // If the VINT_DATA portion of the variable sized unsigned integer representing the data size is
     // all 1s, then the element data size is unknown. The VINT_DATA portion of the decoded integer
@@ -967,13 +973,13 @@ async fn read_element_data_size<R: ReadBytes>(reader: &mut R) -> Result<Option<u
 
 /// Read an unsigned variable size integer (as in RFC8794) from the reader and return it or an
 /// error.
-pub(crate) async fn read_unsigned_vint<R: ReadBytes>(reader: &mut R) -> Result<u64> {
-    Ok(read_vint(reader).await?.0)
+pub(crate) fn read_unsigned_vint<R: ReadBytes>(reader: &mut R) -> Result<u64> {
+    Ok(read_vint(reader)?.0)
 }
 
 /// Read a signed variable size integer (as in RFC8794) from the reader and return it or an error.
-pub(crate) async fn read_signed_vint<R: ReadBytes>(reader: &mut R) -> Result<i64> {
-    let (value, len) = read_vint(reader).await?;
+pub(crate) fn read_signed_vint<R: ReadBytes>(reader: &mut R) -> Result<i64> {
+    let (value, len) = read_vint(reader)?;
     // Convert to a signed integer by range shifting.
     let half_range = i64::pow(2, (u32::from(len) * 7) - 1) - 1;
     Ok(value as i64 - half_range)
@@ -981,8 +987,8 @@ pub(crate) async fn read_signed_vint<R: ReadBytes>(reader: &mut R) -> Result<i64
 
 /// Read an unsigned variable size integer (as in RFC8794) from the stream and return both its value
 /// and length in byte, or an error.
-async fn read_vint<R: ReadBytes>(mut reader: R) -> Result<(u64, u8)> {
-    let byte = reader.read_byte().await?;
+fn read_vint<R: ReadBytes>(mut reader: R) -> Result<(u64, u8)> {
+    let byte = reader.read_byte()?;
 
     // Determine VINT_WIDTH + 1, the total length of the variable size integer.
     let len = byte.leading_zeros() as u8 + 1;
@@ -996,55 +1002,74 @@ async fn read_vint<R: ReadBytes>(mut reader: R) -> Result<(u64, u8)> {
 
     // Read remaining bytes.
     for _ in 1..len {
-        let byte = reader.read_byte().await?;
+        let byte = reader.read_byte()?;
         vint = (vint << 8) | u64::from(byte);
     }
 
     Ok((vint, len))
 }
 
+/// Read an unsigned variable size integer (as in RFC8794) from the stream and return both its value
+/// and length in byte, or an error.
+///
+/// This is the asynchronous counterpart of [`read_vint`].
+async fn read_vint_from_stream<R: AsyncReadBytes>(reader: &mut R) -> Result<(u64, u8)> {
+    let mut buf = [0u8; 8];
+
+    // The leading byte determines the total length of the variable size integer.
+    buf[0] = reader.read_byte().await?;
+
+    let len = buf[0].leading_zeros() as usize + 1;
+    if len > 8 {
+        return Err(EbmlError::InvalidEbmlDataLength);
+    }
+
+    // Read the remaining bytes, and then decode the integer.
+    reader.read_buf_exact(&mut buf[1..len]).await?;
+
+    read_vint(BufReader::new(&buf[..len]))
+}
+
 #[cfg(test)]
 mod tests {
-    use symphonia_core::io::BufReader;
+    use alloc::boxed::Box;
+
+    use symphonia_core::io::{BufReader, Cursor, MediaSourceStream};
 
     use super::{read_element_id, read_signed_vint, read_unsigned_vint};
 
+    /// Create a stream that reads from the provided buffer.
+    fn stream(buf: &[u8]) -> MediaSourceStream<'static> {
+        MediaSourceStream::new(Box::new(Cursor::new(buf.to_vec())), Default::default())
+    }
+
     #[futures_test::test]
     async fn verify_read_element_id() {
-        assert_eq!(read_element_id(&mut BufReader::new(&[0x82])).await.unwrap(), (0x82, 1));
-        assert_eq!(read_element_id(&mut BufReader::new(&[0x40, 0x02])).await.unwrap(), (0x4002, 2));
+        assert_eq!(read_element_id(&mut stream(&[0x82])).await.unwrap(), (0x82, 1));
+        assert_eq!(read_element_id(&mut stream(&[0x40, 0x02])).await.unwrap(), (0x4002, 2));
+        assert_eq!(read_element_id(&mut stream(&[0x20, 0x00, 0x02])).await.unwrap(), (0x200002, 3));
         assert_eq!(
-            read_element_id(&mut BufReader::new(&[0x20, 0x00, 0x02])).await.unwrap(),
-            (0x200002, 3)
-        );
-        assert_eq!(
-            read_element_id(&mut BufReader::new(&[0x10, 0x00, 0x00, 0x02])).await.unwrap(),
+            read_element_id(&mut stream(&[0x10, 0x00, 0x00, 0x02])).await.unwrap(),
             (0x10000002, 4)
         );
     }
 
-    #[futures_test::test]
-    async fn verify_read_unsigned_vint() {
-        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x82])).await.unwrap(), 2);
-        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x40, 0x02])).await.unwrap(), 2);
-        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x20, 0x00, 0x02])).await.unwrap(), 2);
+    #[test]
+    fn verify_read_unsigned_vint() {
+        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x82])).unwrap(), 2);
+        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x40, 0x02])).unwrap(), 2);
+        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x20, 0x00, 0x02])).unwrap(), 2);
+        assert_eq!(read_unsigned_vint(&mut BufReader::new(&[0x10, 0x00, 0x00, 0x02])).unwrap(), 2);
         assert_eq!(
-            read_unsigned_vint(&mut BufReader::new(&[0x10, 0x00, 0x00, 0x02])).await.unwrap(),
+            read_unsigned_vint(&mut BufReader::new(&[0x08, 0x00, 0x00, 0x00, 0x02])).unwrap(),
             2
         );
         assert_eq!(
-            read_unsigned_vint(&mut BufReader::new(&[0x08, 0x00, 0x00, 0x00, 0x02])).await.unwrap(),
-            2
-        );
-        assert_eq!(
-            read_unsigned_vint(&mut BufReader::new(&[0x04, 0x00, 0x00, 0x00, 0x00, 0x02]))
-                .await
-                .unwrap(),
+            read_unsigned_vint(&mut BufReader::new(&[0x04, 0x00, 0x00, 0x00, 0x00, 0x02])).unwrap(),
             2
         );
         assert_eq!(
             read_unsigned_vint(&mut BufReader::new(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]))
-                .await
                 .unwrap(),
             2
         );
@@ -1052,15 +1077,14 @@ mod tests {
             read_unsigned_vint(&mut BufReader::new(&[
                 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
             ]))
-            .await
             .unwrap(),
             2
         );
     }
 
-    #[futures_test::test]
-    async fn verify_read_signed_vint() {
-        assert_eq!(read_signed_vint(&mut BufReader::new(&[0x80])).await.unwrap(), -63);
-        assert_eq!(read_signed_vint(&mut BufReader::new(&[0x40, 0x00])).await.unwrap(), -8191);
+    #[test]
+    fn verify_read_signed_vint() {
+        assert_eq!(read_signed_vint(&mut BufReader::new(&[0x80])).unwrap(), -63);
+        assert_eq!(read_signed_vint(&mut BufReader::new(&[0x40, 0x00])).unwrap(), -8191);
     }
 }

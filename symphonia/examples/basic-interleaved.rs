@@ -45,7 +45,6 @@ async fn main_fut() {
     // Create a decoder for the track.
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(track.codec_params.as_ref().unwrap().audio().unwrap(), &dec_opts)
-        .await
         .unwrap();
 
     // Store the track identifier, we'll use it to filter packets.
@@ -62,7 +61,7 @@ async fn main_fut() {
         }
 
         // Decode the packet into audio samples, ignoring any decode errors.
-        match decoder.decode(&packet).await {
+        match decoder.decode(&packet) {
             Ok(audio_buf) => {
                 // The decoded audio samples may now be accessed via the generic audio buffer
                 // returned by the decoder. You may match on the buffer to access a sample-format

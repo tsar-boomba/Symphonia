@@ -20,7 +20,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
-use symphonia_core::{async_trait, support_audio_codec};
+use symphonia_core::support_audio_codec;
 
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, Audio, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
@@ -44,7 +44,6 @@ fn is_supported_adpcm_codec(codec_id: AudioCodecId) -> bool {
     matches!(codec_id, CODEC_ID_ADPCM_MS | CODEC_ID_ADPCM_IMA_WAV | CODEC_ID_ADPCM_IMA_QT)
 }
 
-#[derive(Debug, Clone, Copy)]
 enum InnerDecoder {
     AdpcmMs,
     AdpcmIma,
@@ -52,39 +51,21 @@ enum InnerDecoder {
 }
 
 impl InnerDecoder {
-    async fn decode_mono<B: ReadBytes>(
-        &self,
-        stream: &mut B,
-        buffer: &mut [i32],
-        frames_per_block: usize,
-    ) -> Result<()> {
+    fn decode_mono_fn<B: ReadBytes>(&self) -> impl Fn(&mut B, &mut [i32], usize) -> Result<()> {
         match *self {
-            InnerDecoder::AdpcmMs => codec_ms::decode_mono(stream, buffer, frames_per_block).await,
-            InnerDecoder::AdpcmIma => {
-                codec_ima_wav::decode_mono(stream, buffer, frames_per_block).await
-            }
-            InnerDecoder::AdpcmImaQT => {
-                codec_ima_qt::decode_mono(stream, buffer, frames_per_block).await
-            }
+            InnerDecoder::AdpcmMs => codec_ms::decode_mono,
+            InnerDecoder::AdpcmIma => codec_ima_wav::decode_mono,
+            InnerDecoder::AdpcmImaQT => codec_ima_qt::decode_mono,
         }
     }
 
-    async fn decode_stereo<B: ReadBytes>(
+    fn decode_stereo_fn<B: ReadBytes>(
         &self,
-        stream: &mut B,
-        buffers: [&mut [i32]; 2],
-        frames_per_block: usize,
-    ) -> Result<()> {
+    ) -> impl Fn(&mut B, [&mut [i32]; 2], usize) -> Result<()> {
         match *self {
-            InnerDecoder::AdpcmMs => {
-                codec_ms::decode_stereo(stream, buffers, frames_per_block).await
-            }
-            InnerDecoder::AdpcmIma => {
-                codec_ima_wav::decode_stereo(stream, buffers, frames_per_block).await
-            }
-            InnerDecoder::AdpcmImaQT => {
-                codec_ima_qt::decode_stereo(stream, buffers, frames_per_block).await
-            }
+            InnerDecoder::AdpcmMs => codec_ms::decode_stereo,
+            InnerDecoder::AdpcmIma => codec_ima_wav::decode_stereo,
+            InnerDecoder::AdpcmImaQT => codec_ima_qt::decode_stereo,
         }
     }
 }
@@ -142,7 +123,7 @@ impl AdpcmDecoder {
         })
     }
 
-    async fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         let mut stream = packet.as_buf_reader();
 
         let frames_per_block = match self.params.frames_per_block {
@@ -162,11 +143,12 @@ impl AdpcmDecoder {
                     Some(b) => b,
                     None => return decode_error("adpcm: missing audio plane 0"),
                 };
+                let decode_mono = self.inner_decoder.decode_mono_fn();
                 for block_id in 0..block_count {
                     let offset = frames_per_block * block_id;
                     let buffer_range = offset..(offset + frames_per_block);
                     let buffer = &mut buffer[buffer_range];
-                    self.inner_decoder.decode_mono(&mut stream, buffer, frames_per_block).await?;
+                    decode_mono(&mut stream, buffer, frames_per_block)?;
                 }
             }
             2 => {
@@ -174,14 +156,13 @@ impl AdpcmDecoder {
                     Some(b) => b,
                     None => return decode_error("adpcm: missing audio planes 0 and 1"),
                 };
+                let decode_stereo = self.inner_decoder.decode_stereo_fn();
                 for block_id in 0..block_count {
                     let offset = frames_per_block * block_id;
                     let buffer_range = offset..(offset + frames_per_block);
                     let buffers =
                         [&mut buffers.0[buffer_range.clone()], &mut buffers.1[buffer_range]];
-                    self.inner_decoder
-                        .decode_stereo(&mut stream, buffers, frames_per_block)
-                        .await?;
+                    decode_stereo(&mut stream, buffers, frames_per_block)?;
                 }
             }
             _ => unreachable!(),
@@ -191,7 +172,6 @@ impl AdpcmDecoder {
     }
 }
 
-#[async_trait]
 impl AudioDecoder for AdpcmDecoder {
     fn reset(&mut self) {
         // No state is stored between packets, therefore do nothing.
@@ -210,8 +190,8 @@ impl AudioDecoder for AdpcmDecoder {
         &self.params
     }
 
-    async fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
-        if let Err(e) = self.decode_inner(packet).await {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
+        if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
         }
@@ -229,9 +209,8 @@ impl AudioDecoder for AdpcmDecoder {
     }
 }
 
-#[async_trait]
 impl RegisterableAudioDecoder for AdpcmDecoder {
-    async fn try_registry_new(
+    fn try_registry_new(
         params: &AudioCodecParameters,
         opts: &AudioDecoderOptions,
     ) -> Result<Box<dyn AudioDecoder>>

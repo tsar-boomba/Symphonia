@@ -8,10 +8,8 @@
 //! Registry for codecs to support lookup and instantiation of decoders dynamically at runtime.
 
 use alloc::boxed::Box;
-use async_trait::async_trait;
 use core::default::Default;
 use core::hash::Hash;
-use core::pin::Pin;
 use hashbrown::HashMap;
 
 use crate::codecs::CodecInfo;
@@ -34,12 +32,11 @@ pub struct SupportedAudioCodec {
 
 /// To support registration in a codec registry, an `AudioDecoder` must implement the
 /// `RegisterableAudioDecoder` trait.
-#[async_trait]
 pub trait RegisterableAudioDecoder: AudioDecoder {
-    async fn try_registry_new(
+    fn try_registry_new(
         params: &AudioCodecParameters,
         opts: &AudioDecoderOptions,
-    ) -> Result<Box<dyn AudioDecoder + 'static>>
+    ) -> Result<Box<dyn AudioDecoder>>
     where
         Self: Sized;
 
@@ -95,10 +92,7 @@ pub trait RegisterableSubtitleDecoded: SubtitleDecoder {
 
 /// `AudioDecoder` factory function. Creates a boxed `AudioDecoder`.
 pub type AudioDecoderFactoryFn =
-    for<'a> fn(
-        &'a AudioCodecParameters,
-        &'a AudioDecoderOptions,
-    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn AudioDecoder>>> + Send + 'a>>;
+    fn(&AudioCodecParameters, &AudioDecoderOptions) -> Result<Box<dyn AudioDecoder>>;
 
 /// `VideoDecoder` factory function. Creates a boxed `VideoDecoder`.
 #[cfg(feature = "exp-video-codecs")]
@@ -257,7 +251,7 @@ impl CodecRegistry {
     ///
     /// If a supported audio codec was previously registered by another audio decoder at the same
     /// tier, it will be replaced within the registry.
-    pub fn register_audio_decoder<C: RegisterableAudioDecoder + 'static>(&mut self) {
+    pub fn register_audio_decoder<C: RegisterableAudioDecoder>(&mut self) {
         self.register_audio_decoder_at_tier::<C>(Tier::Standard);
     }
 
@@ -265,10 +259,7 @@ impl CodecRegistry {
     ///
     /// If a supported codec was previously registered by another audio decoder at the same tier, it
     /// will be replaced within the registry.
-    pub fn register_audio_decoder_at_tier<C: RegisterableAudioDecoder + 'static>(
-        &mut self,
-        tier: Tier,
-    ) {
+    pub fn register_audio_decoder_at_tier<C: RegisterableAudioDecoder>(&mut self, tier: Tier) {
         for codec in C::supported_codecs() {
             let reg = RegisteredAudioDecoder {
                 codec: *codec,
@@ -338,13 +329,13 @@ impl CodecRegistry {
     /// found, it will be instantiated with the provided audio codec parameters and audio decoder
     /// options. If a suitable decoder could not be found, or the decoder could not be instantiated,
     /// an error will be returned.
-    pub async fn make_audio_decoder(
+    pub fn make_audio_decoder(
         &self,
         params: &AudioCodecParameters,
         opts: &AudioDecoderOptions,
     ) -> Result<Box<dyn AudioDecoder>> {
         if let Some(codec) = self.get_audio_decoder(params.codec) {
-            Ok((codec.factory)(params, opts).await?)
+            Ok((codec.factory)(params, opts)?)
         }
         else {
             unsupported_error("core (codec): unsupported audio codec")

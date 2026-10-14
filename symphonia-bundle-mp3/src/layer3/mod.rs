@@ -270,7 +270,7 @@ impl Layer3 {
     }
 
     /// Reads the main_data portion of a MPEG audio frame from a `BitStream` into `FrameData`.
-    async fn read_main_data(
+    fn read_main_data(
         &mut self,
         header: &FrameHeader,
         underflow_bits: u32,
@@ -312,7 +312,7 @@ impl Layer3 {
                     let bit_index = part2_3_begin & 0x7;
 
                     if bit_index > 0 {
-                        bs.ignore_bits(bit_index as u32).await?;
+                        bs.ignore_bits(bit_index as u32)?;
                     }
 
                     bs
@@ -323,7 +323,7 @@ impl Layer3 {
 
                 // Read the scale factors (part2) and get the number of bits read.
                 let part2_len = if header.is_mpeg1() {
-                    bitstream::read_scale_factors_mpeg1(&mut bs, gr, ch, frame_data).await
+                    bitstream::read_scale_factors_mpeg1(&mut bs, gr, ch, frame_data)
                 }
                 else {
                     bitstream::read_scale_factors_mpeg2(
@@ -331,7 +331,6 @@ impl Layer3 {
                         ch > 0 && header.is_intensity_stereo(),
                         &mut frame_data.granules[gr].channels[ch],
                     )
-                    .await
                 }?;
 
                 let part2_3_length = u32::from(frame_data.granules[gr].channels[ch].part2_3_length);
@@ -351,8 +350,7 @@ impl Layer3 {
                     &frame_data.granules[gr].channels[ch],
                     part3_len,
                     &mut self.samples[gr][ch],
-                )
-                .await;
+                );
 
                 // Huffman decoding errors are returned as an IO error by the bit reader. IO errors
                 // are unrecoverable, which is not the case for huffman decoding errors. Convert the
@@ -374,7 +372,7 @@ impl Layer3 {
 }
 
 impl Layer for Layer3 {
-    async fn decode(
+    fn decode(
         &mut self,
         reader: &mut BufReader<'_>,
         header: &FrameHeader,
@@ -384,7 +382,7 @@ impl Layer for Layer3 {
         // frame.
         let mut frame_data: FrameData = Default::default();
 
-        let _crc = if header.has_crc { Some(reader.read_be_u16().await?) } else { None };
+        let _crc = if header.has_crc { Some(reader.read_be_u16()?) } else { None };
 
         let buf = reader.read_buf_bytes_available_ref();
 
@@ -392,8 +390,7 @@ impl Layer for Layer3 {
 
         // Read side_info into the frame data.
         // TODO: Use a MonitorStream to compute the CRC.
-        let side_info_len = match bitstream::read_side_info(&mut bs, header, &mut frame_data).await
-        {
+        let side_info_len = match bitstream::read_side_info(&mut bs, header, &mut frame_data) {
             Ok(len) => len,
             Err(e) => {
                 // A failure in reading this packet will cause a discontinuity in the codec
@@ -409,7 +406,7 @@ impl Layer for Layer3 {
             self.resevoir.fill(&buf[side_info_len..], frame_data.main_data_begin as usize)?;
 
         // Read the main data (scale factors and spectral samples).
-        match self.read_main_data(header, 8 * underflow, &mut frame_data).await {
+        match self.read_main_data(header, 8 * underflow, &mut frame_data) {
             Ok(len) => {
                 // Consume the bytes of main data read from the resevoir.
                 self.resevoir.consume(len);

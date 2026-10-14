@@ -24,7 +24,7 @@ use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioC
 use symphonia_core::errors::{Result, unsupported_error};
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 use symphonia_core::packet::PacketRef;
-use symphonia_core::{async_trait, codec_profile, support_audio_codec};
+use symphonia_core::{codec_profile, support_audio_codec};
 
 use symphonia_common::mpeg::audio::{AudioObjectType, AudioSpecificConfig};
 
@@ -52,10 +52,7 @@ pub struct AacDecoder {
 }
 
 impl AacDecoder {
-    pub async fn try_new(
-        params: &AudioCodecParameters,
-        _opts: &AudioDecoderOptions,
-    ) -> Result<Self> {
+    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
         // This decoder only supports AAC.
         if params.codec != CODEC_ID_AAC {
             return unsupported_error("aac: invalid codec");
@@ -64,7 +61,7 @@ impl AacDecoder {
         // If extra data present, parse the audio specific config
         let asc = if let Some(extra_data_buf) = &params.extra_data {
             validate!(extra_data_buf.len() >= 2);
-            AudioSpecificConfig::read(extra_data_buf).await?
+            AudioSpecificConfig::read(extra_data_buf)?
         }
         else {
             // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
@@ -128,26 +125,26 @@ impl AacDecoder {
         Ok(())
     }
 
-    async fn decode_ga<B: ReadBitsLtr + FiniteBitStream>(&mut self, bs: &mut B) -> Result<()> {
+    fn decode_ga<B: ReadBitsLtr + FiniteBitStream>(&mut self, bs: &mut B) -> Result<()> {
         let mut cur_pair = 0;
         let mut cur_ch = 0;
         while bs.bits_left() > 3 {
-            let id = bs.read_bits_leq32(3).await?;
+            let id = bs.read_bits_leq32(3)?;
 
             match id {
                 0 => {
                     // ID_SCE
-                    let _tag = bs.read_bits_leq32(4).await?;
+                    let _tag = bs.read_bits_leq32(4)?;
                     self.set_pair(cur_pair, cur_ch, false)?;
-                    self.pairs[cur_pair].decode_ga_sce(bs, self.asc.object_type).await?;
+                    self.pairs[cur_pair].decode_ga_sce(bs, self.asc.object_type)?;
                     cur_pair += 1;
                     cur_ch += 1;
                 }
                 1 => {
                     // ID_CPE
-                    let _tag = bs.read_bits_leq32(4).await?;
+                    let _tag = bs.read_bits_leq32(4)?;
                     self.set_pair(cur_pair, cur_ch, true)?;
-                    self.pairs[cur_pair].decode_ga_cpe(bs, self.asc.object_type).await?;
+                    self.pairs[cur_pair].decode_ga_cpe(bs, self.asc.object_type)?;
                     cur_pair += 1;
                     cur_ch += 2;
                 }
@@ -157,24 +154,24 @@ impl AacDecoder {
                 }
                 3 => {
                     // ID_LFE
-                    let _tag = bs.read_bits_leq32(4).await?;
+                    let _tag = bs.read_bits_leq32(4)?;
                     self.set_pair(cur_pair, cur_ch, false)?;
-                    self.pairs[cur_pair].decode_ga_sce(bs, self.asc.object_type).await?;
+                    self.pairs[cur_pair].decode_ga_sce(bs, self.asc.object_type)?;
                     cur_pair += 1;
                     cur_ch += 1;
                 }
                 4 => {
                     // ID_DSE
-                    let _id = bs.read_bits_leq32(4).await?;
-                    let align = bs.read_bool().await?;
-                    let mut count = bs.read_bits_leq32(8).await?;
+                    let _id = bs.read_bits_leq32(4)?;
+                    let align = bs.read_bool()?;
+                    let mut count = bs.read_bits_leq32(8)?;
                     if count == 255 {
-                        count += bs.read_bits_leq32(8).await?;
+                        count += bs.read_bits_leq32(8)?;
                     }
                     if align {
                         bs.realign(); // ????
                     }
-                    bs.ignore_bits(count * 8).await?; // no SBR payload or such
+                    bs.ignore_bits(count * 8)?; // no SBR payload or such
                 }
                 5 => {
                     // ID_PCE
@@ -182,16 +179,16 @@ impl AacDecoder {
                 }
                 6 => {
                     // ID_FIL
-                    let mut count = bs.read_bits_leq32(4).await? as usize;
+                    let mut count = bs.read_bits_leq32(4)? as usize;
                     if count == 15 {
-                        count += bs.read_bits_leq32(8).await? as usize;
+                        count += bs.read_bits_leq32(8)? as usize;
                         count -= 1;
                     }
 
                     // Check if the ID_FIL element contains SBR data. Note that ID_FIL elements with
                     // SBR data may not contain other extension payloads.
                     if count > 0 {
-                        let ext_type = bs.read_bits_leq32(4).await?;
+                        let ext_type = bs.read_bits_leq32(4)?;
 
                         match ext_type {
                             // EXT_SBR_DATA (0xd)
@@ -206,9 +203,9 @@ impl AacDecoder {
                         }
 
                         // Ignore extension payload(s).
-                        bs.ignore_bits(4).await?;
+                        bs.ignore_bits(4)?;
                         for _ in 0..count - 1 {
-                            bs.ignore_bits(8).await?;
+                            bs.ignore_bits(8)?;
                         }
                     }
                 }
@@ -233,7 +230,7 @@ impl AacDecoder {
     //     }
     // }
 
-    async fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         // Clear the audio output buffer.
         self.buf.clear();
         self.buf.render_uninit(None);
@@ -242,7 +239,7 @@ impl AacDecoder {
 
         // Choose decode step based on the object type.
         match self.asc.object_type {
-            AudioObjectType::Lc => self.decode_ga(&mut bs).await?,
+            AudioObjectType::Lc => self.decode_ga(&mut bs)?,
             _ => return unsupported_error("aac: object type"),
         }
 
@@ -250,7 +247,6 @@ impl AacDecoder {
     }
 }
 
-#[async_trait]
 impl AudioDecoder for AacDecoder {
     fn reset(&mut self) {
         for pair in self.pairs.iter_mut() {
@@ -267,8 +263,8 @@ impl AudioDecoder for AacDecoder {
         &self.params
     }
 
-    async fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
-        if let Err(e) = self.decode_inner(packet).await {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
+        if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
         }
@@ -286,16 +282,15 @@ impl AudioDecoder for AacDecoder {
     }
 }
 
-#[async_trait]
 impl RegisterableAudioDecoder for AacDecoder {
-    async fn try_registry_new(
+    fn try_registry_new(
         params: &AudioCodecParameters,
         opts: &AudioDecoderOptions,
     ) -> Result<Box<dyn AudioDecoder>>
     where
         Self: Sized,
     {
-        Ok(Box::new(AacDecoder::try_new(params, opts).await?))
+        Ok(Box::new(AacDecoder::try_new(params, opts)?))
     }
 
     fn supported_codecs() -> &'static [SupportedAudioCodec] {

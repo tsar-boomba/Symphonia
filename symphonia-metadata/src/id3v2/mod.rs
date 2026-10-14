@@ -104,17 +104,17 @@ struct ExtendedHeader {
 }
 
 /// Read the header of an ID3v2 (verions 2.2+) tag.
-async fn read_id3v2_header<B: ReadBytes>(reader: &mut B) -> Result<Header> {
-    let marker = reader.read_triple_bytes().await?;
+fn read_id3v2_header<B: ReadBytes>(reader: &mut B) -> Result<Header> {
+    let marker = reader.read_triple_bytes()?;
 
     if marker != *b"ID3" {
         return unsupported_error("id3v2: not an ID3v2 tag");
     }
 
-    let major_version = reader.read_u8().await?;
-    let minor_version = reader.read_u8().await?;
-    let flags = reader.read_u8().await?;
-    let size = unsync::read_syncsafe_leq32(reader, 28).await?;
+    let major_version = reader.read_u8()?;
+    let minor_version = reader.read_u8()?;
+    let flags = reader.read_u8()?;
+    let size = unsync::read_syncsafe_leq32(reader, 28)?;
 
     let mut header = Header {
         major_version,
@@ -164,10 +164,10 @@ async fn read_id3v2_header<B: ReadBytes>(reader: &mut B) -> Result<Header> {
 }
 
 /// Read the extended header of an ID3v2.3 tag.
-async fn read_id3v2p3_extended_header<B: ReadBytes>(reader: &mut B) -> Result<ExtendedHeader> {
-    let size = reader.read_be_u32().await?;
-    let flags = reader.read_be_u16().await?;
-    let padding_size = reader.read_be_u32().await?;
+fn read_id3v2p3_extended_header<B: ReadBytes>(reader: &mut B) -> Result<ExtendedHeader> {
+    let size = reader.read_be_u32()?;
+    let flags = reader.read_be_u16()?;
+    let padding_size = reader.read_be_u32()?;
 
     if !(size == 6 || size == 10) {
         return decode_error("id3v2: invalid extended header size");
@@ -182,21 +182,21 @@ async fn read_id3v2p3_extended_header<B: ReadBytes>(reader: &mut B) -> Result<Ex
 
     // CRC32 flag.
     if size == 10 && flags & 0x8000 != 0 {
-        header.crc32 = Some(reader.read_be_u32().await?);
+        header.crc32 = Some(reader.read_be_u32()?);
     }
 
     Ok(header)
 }
 
 /// Read the extended header of an ID3v2.4 tag.
-async fn read_id3v2p4_extended_header<B: ReadBytes>(reader: &mut B) -> Result<ExtendedHeader> {
-    let _size = read_syncsafe_leq32(reader, 28).await?;
+fn read_id3v2p4_extended_header<B: ReadBytes>(reader: &mut B) -> Result<ExtendedHeader> {
+    let _size = read_syncsafe_leq32(reader, 28)?;
 
-    if reader.read_u8().await? != 1 {
+    if reader.read_u8()? != 1 {
         return decode_error("id3v2: extended flags should have a length of 1");
     }
 
-    let flags = reader.read_u8().await?;
+    let flags = reader.read_u8()?;
 
     let mut header = ExtendedHeader {
         padding_size: None,
@@ -207,7 +207,7 @@ async fn read_id3v2p4_extended_header<B: ReadBytes>(reader: &mut B) -> Result<Ex
 
     // Tag is an update flag.
     if flags & 0x40 != 0x0 {
-        let len = reader.read_u8().await?;
+        let len = reader.read_u8()?;
         if len != 1 {
             return decode_error("id3v2: is update extended flag has invalid size");
         }
@@ -217,22 +217,22 @@ async fn read_id3v2p4_extended_header<B: ReadBytes>(reader: &mut B) -> Result<Ex
 
     // CRC32 flag.
     if flags & 0x20 != 0x0 {
-        let len = reader.read_u8().await?;
+        let len = reader.read_u8()?;
         if len != 5 {
             return decode_error("id3v2: CRC32 extended flag has invalid size");
         }
 
-        header.crc32 = Some(read_syncsafe_leq32(reader, 32).await?);
+        header.crc32 = Some(read_syncsafe_leq32(reader, 32)?);
     }
 
     // Restrictions flag.
     if flags & 0x10 != 0x0 {
-        let len = reader.read_u8().await?;
+        let len = reader.read_u8()?;
         if len != 1 {
             return decode_error("id3v2: restrictions extended flag has invalid size");
         }
 
-        let restrictions = reader.read_u8().await?;
+        let restrictions = reader.read_u8()?;
 
         let tag_size = match (restrictions & 0xc0) >> 6 {
             0 => TagSizeRestriction::Max128Frames1024KiB,
@@ -282,7 +282,7 @@ async fn read_id3v2p4_extended_header<B: ReadBytes>(reader: &mut B) -> Result<Ex
     Ok(header)
 }
 
-async fn read_id3v2_body<B: ReadBytes + FiniteStream>(
+fn read_id3v2_body<B: ReadBytes + FiniteStream>(
     reader: &mut B,
     header: &Header,
     metadata: &mut MetadataBuilder,
@@ -291,8 +291,8 @@ async fn read_id3v2_body<B: ReadBytes + FiniteStream>(
     // If there is an extended header, read and parse it based on the major version of the tag.
     if header.has_extended_header {
         let extended = match header.major_version {
-            3 => read_id3v2p3_extended_header(reader).await?,
-            4 => read_id3v2p4_extended_header(reader).await?,
+            3 => read_id3v2p3_extended_header(reader)?,
+            4 => read_id3v2p4_extended_header(reader)?,
             _ => unreachable!(),
         };
         trace!("{:#?}", extended);
@@ -305,9 +305,9 @@ async fn read_id3v2_body<B: ReadBytes + FiniteStream>(
     loop {
         // Read frames based on the major version of the tag.
         let frame = match header.major_version {
-            2 => read_id3v2p2_frame(reader).await,
-            3 => read_id3v2p3_frame(reader).await,
-            4 => read_id3v2p4_frame(reader).await,
+            2 => read_id3v2p2_frame(reader),
+            3 => read_id3v2p3_frame(reader),
+            4 => read_id3v2p4_frame(reader),
             _ => break,
         };
 
@@ -362,20 +362,21 @@ async fn read_id3v2_body<B: ReadBytes + FiniteStream>(
     Ok(())
 }
 
-pub(crate) async fn read_id3v2<B: ReadBytes>(
+/// Parse an ID3v2 tag, starting from its header, from an in-memory reader.
+fn parse_id3v2<B: ReadBytes>(
     reader: &mut B,
     metadata: &mut MetadataBuilder,
     side_data: &mut Vec<MetadataSideData>,
 ) -> Result<()> {
     // Read the (sorta) version agnostic tag header.
-    let header = read_id3v2_header(reader).await?;
+    let header = read_id3v2_header(reader)?;
 
     // If the unsynchronisation flag is set in the header, all tag data must be passed through the
     // unsynchronisation decoder before being read for verions < 4 of ID3v2.
     let mut scoped = if header.unsynchronisation && header.major_version < 4 {
         let mut unsync = UnsyncStream::new(ScopedStream::new(reader, u64::from(header.size)));
 
-        read_id3v2_body(&mut unsync, &header, metadata, side_data).await?;
+        read_id3v2_body(&mut unsync, &header, metadata, side_data)?;
 
         unsync.into_inner()
     }
@@ -384,15 +385,41 @@ pub(crate) async fn read_id3v2<B: ReadBytes>(
     else {
         let mut scoped = ScopedStream::new(reader, u64::from(header.size));
 
-        read_id3v2_body(&mut scoped, &header, metadata, side_data).await?;
+        read_id3v2_body(&mut scoped, &header, metadata, side_data)?;
 
         scoped
     };
 
     // Ignore any remaining data in the tag.
-    scoped.ignore().await?;
+    scoped.ignore()?;
 
     Ok(())
+}
+
+/// The length of the ID3v2 tag header in bytes.
+const ID3V2_HEADER_LEN: usize = 10;
+
+/// Read an ID3v2 tag from a stream.
+///
+/// The tag header and body are read from the stream into memory, and then parsed synchronously.
+pub(crate) async fn read_id3v2<B: AsyncReadBytes>(
+    reader: &mut B,
+    metadata: &mut MetadataBuilder,
+    side_data: &mut Vec<MetadataSideData>,
+) -> Result<()> {
+    // The ID3v2 tag header is always 10 bytes long. The last 4 bytes of the header are the
+    // syncsafe size of the remainder of the tag.
+    let mut tag = vec![0; ID3V2_HEADER_LEN];
+    reader.read_buf_exact(&mut tag).await?;
+
+    let header = read_id3v2_header(&mut BufReader::new(&tag))?;
+
+    // Read the remainder of the tag. If the stream ends prematurely, parse as much of the tag as
+    // possible.
+    let body = reader.read_boxed_slice(header.size as usize).await?;
+    tag.extend_from_slice(&body);
+
+    parse_id3v2(&mut BufReader::new(&tag), metadata, side_data)
 }
 
 /// The chapter group builder utility validates and builds a `ChapterGroup` from a set of ID3v2
@@ -567,7 +594,7 @@ pub struct Id3v2Format;
 
 impl Scoreable for Id3v2Format {
     fn score<'a, 'b>(
-        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+        _src: AsyncScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
         Box::pin(async { Ok(Score::Supported(255)) })
     }

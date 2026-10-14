@@ -16,13 +16,12 @@ async fn test_decode(data: Vec<u8>) -> symphonia_core::errors::Result<()> {
     let mut decoder = AacDecoder::try_new(
         AudioCodecParameters::new().for_codec(CODEC_ID_AAC),
         &AudioDecoderOptions::default(),
-    )
-    .await?;
+    )?;
 
     loop {
         match reader.next_packet().await? {
             Some(packet) => {
-                let _ = decoder.decode(&packet).await;
+                let _ = decoder.decode(&packet);
             }
             None => break,
         };

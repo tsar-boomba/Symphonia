@@ -66,7 +66,7 @@ pub struct CafFormat;
 
 impl Scoreable for CafFormat {
     fn score<'a, 'b>(
-        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+        _src: AsyncScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
         Box::pin(async { Ok(Score::Supported(255)) })
     }
@@ -527,12 +527,11 @@ impl<'s> CafReader<'s> {
                             // decoder-specific information descriptor.
                             let mut reader = BufReader::new(&data);
 
-                            let (desc_tag, desc_len) =
-                                read_object_descriptor_header(&mut reader).await?;
+                            let (desc_tag, desc_len) = read_object_descriptor_header(&mut reader)?;
 
                             if desc_tag == ClassTag::EsDescriptor {
                                 // Parse the ES Descriptor.
-                                let desc = ESDescriptor::read(&mut reader, desc_len).await?;
+                                let desc = ESDescriptor::read(&mut reader, desc_len)?;
 
                                 // Attach the extra data stored in the decoder-specific
                                 // configuration.

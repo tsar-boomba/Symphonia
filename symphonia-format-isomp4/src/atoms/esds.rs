@@ -42,11 +42,11 @@ impl Atom for EsdsAtom {
             let mut reader = BufReader::new(&buf);
 
             // Read the object descriptor header.
-            let (desc_tag, desc_len) = read_object_descriptor_header(&mut reader).await?;
+            let (desc_tag, desc_len) = read_object_descriptor_header(&mut reader)?;
 
             // Read the ES descriptor.
             if desc_tag == ClassTag::EsDescriptor {
-                descriptor = Some(ESDescriptor::read(&mut reader, desc_len).await?);
+                descriptor = Some(ESDescriptor::read(&mut reader, desc_len)?);
             }
         }
 
@@ -62,7 +62,7 @@ impl Atom for EsdsAtom {
 impl EsdsAtom {
     /// If the elementary stream descriptor describes an audio stream, populate the provided
     /// audio sample entry.
-    pub async fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) -> Result<()> {
+    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) -> Result<()> {
         match codec_id_from_object_type_indication(self.es_desc.dec_config.object_type_indication) {
             Some(CodecId::Audio(id)) => {
                 // Object type indication identified an audio codec.
@@ -77,7 +77,7 @@ impl EsdsAtom {
 
         if let Some(ds_config) = self.es_desc.dec_config.dec_specific_info {
             // Try to read the audio specific configuration and populate the audio sample entry.
-            if let Ok(asc) = AudioSpecificConfig::read(&ds_config.extra_data).await {
+            if let Ok(asc) = AudioSpecificConfig::read(&ds_config.extra_data) {
                 entry.profile = get_audio_codec_profile(&asc);
                 entry.channels = asc.channels;
             }

@@ -141,7 +141,7 @@ mod from_std {
 
 #[cfg(feature = "tokio")]
 mod from_tokio {
-    use super::{default_read_vectored, IoSliceMut};
+    use super::{IoSliceMut, default_read_vectored};
     use alloc::{boxed::Box, vec::Vec};
     use async_trait::async_trait;
 

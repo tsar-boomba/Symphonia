@@ -103,16 +103,12 @@ impl LogicalStream {
     }
 
     /// Reads a page.
-    pub async fn read_page(&mut self, page: &Page<'_>) -> Result<Vec<SideData>> {
-        self.read_page_init(page, false).await
+    pub fn read_page(&mut self, page: &Page<'_>) -> Result<Vec<SideData>> {
+        self.read_page_init(page, false)
     }
 
     /// Read a page. Specifying whether this is the initial bitstream page.
-    pub async fn read_page_init(
-        &mut self,
-        page: &Page<'_>,
-        is_init_page: bool,
-    ) -> Result<Vec<SideData>> {
+    pub fn read_page_init(&mut self, page: &Page<'_>, is_init_page: bool) -> Result<Vec<SideData>> {
         // Side data vector. This will not allocate unless data is pushed to it (normal case).
         let mut side_data = Vec::new();
 
@@ -180,7 +176,7 @@ impl LogicalStream {
             // Perform packet mapping. If the packet contains stream data, queue it onto the packet
             // queue. If it contains side data, then add it to the side data list. Ignore other
             // types of packet data.
-            match self.mapper.map_packet(&data).await {
+            match self.mapper.map_packet(&data) {
                 Ok(MapResult::StreamData { dur, discard }) => {
                     total_pkt_dur = total_pkt_dur.saturating_add(dur);
                     total_pkt_discard = total_pkt_discard.saturating_add(discard);
@@ -333,7 +329,7 @@ impl LogicalStream {
 
     /// Examine the first page of the non-setup codec bitstream to obtain the start time and start
     /// delay parameters.
-    pub async fn inspect_start_page(&mut self, page: &Page<'_>) {
+    pub fn inspect_start_page(&mut self, page: &Page<'_>) {
         if self.start_bound.is_some() {
             debug!("start page already found");
             return;
@@ -352,7 +348,7 @@ impl LogicalStream {
         let mut total_pkt_discard = Duration::ZERO;
 
         for buf in page.packets() {
-            let (pkt_dur, pkt_discard) = parser.parse_next_packet_dur(buf).await;
+            let (pkt_dur, pkt_discard) = parser.parse_next_packet_dur(buf);
 
             // On overflow, it will not be possible to determine the start bound.
             total_pkt_dur = match total_pkt_dur.checked_add(pkt_dur) {
@@ -406,7 +402,7 @@ impl LogicalStream {
     /// end delay parameters. To obtain the end delay, at a minimum, the last two pages are
     /// required. The state returned by each iteration of this function should be passed into the
     /// subsequent iteration.
-    pub async fn inspect_end_page(&mut self, state: &mut InspectState, page: &Page<'_>) {
+    pub fn inspect_end_page(&mut self, state: &mut InspectState, page: &Page<'_>) {
         // Do nothing if the end bound was found.
         if self.end_bound.is_some() {
             debug!("end page already found");
@@ -435,7 +431,7 @@ impl LogicalStream {
         let mut total_pkt_dur = Duration::ZERO;
 
         for buf in page.packets() {
-            let (pkt_dur, _) = parser.parse_next_packet_dur(buf).await;
+            let (pkt_dur, _) = parser.parse_next_packet_dur(buf);
 
             // On overflow it will be impossible to determine the end bound.
             total_pkt_dur = match total_pkt_dur.checked_add(pkt_dur) {
@@ -523,14 +519,14 @@ impl LogicalStream {
     }
 
     /// Examine a page in isolation and return the start and end timestamps as a tuple.
-    pub async fn inspect_page(&mut self, page: &Page<'_>) -> (Timestamp, Timestamp) {
+    pub fn inspect_page(&mut self, page: &Page<'_>) -> (Timestamp, Timestamp) {
         // Get the cumulative duration of all packets within this page.
         let mut total_pkt_dur = Duration::ZERO;
         let mut total_pkt_discard = Duration::ZERO;
 
         if let Some(mut parser) = self.mapper.make_parser() {
             for buf in page.packets() {
-                let (pkt_dur, pkt_discard) = parser.parse_next_packet_dur(buf).await;
+                let (pkt_dur, pkt_discard) = parser.parse_next_packet_dur(buf);
 
                 total_pkt_dur = total_pkt_dur.saturating_add(pkt_dur);
                 total_pkt_discard = total_pkt_discard.saturating_add(pkt_discard);

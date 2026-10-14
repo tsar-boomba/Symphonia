@@ -93,7 +93,7 @@ pub struct AdtsFormat;
 
 impl Scoreable for AdtsFormat {
     fn score<'a, 'b>(
-        mut src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+        mut src: AsyncScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
         Box::pin(async move {
             // Read the first (assumed) ADTS header.
@@ -143,7 +143,7 @@ impl AdtsHeader {
     pub const SIZE_WITH_CRC: u16 = Self::SIZE_NO_CRC + Self::CRC_SIZE;
 
     /// Read the body of a header at the current position of the reader.
-    async fn read_body<B: ReadBytes>(reader: &mut B, has_crc: bool) -> Result<Self> {
+    async fn read_body<B: AsyncReadBytes>(reader: &mut B, has_crc: bool) -> Result<Self> {
         // The length of the header.
         let len = if has_crc { Self::SIZE_WITH_CRC } else { Self::SIZE_NO_CRC };
 
@@ -154,24 +154,23 @@ impl AdtsHeader {
         let mut bs = BitReaderLtr::new(&buf);
 
         // Profile (audio object type).
-        let profile = match get_mpeg4_audio_object_type_by_index(bs.read_bits_leq32(2).await? + 1) {
+        let profile = match get_mpeg4_audio_object_type_by_index(bs.read_bits_leq32(2)? + 1) {
             Some(p) => p,
             None => return decode_error("adts: invalid audio object type"),
         };
 
         // Sample rate from sample rate index.
-        let sample_rate = match get_mpeg4_audio_sample_rate_by_index(bs.read_bits_leq32(4).await?) {
+        let sample_rate = match get_mpeg4_audio_sample_rate_by_index(bs.read_bits_leq32(4)?) {
             Mpeg4AudioSampleRate::SampleRate(rate) => rate,
             Mpeg4AudioSampleRate::Escape => return decode_error("adts: forbidden sample rate"),
             Mpeg4AudioSampleRate::Invalid => return decode_error("adts: invalid sample rate"),
         };
 
         // Private bit.
-        bs.ignore_bit().await?;
+        bs.ignore_bit()?;
 
         // Channel configuration.
-        let channels = match get_mpeg4_audio_channels_by_config_index(bs.read_bits_leq32(3).await?)
-        {
+        let channels = match get_mpeg4_audio_channels_by_config_index(bs.read_bits_leq32(3)?) {
             Mpeg4AudioChannels::Channels(channels) => Some(channels),
             Mpeg4AudioChannels::Escape => None,
             Mpeg4AudioChannels::Invalid => {
@@ -180,10 +179,10 @@ impl AdtsHeader {
         };
 
         // Originality, Home, Copyrighted ID bit, Copyright ID start bits. Only used for encoding.
-        bs.ignore_bits(4).await?;
+        bs.ignore_bits(4)?;
 
         // The frame length = sync word + header + payload.
-        let frame_len = bs.read_bits_leq32(13).await? as u16;
+        let frame_len = bs.read_bits_leq32(13)? as u16;
 
         // The frame length must be large enough for the header.
         if frame_len < len {
@@ -191,10 +190,10 @@ impl AdtsHeader {
         }
 
         // Buffer fullness.
-        let _fullness = bs.read_bits_leq32(11).await?;
+        let _fullness = bs.read_bits_leq32(11)?;
 
         // Number of raw data blocks (AAC packets).
-        let raw_data_blocks = bs.read_bits_leq32(2).await? + 1;
+        let raw_data_blocks = bs.read_bits_leq32(2)? + 1;
 
         if raw_data_blocks > 1 {
             // TODO: Support multiple AAC packets per ADTS packet.
@@ -202,7 +201,7 @@ impl AdtsHeader {
         }
 
         // The CRC, if the CRC is provided.
-        let crc = if has_crc { Some(bs.read_bits_leq32(16).await? as u16) } else { None };
+        let crc = if has_crc { Some(bs.read_bits_leq32(16)? as u16) } else { None };
 
         Ok(AdtsHeader { profile, channels, sample_rate, frame_len, crc })
     }
@@ -214,7 +213,7 @@ impl AdtsHeader {
     }
 
     /// Resync the reader to the next sync word.
-    async fn sync<B: ReadBytes>(reader: &mut B) -> Result<u16> {
+    async fn sync<B: AsyncReadBytes>(reader: &mut B) -> Result<u16> {
         let mut sync = 0;
 
         while !Self::is_sync_word(sync) {
@@ -225,7 +224,7 @@ impl AdtsHeader {
     }
 
     /// Read a header from the current position of the reader.
-    async fn read_no_resync<B: ReadBytes>(reader: &mut B) -> Result<Self> {
+    async fn read_no_resync<B: AsyncReadBytes>(reader: &mut B) -> Result<Self> {
         let sync = reader.read_be_u16().await?;
 
         if !Self::is_sync_word(sync) {
@@ -237,7 +236,7 @@ impl AdtsHeader {
     }
 
     /// Resync the reader if required, and read a header.
-    async fn read<B: ReadBytes>(reader: &mut B) -> Result<Self> {
+    async fn read<B: AsyncReadBytes>(reader: &mut B) -> Result<Self> {
         let sync = AdtsHeader::sync(reader).await?;
 
         // "Protection absent" set to 0 if CRC is present.
@@ -438,7 +437,7 @@ async fn approximate_frame_count(mut source: &mut MediaSourceStream<'_>) -> Resu
         const MAX_LEN: u64 = 16 * 1024;
 
         source.ensure_seekback_buffer(MAX_LEN as usize);
-        let mut scoped_stream = ScopedStream::new(&mut source, MAX_LEN);
+        let mut scoped_stream = AsyncScopedStream::new(&mut source, MAX_LEN);
 
         while let Ok(header) = AdtsHeader::read(&mut scoped_stream).await {
             if scoped_stream.ignore_bytes(u64::from(header.payload_len())).await.is_err() {

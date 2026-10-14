@@ -228,12 +228,12 @@ pub struct AudioSpecificConfig {
 
 impl AudioSpecificConfig {
     /// Read the audio specific configuration from the provided buffer. ISO14496-3-2009
-    pub async fn read(buf: &[u8]) -> Result<AudioSpecificConfig> {
+    pub fn read(buf: &[u8]) -> Result<AudioSpecificConfig> {
         let mut bs = BitReaderLtr::new(buf);
 
         let mut asc = AudioSpecificConfig {
-            object_type: Self::read_audio_object_type(&mut bs).await?,
-            sample_rate: Self::read_sampling_frequency(&mut bs).await?,
+            object_type: Self::read_audio_object_type(&mut bs)?,
+            sample_rate: Self::read_sampling_frequency(&mut bs)?,
             ..Default::default()
         };
 
@@ -241,18 +241,18 @@ impl AudioSpecificConfig {
             return decode_error("common (mp4a): a sample rate of 0 is invalid");
         }
 
-        asc.channels = Self::read_channel_config(&mut bs).await?;
+        asc.channels = Self::read_channel_config(&mut bs)?;
 
         if (asc.object_type == AudioObjectType::Sbr) || (asc.object_type == AudioObjectType::Ps) {
             asc.sbr_present = true;
             if asc.object_type == AudioObjectType::Ps {
                 asc.ps_present = true;
             }
-            let ext_srate = Self::read_sampling_frequency(&mut bs).await?;
-            asc.object_type = Self::read_audio_object_type(&mut bs).await?;
+            let ext_srate = Self::read_sampling_frequency(&mut bs)?;
+            asc.object_type = Self::read_audio_object_type(&mut bs)?;
 
             let ext_chans = if asc.object_type == AudioObjectType::ErBsac {
-                Self::read_channel_config(&mut bs).await?
+                Self::read_channel_config(&mut bs)?
             }
             else {
                 None
@@ -274,17 +274,17 @@ impl AudioSpecificConfig {
             | AudioObjectType::ErBsac
             | AudioObjectType::ErAacLd => {
                 // GASpecificConfig
-                let short_frame = bs.read_bool().await?;
+                let short_frame = bs.read_bool()?;
 
                 asc.samples = if short_frame { 960 } else { 1024 };
 
-                let depends_on_core = bs.read_bool().await?;
+                let depends_on_core = bs.read_bool()?;
 
                 if depends_on_core {
-                    let _delay = bs.read_bits_leq32(14).await?;
+                    let _delay = bs.read_bits_leq32(14)?;
                 }
 
-                let extension_flag = bs.read_bool().await?;
+                let extension_flag = bs.read_bool()?;
 
                 if asc.channels.is_none() {
                     return unsupported_error("common (mp4a): program config element");
@@ -293,13 +293,13 @@ impl AudioSpecificConfig {
                 if (asc.object_type == AudioObjectType::Scalable)
                     || (asc.object_type == AudioObjectType::ErAacScalable)
                 {
-                    let _layer = bs.read_bits_leq32(3).await?;
+                    let _layer = bs.read_bits_leq32(3)?;
                 }
 
                 if extension_flag {
                     if asc.object_type == AudioObjectType::ErBsac {
-                        let _num_subframes = bs.read_bits_leq32(5).await? as usize;
-                        let _layer_length = bs.read_bits_leq32(11).await?;
+                        let _num_subframes = bs.read_bits_leq32(5)? as usize;
+                        let _layer_length = bs.read_bits_leq32(11)?;
                     }
 
                     if (asc.object_type == AudioObjectType::ErAacLc)
@@ -307,12 +307,12 @@ impl AudioSpecificConfig {
                         || (asc.object_type == AudioObjectType::ErAacScalable)
                         || (asc.object_type == AudioObjectType::ErAacLd)
                     {
-                        let _section_data_resilience = bs.read_bool().await?;
-                        let _scalefactors_resilience = bs.read_bool().await?;
-                        let _spectral_data_resilience = bs.read_bool().await?;
+                        let _section_data_resilience = bs.read_bool()?;
+                        let _scalefactors_resilience = bs.read_bool()?;
+                        let _spectral_data_resilience = bs.read_bool()?;
                     }
 
-                    let extension_flag3 = bs.read_bool().await?;
+                    let extension_flag3 = bs.read_bool()?;
 
                     if extension_flag3 {
                         return unsupported_error("common (mp4a): version3 extensions");
@@ -384,7 +384,7 @@ impl AudioSpecificConfig {
             | AudioObjectType::ErHiln
             | AudioObjectType::ErParametric
             | AudioObjectType::ErAacEld => {
-                let ep_config = bs.read_bits_leq32(2).await?;
+                let ep_config = bs.read_bits_leq32(2)?;
 
                 if (ep_config == 2) || (ep_config == 3) {
                     return unsupported_error("common (mp4a): error protection config");
@@ -398,28 +398,28 @@ impl AudioSpecificConfig {
         };
 
         if asc.sbr_ps_info.is_some() && (bs.bits_left() >= 16) {
-            let sync = bs.read_bits_leq32(11).await?;
+            let sync = bs.read_bits_leq32(11)?;
 
             if sync == 0x2B7 {
-                let ext_otype = Self::read_audio_object_type(&mut bs).await?;
+                let ext_otype = Self::read_audio_object_type(&mut bs)?;
                 if ext_otype == AudioObjectType::Sbr {
-                    asc.sbr_present = bs.read_bool().await?;
+                    asc.sbr_present = bs.read_bool()?;
                     if asc.sbr_present {
-                        let _ext_srate = Self::read_sampling_frequency(&mut bs).await?;
+                        let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
                         if bs.bits_left() >= 12 {
-                            let sync = bs.read_bits_leq32(11).await?;
+                            let sync = bs.read_bits_leq32(11)?;
                             if sync == 0x548 {
-                                asc.ps_present = bs.read_bool().await?;
+                                asc.ps_present = bs.read_bool()?;
                             }
                         }
                     }
                 }
                 if ext_otype == AudioObjectType::Ps {
-                    asc.sbr_present = bs.read_bool().await?;
+                    asc.sbr_present = bs.read_bool()?;
                     if asc.sbr_present {
-                        let _ext_srate = Self::read_sampling_frequency(&mut bs).await?;
+                        let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
                     }
-                    let _ext_channels = bs.read_bits_leq32(4).await?;
+                    let _ext_channels = bs.read_bits_leq32(4)?;
                 }
             }
         }
@@ -427,10 +427,10 @@ impl AudioSpecificConfig {
         Ok(asc)
     }
 
-    async fn read_audio_object_type<B: ReadBitsLtr>(bs: &mut B) -> Result<AudioObjectType> {
-        let index = match bs.read_bits_leq32(5).await? {
+    fn read_audio_object_type<B: ReadBitsLtr>(bs: &mut B) -> Result<AudioObjectType> {
+        let index = match bs.read_bits_leq32(5)? {
             index if index < 31 => index as usize,
-            31 => (bs.read_bits_leq32(6).await? + 32) as usize,
+            31 => (bs.read_bits_leq32(6)? + 32) as usize,
             _ => unreachable!(),
         };
 
@@ -439,11 +439,11 @@ impl AudioSpecificConfig {
         Ok(aot)
     }
 
-    async fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
-        let index = bs.read_bits_leq32(4).await?;
+    fn read_sampling_frequency<B: ReadBitsLtr>(bs: &mut B) -> Result<u32> {
+        let index = bs.read_bits_leq32(4)?;
         let rate = match get_mpeg4_audio_sample_rate_by_index(index) {
             Mpeg4AudioSampleRate::SampleRate(rate) => rate,
-            Mpeg4AudioSampleRate::Escape => bs.read_bits_leq32(24).await?,
+            Mpeg4AudioSampleRate::Escape => bs.read_bits_leq32(24)?,
             Mpeg4AudioSampleRate::Invalid => {
                 return decode_error("common (mp4a): invalid sample rate");
             }
@@ -451,8 +451,8 @@ impl AudioSpecificConfig {
         Ok(rate)
     }
 
-    async fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Channels>> {
-        let index = bs.read_bits_leq32(4).await?;
+    fn read_channel_config<B: ReadBitsLtr>(bs: &mut B) -> Result<Option<Channels>> {
+        let index = bs.read_bits_leq32(4)?;
         let channels = match get_mpeg4_audio_channels_by_config_index(index) {
             Mpeg4AudioChannels::Channels(channels) => Some(channels),
             Mpeg4AudioChannels::Escape => None,

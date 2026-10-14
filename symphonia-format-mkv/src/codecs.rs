@@ -34,22 +34,20 @@ use symphonia_core::io::{BufReader, ReadBytes};
 use crate::lacing::read_xiph_sizes;
 use crate::segment::TrackElement;
 
-pub(crate) async fn make_track_codec_params(
-    track: TrackElement,
-) -> Result<Option<CodecParameters>> {
+pub(crate) fn make_track_codec_params(track: TrackElement) -> Result<Option<CodecParameters>> {
     // Get the codec ID for the track.
     let codec_id = get_codec_id(&track);
-    let (profile, level) = get_codec_profile_and_level(&track).await;
+    let (profile, level) = get_codec_profile_and_level(&track);
 
     match codec_id {
-        Some(CodecId::Audio(id)) => make_audio_codec_params(id, profile, track).await,
+        Some(CodecId::Audio(id)) => make_audio_codec_params(id, profile, track),
         Some(CodecId::Video(id)) => make_video_codec_params(id, profile, level, track),
         Some(CodecId::Subtitle(id)) => make_subtitle_codec_params(id, track),
         _ => Ok(None),
     }
 }
 
-async fn make_audio_codec_params(
+fn make_audio_codec_params(
     id: AudioCodecId,
     profile: Option<CodecProfile>,
     track: TrackElement,
@@ -92,8 +90,8 @@ async fn make_audio_codec_params(
 
     if let Some(codec_private) = track.codec_private {
         let extra_data = match id {
-            CODEC_ID_VORBIS => vorbis_extra_data_from_codec_private(&codec_private).await?,
-            CODEC_ID_FLAC => flac_extra_data_from_codec_private(&codec_private).await?,
+            CODEC_ID_VORBIS => vorbis_extra_data_from_codec_private(&codec_private)?,
+            CODEC_ID_FLAC => flac_extra_data_from_codec_private(&codec_private)?,
             _ => codec_private,
         };
 
@@ -175,7 +173,7 @@ fn make_subtitle_codec_params(
 }
 
 // Extra data parsing
-async fn vorbis_extra_data_from_codec_private(extra: &[u8]) -> Result<Box<[u8]>> {
+fn vorbis_extra_data_from_codec_private(extra: &[u8]) -> Result<Box<[u8]>> {
     const VORBIS_PACKET_TYPE_IDENTIFICATION: u8 = 1;
     const VORBIS_PACKET_TYPE_SETUP: u8 = 5;
 
@@ -188,16 +186,16 @@ async fn vorbis_extra_data_from_codec_private(extra: &[u8]) -> Result<Box<[u8]>>
     //    - codec setup header
 
     let mut reader = BufReader::new(extra);
-    let packet_count = reader.read_byte().await? as usize;
-    let packet_lengths = read_xiph_sizes(&mut reader, packet_count).await?;
+    let packet_count = reader.read_byte()? as usize;
+    let packet_lengths = read_xiph_sizes(&mut reader, packet_count)?;
 
     let mut packets = Vec::new();
     for length in packet_lengths {
-        packets.push(reader.read_boxed_slice_exact(length as usize).await?);
+        packets.push(reader.read_boxed_slice_exact(length as usize)?);
     }
 
     let last_packet_length = extra.len() - reader.pos() as usize;
-    packets.push(reader.read_boxed_slice_exact(last_packet_length).await?);
+    packets.push(reader.read_boxed_slice_exact(last_packet_length)?);
 
     let mut ident_header = None;
     let mut setup_header = None;
@@ -225,10 +223,10 @@ async fn vorbis_extra_data_from_codec_private(extra: &[u8]) -> Result<Box<[u8]>>
     .into_boxed_slice())
 }
 
-async fn flac_extra_data_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>> {
+fn flac_extra_data_from_codec_private(codec_private: &[u8]) -> Result<Box<[u8]>> {
     let mut reader = BufReader::new(codec_private);
 
-    let marker = reader.read_quad_bytes().await?;
+    let marker = reader.read_quad_bytes()?;
     if marker != *b"fLaC" {
         return decode_error("mkv (flac): missing flac stream marker");
     }
@@ -236,7 +234,7 @@ async fn flac_extra_data_from_codec_private(codec_private: &[u8]) -> Result<Box<
     // The codec private data contains all header/matadata blocks. Extract the stream information
     // block (typically the first).
     loop {
-        let header = MetadataBlockHeader::read(&mut reader).await?;
+        let header = MetadataBlockHeader::read(&mut reader)?;
 
         match header.block_type {
             MetadataBlockType::StreamInfo => {
@@ -245,9 +243,9 @@ async fn flac_extra_data_from_codec_private(codec_private: &[u8]) -> Result<Box<
                     return decode_error("isomp4 (flac): invalid stream info block length");
                 }
 
-                break Ok(reader.read_boxed_slice_exact(header.block_len as usize).await?);
+                break Ok(reader.read_boxed_slice_exact(header.block_len as usize)?);
             }
-            _ => reader.ignore_bytes(u64::from(header.block_len)).await?,
+            _ => reader.ignore_bytes(u64::from(header.block_len))?,
         }
     }
 }
@@ -352,7 +350,7 @@ fn get_codec_id(track: &TrackElement) -> Option<CodecId> {
     Some(codec_id)
 }
 
-async fn get_codec_profile_and_level(track: &TrackElement) -> (Option<CodecProfile>, Option<u32>) {
+fn get_codec_profile_and_level(track: &TrackElement) -> (Option<CodecProfile>, Option<u32>) {
     use symphonia_core::codecs::audio::well_known::profiles::{
         CODEC_PROFILE_AAC_HE, CODEC_PROFILE_AAC_LC, CODEC_PROFILE_AAC_LTP, CODEC_PROFILE_AAC_MAIN,
         CODEC_PROFILE_AAC_SSR,
@@ -374,29 +372,21 @@ async fn get_codec_profile_and_level(track: &TrackElement) -> (Option<CodecProfi
         "V_MPEG4/ISO/ASP" => (Some(CODEC_PROFILE_MPEG4_ADVANCED_SIMPLE), None),
         "V_MPEG4/ISO/AVC" | "V_MPEG4/ISO/AP" => {
             // Parse AVCDecoderConfigurationRecord extra data to acquire the profile and level.
-            if let Some(buf) = track.codec_private.as_ref() {
-                AVCDecoderConfigurationRecord::read(buf)
-                    .await
-                    .ok()
-                    .map(|cfg| (Some(cfg.profile), Some(cfg.level)))
-                    .unwrap_or_else(|| (None, None))
-            }
-            else {
-                (None, None)
-            }
+            track
+                .codec_private
+                .as_ref()
+                .and_then(|buf| AVCDecoderConfigurationRecord::read(buf).ok())
+                .map(|cfg| (Some(cfg.profile), Some(cfg.level)))
+                .unwrap_or_else(|| (None, None))
         }
         "V_MPEGH/ISO/HEVC" => {
             // Parse HevcDecoderConfigurationRecord extra data to acquire the profile and level.
-            if let Some(buf) = track.codec_private.as_ref() {
-                HEVCDecoderConfigurationRecord::read(buf)
-                    .await
-                    .ok()
-                    .map(|cfg| (Some(cfg.profile), Some(cfg.level)))
-                    .unwrap_or_else(|| (None, None))
-            }
-            else {
-                (None, None)
-            }
+            track
+                .codec_private
+                .as_ref()
+                .and_then(|buf| HEVCDecoderConfigurationRecord::read(buf).ok())
+                .map(|cfg| (Some(cfg.profile), Some(cfg.level)))
+                .unwrap_or_else(|| (None, None))
         }
 
         // Other Codecs

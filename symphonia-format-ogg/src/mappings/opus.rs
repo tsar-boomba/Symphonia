@@ -11,7 +11,6 @@ use super::{MapResult, Mapper, PacketParser};
 
 use alloc::boxed::Box;
 use symphonia_common::xiph::audio::opus;
-use symphonia_core::async_trait;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
@@ -34,7 +33,7 @@ const OGG_OPUS_COMMENT_SIGNATURE: &[u8] = b"OpusTags";
 /// The maximum support Opus OGG mapping version.
 const OGG_OPUS_MAPPING_VERSION_MAX: u8 = 0x0f;
 
-pub async fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
+pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The identification packet for Opus must be a minimum size.
     if buf.len() < OGG_OPUS_MIN_IDENTIFICATION_PACKET_SIZE {
         return Ok(None);
@@ -42,7 +41,7 @@ pub async fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> 
 
     let mut reader = BufReader::new(buf);
 
-    let Ok(opus_head) = opus::OpusHead::read(&mut reader, OGG_OPUS_MAPPING_VERSION_MAX).await
+    let Ok(opus_head) = opus::OpusHead::read(&mut reader, OGG_OPUS_MAPPING_VERSION_MAX)
     else {
         return Ok(None);
     };
@@ -71,9 +70,8 @@ pub async fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> 
 
 pub struct OpusPacketParser {}
 
-#[async_trait]
 impl PacketParser for OpusPacketParser {
-    async fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
         // See https://www.rfc-editor.org/rfc/rfc6716
         // Read TOC (Table Of Contents) byte which is the first byte in the opus data.
         let toc_byte = match packet.first() {
@@ -138,7 +136,6 @@ struct OpusMapper {
     need_comment: bool,
 }
 
-#[async_trait]
 impl Mapper for OpusMapper {
     fn name(&self) -> &'static str {
         "opus"
@@ -160,9 +157,9 @@ impl Mapper for OpusMapper {
         Some(Box::new(OpusPacketParser {}))
     }
 
-    async fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
+    fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
         if !self.need_comment {
-            let (dur, discard) = OpusPacketParser {}.parse_next_packet_dur(packet).await;
+            let (dur, discard) = OpusPacketParser {}.parse_next_packet_dur(packet);
             Ok(MapResult::StreamData { dur, discard })
         }
         else {
@@ -170,14 +167,14 @@ impl Mapper for OpusMapper {
 
             // Read the header signature.
             let mut sig = [0; 8];
-            reader.read_buf_exact(&mut sig).await?;
+            reader.read_buf_exact(&mut sig)?;
 
             if sig == *OGG_OPUS_COMMENT_SIGNATURE {
                 // This packet should be a metadata packet containing a Vorbis Comment.
                 let mut builder = MetadataBuilder::new(VORBIS_COMMENT_METADATA_INFO);
                 let mut side_data = Default::default();
 
-                vorbis::read_vorbis_comment(&mut reader, &mut builder, &mut side_data).await?;
+                vorbis::read_vorbis_comment(&mut reader, &mut builder, &mut side_data)?;
 
                 let rev = builder.build();
 

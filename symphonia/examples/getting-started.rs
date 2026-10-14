@@ -47,7 +47,6 @@ async fn main_fut() {
             track.codec_params.as_ref().expect("codec parameters missing").audio().unwrap(),
             &dec_opts,
         )
-        .await
         .expect("unsupported codec");
 
     // Store the track identifier, it will be used to filter packets.
@@ -89,7 +88,7 @@ async fn main_fut() {
         }
 
         // Decode the packet into audio samples.
-        match decoder.decode(&packet).await {
+        match decoder.decode(&packet) {
             Ok(_decoded) => {
                 // Consume the decoded audio samples (see below).
             }

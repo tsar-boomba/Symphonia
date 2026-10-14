@@ -40,7 +40,7 @@ impl Atom for FlacAtom {
 
         // The first block must be the stream information block.
         let block_header =
-            MetadataBlockHeader::read(&mut BufReader::new(&it.read_quad_bytes().await?)).await?;
+            MetadataBlockHeader::read(&mut BufReader::new(&it.read_quad_bytes().await?))?;
 
         if block_header.block_type != MetadataBlockType::StreamInfo {
             return decode_error("isomp4 (flac): first block is not stream info");
@@ -53,7 +53,7 @@ impl Atom for FlacAtom {
         }
 
         let extra_data = it.read_boxed_slice_exact(block_header.block_len as usize).await?;
-        let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data)).await?;
+        let stream_info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
 
         Ok(FlacAtom { stream_info, extra_data })
     }

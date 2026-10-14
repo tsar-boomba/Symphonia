@@ -50,29 +50,29 @@ impl ChannelPair {
         self.ics1.reset();
     }
 
-    pub async fn decode_ga_sce<B: ReadBitsLtr>(
+    pub fn decode_ga_sce<B: ReadBitsLtr>(
         &mut self,
         bs: &mut B,
         aot: AudioObjectType,
     ) -> Result<()> {
-        self.ics0.decode(bs, &mut self.lcg, aot, false).await?;
+        self.ics0.decode(bs, &mut self.lcg, aot, false)?;
         Ok(())
     }
 
-    pub async fn decode_ga_cpe<B: ReadBitsLtr>(
+    pub fn decode_ga_cpe<B: ReadBitsLtr>(
         &mut self,
         bs: &mut B,
         aot: AudioObjectType,
     ) -> Result<()> {
-        let common_window = bs.read_bool().await?;
+        let common_window = bs.read_bool()?;
 
         if common_window {
             // Decode the common ICS info block into the first channel.
-            // do not call self.ics0.info.decode() as it will skip required validations present in self.ics0.decode_info().await
-            self.ics0.decode_info(bs).await?;
+            // do not call self.ics0.info.decode() as it will skip required validations present in self.ics0.decode_info()
+            self.ics0.decode_info(bs)?;
 
             // Mid-side stereo mask decoding.
-            self.ms_mask_present = bs.read_bits_leq32(2).await? as u8;
+            self.ms_mask_present = bs.read_bits_leq32(2)? as u8;
 
             match self.ms_mask_present {
                 0 | 2 => {
@@ -91,7 +91,7 @@ impl ChannelPair {
                     // the band uses mid-side coding.
                     for g in 0..self.ics0.info.window_groups {
                         for sfb in 0..self.ics0.info.max_sfb {
-                            self.ms_used[g][sfb] = bs.read_bool().await?;
+                            self.ms_used[g][sfb] = bs.read_bool()?;
                         }
                     }
                 }
@@ -103,8 +103,8 @@ impl ChannelPair {
             self.ics1.info.copy_from_common(&self.ics0.info);
         }
 
-        self.ics0.decode(bs, &mut self.lcg, aot, common_window).await?;
-        self.ics1.decode(bs, &mut self.lcg, aot, common_window).await?;
+        self.ics0.decode(bs, &mut self.lcg, aot, common_window)?;
+        self.ics1.decode(bs, &mut self.lcg, aot, common_window)?;
 
         // Joint-stereo decoding
         if common_window {

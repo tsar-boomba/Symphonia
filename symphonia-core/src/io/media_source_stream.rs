@@ -12,7 +12,7 @@ use core::cmp;
 use core::ops::Sub;
 
 use super::SeekBuffered;
-use super::{MediaSource, ReadBytes};
+use super::{AsyncReadBytes, MediaSource};
 
 #[inline(always)]
 fn unexpected_eof_error<T>() -> super::Result<T> {
@@ -356,7 +356,7 @@ impl super::Seek for MediaSourceStream<'_> {
     }
 }
 
-impl ReadBytes for MediaSourceStream<'_> {
+impl AsyncReadBytes for MediaSourceStream<'_> {
     #[inline(always)]
     async fn read_byte(&mut self) -> super::Result<u8> {
         // This function, read_byte, is inlined for performance. To reduce code bloat, place the
@@ -578,7 +578,7 @@ impl SeekBuffered for MediaSourceStream<'_> {
 mod tests {
     use alloc::{boxed::Box, vec, vec::Vec};
 
-    use super::{MediaSourceStream, ReadBytes, SeekBuffered};
+    use super::{AsyncReadBytes, MediaSourceStream, SeekBuffered};
     use crate::io::{Cursor, Read};
 
     /// Generate a random vector of bytes of the specified length using a PRNG.

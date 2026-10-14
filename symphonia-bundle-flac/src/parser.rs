@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use symphonia_common::xiph::audio::flac::StreamInfo;
 use symphonia_core::checksum::Crc16Ansi;
 use symphonia_core::errors::{Error, Result};
-use symphonia_core::io::{BufReader, Monitor, ReadBytes, SeekBuffered};
+use symphonia_core::io::{AsyncReadBytes, BufReader, Monitor, ReadBytes, SeekBuffered};
 use symphonia_core::packet::Packet;
 use symphonia_core::units::{Duration, Timestamp};
 use symphonia_core::util::bits;
@@ -140,10 +140,10 @@ impl Fragment {
     }
 
     /// Parse the frame header from the fragment.
-    async fn parse_header(&self) -> Option<FrameHeader> {
+    fn parse_header(&self) -> Option<FrameHeader> {
         let mut reader = BufReader::new(&self.data);
-        let sync = reader.read_be_u16().await.ok()?;
-        read_frame_header(&mut reader, sync).await.ok()
+        let sync = reader.read_be_u16().ok()?;
+        read_frame_header(&mut reader, sync).ok()
     }
 }
 
@@ -228,14 +228,10 @@ impl PacketBuilder {
         self.frags.push(frag);
     }
 
-    async fn try_build(
-        &mut self,
-        stream_info: &StreamInfo,
-        frag: Fragment,
-    ) -> Option<ParsedPacket> {
+    fn try_build(&mut self, stream_info: &StreamInfo, frag: Fragment) -> Option<ParsedPacket> {
         let (header, data) = if frag.crc_match {
             // The fragment has a CRC that matches the expected CRC.
-            (frag.parse_header().await?, frag.data)
+            (frag.parse_header()?, frag.data)
         }
         else {
             // The fragment does not have a CRC that matches the expected CRC.
@@ -262,7 +258,7 @@ impl PacketBuilder {
 
                 data.extend_from_slice(&frag.data);
 
-                (self.frags[i].parse_header().await?, data.into_boxed_slice())
+                (self.frags[i].parse_header()?, data.into_boxed_slice())
             }
             else {
                 // A range of fragments has not been found that forms a packet.
@@ -330,7 +326,7 @@ impl PacketParser {
         avg_frame_size: usize,
     ) -> Result<Option<Fragment>>
     where
-        B: ReadBytes + SeekBuffered,
+        B: AsyncReadBytes + SeekBuffered,
     {
         // The initial number of bytes to read.
         //
@@ -370,9 +366,7 @@ impl PacketParser {
                 // frame header in its entirety.
                 if is_likely_frame_header(frame) {
                     // Parse the frame header from the frame buffer.
-                    if let Ok(header) =
-                        read_frame_header(&mut BufReader::new(&frame[2..]), sync).await
-                    {
+                    if let Ok(header) = read_frame_header(&mut BufReader::new(&frame[2..]), sync) {
                         // Get the last header to check monotonicity in the strict header check.
                         let last_header = self.builder.last_header();
 
@@ -435,7 +429,7 @@ impl PacketParser {
     /// Reads a fragment using the reader and performs resynchronization when necessary.
     async fn read_fragment<B>(&mut self, reader: &mut B, avg_frame_size: usize) -> Result<Fragment>
     where
-        B: ReadBytes + SeekBuffered,
+        B: AsyncReadBytes + SeekBuffered,
     {
         loop {
             if let Some(fragment) = self.try_read_fragment(reader, avg_frame_size).await? {
@@ -456,7 +450,7 @@ impl PacketParser {
         avg_frame_size: usize,
     ) -> Result<Option<Fragment>>
     where
-        B: ReadBytes + SeekBuffered,
+        B: AsyncReadBytes + SeekBuffered,
     {
         match self.read_fragment(reader, avg_frame_size).await {
             Ok(fragment) => Ok(Some(fragment)),
@@ -488,7 +482,7 @@ impl PacketParser {
     /// Parse the next packet from the stream.
     pub async fn parse<B>(&mut self, reader: &mut B) -> Result<Option<Packet>>
     where
-        B: ReadBytes + SeekBuffered,
+        B: AsyncReadBytes + SeekBuffered,
     {
         let avg_frame_size = self.fsma.average();
 
@@ -502,7 +496,7 @@ impl PacketParser {
                 None => return Ok(None),
             };
 
-            if let Some(packet) = self.builder.try_build(&self.info, fragment).await {
+            if let Some(packet) = self.builder.try_build(&self.info, fragment) {
                 break packet;
             }
         };
@@ -521,18 +515,18 @@ impl PacketParser {
     /// Resync the reader to the start of the next frame.
     pub async fn resync<B>(&mut self, reader: &mut B) -> Result<ResyncInfo>
     where
-        B: ReadBytes + SeekBuffered,
+        B: AsyncReadBytes + SeekBuffered,
     {
         let init_pos = reader.pos();
 
         let mut frame_pos;
 
         let header = loop {
-            let sync = sync_frame(reader).await?;
+            let sync = sync_frame_from_stream(reader).await?;
 
             frame_pos = reader.pos() - 2;
 
-            if let Ok(header) = read_frame_header(reader, sync).await {
+            if let Ok(header) = read_frame_header_from_stream(reader, sync).await {
                 // Do a strict frame header check with no previous header.
                 if strict_frame_header_check(&self.info, &header, None) {
                     break header;
@@ -569,6 +563,44 @@ impl PacketParser {
         self.builder.set_max_frame_size(max_frame_size);
         self.soft_reset();
     }
+}
+
+/// The maximum length of a frame header, excluding the 2 byte synchronization code.
+const MAX_FRAME_HEADER_LEN: usize = 14;
+
+/// Synchronize the stream to the start of the next frame header and return the synchronization
+/// code.
+async fn sync_frame_from_stream<B: AsyncReadBytes>(reader: &mut B) -> Result<u16> {
+    let mut sync = 0u16;
+
+    // See `sync_frame` for details.
+    while (sync & 0xfffc) != 0xfff8 {
+        sync = sync.wrapping_shl(8) | u16::from(reader.read_u8().await?);
+    }
+
+    Ok(sync)
+}
+
+/// Read a frame header, following the synchronization code, from the stream.
+///
+/// The maximum possible length of a frame header is buffered from the stream, and then parsed. The
+/// stream will be positioned after the buffered bytes, not the frame header.
+async fn read_frame_header_from_stream<B: AsyncReadBytes>(
+    reader: &mut B,
+    sync: u16,
+) -> Result<FrameHeader> {
+    let mut buf = [0u8; MAX_FRAME_HEADER_LEN];
+    let mut len = 0;
+
+    // Fewer bytes may be available near the end of the stream.
+    while len < buf.len() {
+        match reader.read_buf(&mut buf[len..]).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) => len += read,
+        }
+    }
+
+    read_frame_header(&mut BufReader::new(&buf[..len]), sync)
 }
 
 fn calc_sync_info(stream_info: &StreamInfo, header: &FrameHeader) -> SyncInfo {

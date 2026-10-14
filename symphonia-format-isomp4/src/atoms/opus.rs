@@ -69,10 +69,10 @@ impl Atom for OpusAtom {
 }
 
 impl OpusAtom {
-    pub async fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
+    pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
         let mut reader = BufReader::new(&self.extra_data);
 
-        if let Ok(opus_head) = opus::OpusHead::read(&mut reader, 0).await {
+        if let Ok(opus_head) = opus::OpusHead::read(&mut reader, 0) {
             entry.channels = Some(opus_head.channels);
             entry.sample_rate = 48_000.0;
         }

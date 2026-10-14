@@ -351,7 +351,7 @@ async fn add_visual_tag<R: ReadAtom>(
 
     // There could be more than one attached image.
     for value in tag.values {
-        let image_info = try_get_image_info(&value.data).await;
+        let image_info = try_get_image_info(&value.data);
 
         builder.add_visual(Visual {
             media_type: image_info.as_ref().map(|info| info.media_type.clone()),

@@ -23,8 +23,8 @@ use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioC
 use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr};
 use symphonia_core::packet::PacketRef;
+use symphonia_core::support_audio_codec;
 use symphonia_core::util::bits::sign_extend_leq32_to_i32;
-use symphonia_core::{async_trait, support_audio_codec};
 
 use log::{debug, log_enabled, warn};
 
@@ -92,10 +92,7 @@ pub struct FlacDecoder {
 }
 
 impl FlacDecoder {
-    pub async fn try_new(
-        params: &AudioCodecParameters,
-        options: &AudioDecoderOptions,
-    ) -> Result<Self> {
+    pub fn try_new(params: &AudioCodecParameters, options: &AudioDecoderOptions) -> Result<Self> {
         // This decoder only supports FLAC.
         if params.codec != CODEC_ID_FLAC {
             return unsupported_error("flac: invalid codec");
@@ -108,7 +105,7 @@ impl FlacDecoder {
         };
 
         // Read the stream information block.
-        let info = StreamInfo::read(&mut BufReader::new(extra_data)).await?;
+        let info = StreamInfo::read(&mut BufReader::new(extra_data))?;
 
         // Clone the codec parameters so that the parameters can be supplemented and/or amended.
         let mut params = params.clone();
@@ -140,13 +137,13 @@ impl FlacDecoder {
         })
     }
 
-    async fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
         let mut reader = packet.as_buf_reader();
 
         // Synchronize to a frame and get the synchronization code.
-        let sync = sync_frame(&mut reader).await?;
+        let sync = sync_frame(&mut reader)?;
 
-        let header = read_frame_header(&mut reader, sync).await?;
+        let header = read_frame_header(&mut reader, sync)?;
 
         // Use the bits per sample and sample rate as stated in the frame header, falling back to
         // the stream information if provided. If neither are available, return an error.
@@ -192,8 +189,7 @@ impl FlacDecoder {
                             self.buf
                                 .plane_mut(i)
                                 .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?,
-                        )
-                        .await?;
+                        )?;
                     }
                 }
                 // For Left/Side, Mid/Side, and Right/Side channel configurations, the Side
@@ -204,8 +200,8 @@ impl FlacDecoder {
                         .plane_pair_mut(0, 1)
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
-                    read_subframe(&mut bs, bits_per_sample, left).await?;
-                    read_subframe(&mut bs, bits_per_sample + 1, side).await?;
+                    read_subframe(&mut bs, bits_per_sample, left)?;
+                    read_subframe(&mut bs, bits_per_sample + 1, side)?;
 
                     decorrelate_left_side(left, side);
                 }
@@ -215,8 +211,8 @@ impl FlacDecoder {
                         .plane_pair_mut(0, 1)
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
-                    read_subframe(&mut bs, bits_per_sample, mid).await?;
-                    read_subframe(&mut bs, bits_per_sample + 1, side).await?;
+                    read_subframe(&mut bs, bits_per_sample, mid)?;
+                    read_subframe(&mut bs, bits_per_sample + 1, side)?;
 
                     decorrelate_mid_side(mid, side);
                 }
@@ -226,8 +222,8 @@ impl FlacDecoder {
                         .plane_pair_mut(0, 1)
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
-                    read_subframe(&mut bs, bits_per_sample + 1, side).await?;
-                    read_subframe(&mut bs, bits_per_sample, right).await?;
+                    read_subframe(&mut bs, bits_per_sample + 1, side)?;
+                    read_subframe(&mut bs, bits_per_sample, right)?;
 
                     decorrelate_right_side(right, side);
                 }
@@ -251,7 +247,6 @@ impl FlacDecoder {
     }
 }
 
-#[async_trait]
 impl AudioDecoder for FlacDecoder {
     fn codec_info(&self) -> &CodecInfo {
         // Only one codec is supported.
@@ -266,8 +261,8 @@ impl AudioDecoder for FlacDecoder {
         &self.params
     }
 
-    async fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
-        if let Err(e) = self.decode_inner(packet).await {
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
+        if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
         }
@@ -319,16 +314,15 @@ impl AudioDecoder for FlacDecoder {
     }
 }
 
-#[async_trait]
 impl RegisterableAudioDecoder for FlacDecoder {
-    async fn try_registry_new(
+    fn try_registry_new(
         params: &AudioCodecParameters,
         opts: &AudioDecoderOptions,
     ) -> Result<Box<dyn AudioDecoder>>
     where
         Self: Sized,
     {
-        Ok(Box::new(FlacDecoder::try_new(params, opts).await?))
+        Ok(Box::new(FlacDecoder::try_new(params, opts)?))
     }
 
     fn supported_codecs() -> &'static [SupportedAudioCodec] {
@@ -346,14 +340,14 @@ enum SubFrameType {
     Linear(u32),
 }
 
-async fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> Result<()> {
+fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> Result<()> {
     // First sub-frame bit must always 0.
-    if bs.read_bool().await? {
+    if bs.read_bool()? {
         return decode_error("flac: subframe padding is not 0");
     }
 
     // Next 6 bits designate the sub-frame type.
-    let subframe_type_enc = bs.read_bits_leq32(6).await?;
+    let subframe_type_enc = bs.read_bits_leq32(6)?;
 
     let subframe_type = match subframe_type_enc {
         0x00 => SubFrameType::Constant,
@@ -375,7 +369,7 @@ async fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i3
     // Bit 7 of the sub-frame header designates if there are any dropped (wasted in FLAC terms)
     // bits per sample in the audio sub-block. If the bit is set, unary decode the number of
     // dropped bits per sample.
-    let dropped_bps = if bs.read_bool().await? { bs.read_unary_zeros().await? + 1 } else { 0 };
+    let dropped_bps = if bs.read_bool()? { bs.read_unary_zeros()? + 1 } else { 0 };
     if dropped_bps > frame_bps {
         return decode_error(
             "flac: dropped bits per sample is greater than the frame bits per sample",
@@ -395,10 +389,10 @@ async fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i3
     //     dropped_bps);
 
     match subframe_type {
-        SubFrameType::Constant => decode_constant(bs, bps, buf).await?,
-        SubFrameType::Verbatim => decode_verbatim(bs, bps, buf).await?,
-        SubFrameType::FixedLinear(order) => decode_fixed_linear(bs, bps, order, buf).await?,
-        SubFrameType::Linear(order) => decode_linear(bs, bps, order, buf).await?,
+        SubFrameType::Constant => decode_constant(bs, bps, buf)?,
+        SubFrameType::Verbatim => decode_verbatim(bs, bps, buf)?,
+        SubFrameType::FixedLinear(order) => decode_fixed_linear(bs, bps, order, buf)?,
+        SubFrameType::Linear(order) => decode_linear(bs, bps, order, buf)?,
     };
 
     // Shift the samples to account for the dropped bits.
@@ -416,8 +410,8 @@ fn samples_shl(shift: u32, buf: &mut [i32]) {
     }
 }
 
-async fn decode_constant<B: ReadBitsLtr>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
-    let const_sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(bps).await?, bps);
+fn decode_constant<B: ReadBitsLtr>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
+    let const_sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(bps)?, bps);
 
     for sample in buf.iter_mut() {
         *sample = const_sample;
@@ -426,15 +420,15 @@ async fn decode_constant<B: ReadBitsLtr>(bs: &mut B, bps: u32, buf: &mut [i32]) 
     Ok(())
 }
 
-async fn decode_verbatim<B: ReadBitsLtr>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
+fn decode_verbatim<B: ReadBitsLtr>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
     for sample in buf.iter_mut() {
-        *sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(bps).await?, bps);
+        *sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(bps)?, bps);
     }
 
     Ok(())
 }
 
-async fn decode_fixed_linear<B: ReadBitsLtr>(
+fn decode_fixed_linear<B: ReadBitsLtr>(
     bs: &mut B,
     bps: u32,
     order: u32,
@@ -445,10 +439,10 @@ async fn decode_fixed_linear<B: ReadBitsLtr>(
     }
 
     // The first `order` samples are encoded verbatim to warm-up the LPC decoder.
-    decode_verbatim(bs, bps, &mut buf[..order as usize]).await?;
+    decode_verbatim(bs, bps, &mut buf[..order as usize])?;
 
     // Decode the residuals for the predicted samples.
-    decode_residual(bs, order, buf).await?;
+    decode_residual(bs, order, buf)?;
 
     // Run the Fixed predictor (appends to residuals).
     //
@@ -460,12 +454,7 @@ async fn decode_fixed_linear<B: ReadBitsLtr>(
     Ok(())
 }
 
-async fn decode_linear<B: ReadBitsLtr>(
-    bs: &mut B,
-    bps: u32,
-    order: u32,
-    buf: &mut [i32],
-) -> Result<()> {
+fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]) -> Result<()> {
     if order as usize > buf.len() {
         return decode_error("flac: predictor order is greater than the block size");
     }
@@ -474,26 +463,26 @@ async fn decode_linear<B: ReadBitsLtr>(
     debug_assert!(order > 0 && order <= 32);
 
     // The first `order` samples are encoded verbatim to warm-up the LPC decoder.
-    decode_verbatim(bs, bps, &mut buf[0..order as usize]).await?;
+    decode_verbatim(bs, bps, &mut buf[0..order as usize])?;
 
     // Quantized linear predictor (QLP) coefficients precision in bits (1-16).
-    let qlp_precision = bs.read_bits_leq32(4).await? + 1;
+    let qlp_precision = bs.read_bits_leq32(4)? + 1;
 
     if qlp_precision > 15 {
         return decode_error("flac: qlp precision set to reserved value");
     }
 
     // QLP coefficients bit shift [-16, 15].
-    let qlp_coeff_shift = sign_extend_leq32_to_i32(bs.read_bits_leq32(5).await?, 5);
+    let qlp_coeff_shift = sign_extend_leq32_to_i32(bs.read_bits_leq32(5)?, 5);
 
     if qlp_coeff_shift >= 0 {
         let mut qlp_coeffs = [0i32; 32];
 
         for c in qlp_coeffs.iter_mut().rev().take(order as usize) {
-            *c = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision).await?, qlp_precision);
+            *c = sign_extend_leq32_to_i32(bs.read_bits_leq32(qlp_precision)?, qlp_precision);
         }
 
-        decode_residual(bs, order, buf).await?;
+        decode_residual(bs, order, buf)?;
 
         // Helper function to dispatch to a predictor with a maximum order of N.
         #[inline(always)]
@@ -523,12 +512,12 @@ async fn decode_linear<B: ReadBitsLtr>(
     Ok(())
 }
 
-async fn decode_residual<B: ReadBitsLtr>(
+fn decode_residual<B: ReadBitsLtr>(
     bs: &mut B,
     n_prelude_samples: u32,
     buf: &mut [i32],
 ) -> Result<()> {
-    let method_enc = bs.read_bits_leq32(2).await?;
+    let method_enc = bs.read_bits_leq32(2)?;
 
     // The FLAC specification defines two residual coding methods: Rice and Rice2. The
     // only difference between the two is the bit width of the Rice parameter. Note the
@@ -543,7 +532,7 @@ async fn decode_residual<B: ReadBitsLtr>(
     };
 
     // Read the partition order.
-    let order = bs.read_bits_leq32(4).await?;
+    let order = bs.read_bits_leq32(4)?;
 
     // The number of partitions is equal to 2^order.
     let n_partitions = 1usize << order;
@@ -577,24 +566,23 @@ async fn decode_residual<B: ReadBitsLtr>(
         bs,
         param_bit_width,
         &mut buf[n_prelude_samples as usize..n_partition_samples],
-    )
-    .await?;
+    )?;
 
     // Decode the remaining partitions.
     for buf_chunk in buf[n_partition_samples..].chunks_mut(n_partition_samples) {
-        decode_rice_partition(bs, param_bit_width, buf_chunk).await?;
+        decode_rice_partition(bs, param_bit_width, buf_chunk)?;
     }
 
     Ok(())
 }
 
-async fn decode_rice_partition<B: ReadBitsLtr>(
+fn decode_rice_partition<B: ReadBitsLtr>(
     bs: &mut B,
     param_bit_width: u32,
     buf: &mut [i32],
 ) -> Result<()> {
     // Read the encoding parameter, generally the Rice parameter.
-    let rice_param = bs.read_bits_leq32(param_bit_width).await?;
+    let rice_param = bs.read_bits_leq32(param_bit_width)?;
 
     // If the Rice parameter is all 1s (e.g., 0xf for a 4bit parameter, 0x1f for a 5bit parameter),
     // then it indicates that residuals in this partition are not Rice encoded, rather they are
@@ -605,13 +593,13 @@ async fn decode_rice_partition<B: ReadBitsLtr>(
 
         // Read each rice encoded residual and store in buffer.
         for sample in buf.iter_mut() {
-            let q = bs.read_unary_zeros().await?;
-            let r = bs.read_bits_leq32(rice_param).await?;
+            let q = bs.read_unary_zeros()?;
+            let r = bs.read_bits_leq32(rice_param)?;
             *sample = rice_signed_to_i32((q << rice_param) | r);
         }
     }
     else {
-        let residual_bits = bs.read_bits_leq32(5).await?;
+        let residual_bits = bs.read_bits_leq32(5)?;
 
         // trace!(
         //     "\t\t\tpartition (Binary): n_residuals={}, residual_bits={}",
@@ -621,8 +609,7 @@ async fn decode_rice_partition<B: ReadBitsLtr>(
 
         // Read each binary encoded residual and store in buffer.
         for sample in buf.iter_mut() {
-            *sample =
-                sign_extend_leq32_to_i32(bs.read_bits_leq32(residual_bits).await?, residual_bits);
+            *sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(residual_bits)?, residual_bits);
         }
     }
 
@@ -672,7 +659,7 @@ fn verify_rice_signed_to_i32() {
     assert_eq!(rice_signed_to_i32(9), -5);
     assert_eq!(rice_signed_to_i32(10), 5);
 
-    assert_eq!(rice_signed_to_i32(u32::MAX), -2_147_483_648);
+    assert_eq!(rice_signed_to_i32(u32::max_value()), -2_147_483_648);
 }
 
 fn fixed_predict(order: u32, buf: &mut [i32]) {

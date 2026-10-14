@@ -96,11 +96,11 @@ mod id3 {
     use alloc::vec::Vec;
 
     use symphonia_core::errors::Result;
-    use symphonia_core::io::ReadBytes;
+    use symphonia_core::io::AsyncReadBytes;
     use symphonia_core::meta::{MetadataBuilder, MetadataRevision, MetadataSideData};
 
     /// Read a RIFF ID3 chunk payload.
-    pub async fn read_riff_id3_chunk<B: ReadBytes>(
+    pub async fn read_riff_id3_chunk<B: AsyncReadBytes>(
         reader: &mut B,
         side_data: &mut Vec<MetadataSideData>,
     ) -> Result<MetadataRevision> {

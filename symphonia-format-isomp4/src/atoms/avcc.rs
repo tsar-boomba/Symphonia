@@ -44,7 +44,7 @@ impl Atom for AvcCAtom {
             data: it.read_boxed_slice_exact(len).await?,
         };
 
-        let avc_config = AVCDecoderConfigurationRecord::read(&extra_data.data).await?;
+        let avc_config = AVCDecoderConfigurationRecord::read(&extra_data.data)?;
 
         Ok(Self { extra_data, profile: avc_config.profile, level: avc_config.level })
     }

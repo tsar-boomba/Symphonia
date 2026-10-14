@@ -7,12 +7,11 @@
 
 use super::{MapResult, Mapper, PacketParser};
 use crate::common::SideData;
+use symphonia_core::Float;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use symphonia_common::xiph::audio::vorbis::*;
-use symphonia_core::Float;
-use symphonia_core::async_trait;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
@@ -64,13 +63,12 @@ impl VorbisPacketParser {
     }
 }
 
-#[async_trait]
 impl PacketParser for VorbisPacketParser {
-    async fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
         let mut bs = BitReaderRtl::new(packet);
 
         // First bit must be 0 to indicate audio packet.
-        match bs.read_bool().await {
+        match bs.read_bool() {
             Ok(bit) if !bit => (),
             _ => return (Duration::ZERO, Duration::ZERO),
         }
@@ -79,7 +77,7 @@ impl PacketParser for VorbisPacketParser {
         let mode_num_bits = ilog(u32::from(self.num_modes) - 1);
 
         // Read the mode number.
-        let mode_num = match bs.read_bits_leq32(mode_num_bits).await {
+        let mode_num = match bs.read_bits_leq32(mode_num_bits) {
             Ok(mode_num) => mode_num as u8,
             _ => return (Duration::ZERO, Duration::ZERO),
         };
@@ -112,14 +110,14 @@ impl PacketParser for VorbisPacketParser {
     }
 }
 
-pub async fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
+pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
     // The identification header packet must be the correct size.
     if buf.len() != VORBIS_IDENTIFICATION_HEADER_SIZE {
         return Ok(None);
     }
 
     // Read the identification header. Any errors cause detection to fail.
-    let ident = match read_ident_header(&mut BufReader::new(buf)).await {
+    let ident = match read_ident_header(&mut BufReader::new(buf)) {
         Ok(ident) => ident,
         _ => return Ok(None),
     };
@@ -154,7 +152,6 @@ struct VorbisMapper {
     has_setup_header: bool,
 }
 
-#[async_trait]
 impl Mapper for VorbisMapper {
     fn name(&self) -> &'static str {
         "vorbis"
@@ -199,16 +196,16 @@ impl Mapper for VorbisMapper {
         }
     }
 
-    async fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
+    fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
         let mut reader = BufReader::new(packet);
 
         // All Vorbis packets indicate the packet type in the first byte.
-        let packet_type = reader.read_u8().await?;
+        let packet_type = reader.read_u8()?;
 
         // An even numbered packet type is an audio packet.
         if packet_type & 1 == 0 {
             let (dur, discard) = match &mut self.parser {
-                Some(parser) => parser.parse_next_packet_dur(packet).await,
+                Some(parser) => parser.parse_next_packet_dur(packet),
                 _ => (Duration::ZERO, Duration::ZERO),
             };
 
@@ -217,7 +214,7 @@ impl Mapper for VorbisMapper {
         else {
             // Odd numbered packet types are header packets.
             let mut sig = [0; 6];
-            reader.read_buf_exact(&mut sig).await?;
+            reader.read_buf_exact(&mut sig)?;
 
             // Check if the presumed header packet has the common header packet signature.
             if sig != VORBIS_HEADER_PACKET_SIGNATURE {
@@ -230,7 +227,7 @@ impl Mapper for VorbisMapper {
                     let mut builder = MetadataBuilder::new(VORBIS_COMMENT_METADATA_INFO);
                     let mut side_data = Default::default();
 
-                    read_vorbis_comment(&mut reader, &mut builder, &mut side_data).await?;
+                    read_vorbis_comment(&mut reader, &mut builder, &mut side_data)?;
 
                     let rev = builder.build();
 
@@ -261,7 +258,7 @@ impl Mapper for VorbisMapper {
                     audio_codec_params.with_extra_data(extra_data.into_boxed_slice());
 
                     // Try to read the setup header.
-                    if let Ok(modes) = read_setup(&mut BufReader::new(packet), &self.ident).await {
+                    if let Ok(modes) = read_setup(&mut BufReader::new(packet), &self.ident) {
                         let num_modes = modes.len();
                         let mut modes_block_flags = 0;
 
@@ -307,9 +304,9 @@ struct IdentHeader {
     bs1_exp: u8,
 }
 
-async fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
+fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> {
     // The packet type must be an identification header.
-    let packet_type = reader.read_u8().await?;
+    let packet_type = reader.read_u8()?;
 
     if packet_type != VORBIS_PACKET_TYPE_IDENTIFICATION {
         return decode_error("ogg (vorbis): invalid packet type for identification header");
@@ -317,39 +314,39 @@ async fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> 
 
     // Next, the header packet signature must be correct.
     let mut packet_sig_buf = [0; 6];
-    reader.read_buf_exact(&mut packet_sig_buf).await?;
+    reader.read_buf_exact(&mut packet_sig_buf)?;
 
     if packet_sig_buf != VORBIS_HEADER_PACKET_SIGNATURE {
         return decode_error("ogg (vorbis): invalid header signature");
     }
 
     // Next, the Vorbis version must be 0.
-    let version = reader.read_u32().await?;
+    let version = reader.read_u32()?;
 
     if version != VORBIS_VERSION {
         return unsupported_error("ogg (vorbis): only vorbis 1 is supported");
     }
 
     // Next, the number of channels and sample rate must be non-zero.
-    let n_channels = reader.read_u8().await?;
+    let n_channels = reader.read_u8()?;
 
     if n_channels == 0 {
         return decode_error("ogg (vorbis): number of channels cannot be 0");
     }
 
-    let sample_rate = reader.read_u32().await?;
+    let sample_rate = reader.read_u32()?;
 
     if sample_rate == 0 {
         return decode_error("ogg (vorbis): sample rate cannot be 0");
     }
 
     // Read the bitrate range.
-    let _bitrate_max = reader.read_u32().await?;
-    let _bitrate_nom = reader.read_u32().await?;
-    let _bitrate_min = reader.read_u32().await?;
+    let _bitrate_max = reader.read_u32()?;
+    let _bitrate_nom = reader.read_u32()?;
+    let _bitrate_min = reader.read_u32()?;
 
     // Next, blocksize_0 and blocksize_1 are packed into a single byte.
-    let block_sizes = reader.read_u8().await?;
+    let block_sizes = reader.read_u8()?;
 
     let bs0_exp = (block_sizes & 0x0f) >> 0;
     let bs1_exp = (block_sizes & 0xf0) >> 4;
@@ -369,16 +366,16 @@ async fn read_ident_header<B: ReadBytes>(reader: &mut B) -> Result<IdentHeader> 
     }
 
     // Framing flag must be set.
-    if reader.read_u8().await? != 0x1 {
+    if reader.read_u8()? != 0x1 {
         return decode_error("ogg (vorbis): ident header framing flag unset");
     }
 
     Ok(IdentHeader { n_channels, sample_rate, bs0_exp, bs1_exp })
 }
 
-async fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Vec<Mode>> {
+fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<Vec<Mode>> {
     // The packet type must be an setup header.
-    let packet_type = reader.read_u8().await?;
+    let packet_type = reader.read_u8()?;
 
     if packet_type != VORBIS_PACKET_TYPE_SETUP {
         return decode_error("ogg (vorbis): invalid packet type for setup header");
@@ -386,7 +383,7 @@ async fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<V
 
     // Next, the setup packet signature must be correct.
     let mut packet_sig_buf = [0; 6];
-    reader.read_buf_exact(&mut packet_sig_buf).await?;
+    reader.read_buf_exact(&mut packet_sig_buf)?;
 
     if packet_sig_buf != VORBIS_HEADER_PACKET_SIGNATURE {
         return decode_error("ogg (vorbis): invalid setup header signature");
@@ -396,78 +393,78 @@ async fn read_setup(reader: &mut BufReader<'_>, ident: &IdentHeader) -> Result<V
     let mut bs = BitReaderRtl::new(reader.read_buf_bytes_available_ref());
 
     // Skip the codebooks.
-    skip_codebooks(&mut bs).await?;
+    skip_codebooks(&mut bs)?;
 
     // Skip the time-domain transforms (placeholders in Vorbis 1).
-    skip_time_domain_transforms(&mut bs).await?;
+    skip_time_domain_transforms(&mut bs)?;
 
     // Skip the floors.
-    skip_floors(&mut bs).await?;
+    skip_floors(&mut bs)?;
 
     // Skip the residues.
-    skip_residues(&mut bs).await?;
+    skip_residues(&mut bs)?;
 
     // Skip the channel mappings.
-    skip_mappings(&mut bs, ident.n_channels).await?;
+    skip_mappings(&mut bs, ident.n_channels)?;
 
     // Read modes.
-    let modes = read_modes(&mut bs).await?;
+    let modes = read_modes(&mut bs)?;
 
     // Framing flag must be set.
-    if !bs.read_bool().await? {
+    if !bs.read_bool()? {
         return decode_error("ogg (vorbis): setup header framing flag unset");
     }
 
     Ok(modes)
 }
 
-async fn skip_codebooks(bs: &mut BitReaderRtl<'_>) -> Result<()> {
-    let count = bs.read_bits_leq32(8).await? + 1;
+fn skip_codebooks(bs: &mut BitReaderRtl<'_>) -> Result<()> {
+    let count = bs.read_bits_leq32(8)? + 1;
     for _ in 0..count {
-        skip_codebook(bs).await?;
+        skip_codebook(bs)?;
     }
     Ok(())
 }
 
-pub async fn skip_codebook(bs: &mut BitReaderRtl<'_>) -> Result<()> {
+pub fn skip_codebook(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     // Verify codebook synchronization word.
-    let sync = bs.read_bits_leq32(24).await?;
+    let sync = bs.read_bits_leq32(24)?;
 
     if sync != 0x564342 {
         return decode_error("ogg (vorbis): invalid codebook sync");
     }
 
     // Read codebook number of dimensions and entries.
-    let codebook_dimensions = bs.read_bits_leq32(16).await? as u16;
-    let codebook_entries = bs.read_bits_leq32(24).await?;
-    let is_length_ordered = bs.read_bool().await?;
+    let codebook_dimensions = bs.read_bits_leq32(16)? as u16;
+    let codebook_entries = bs.read_bits_leq32(24)?;
+    let is_length_ordered = bs.read_bool()?;
 
     if !is_length_ordered {
         // Codeword list is not length ordered.
-        let is_sparse = bs.read_bool().await?;
+        let is_sparse = bs.read_bool()?;
 
         if is_sparse {
             // Sparsely packed codeword entry list.
             for _ in 0..codebook_entries {
-                if bs.read_bool().await? {
-                    let _ = bs.read_bits_leq32(5).await?;
+                if bs.read_bool()? {
+                    let _ = bs.read_bits_leq32(5)?;
                 }
             }
         }
         else {
-            bs.ignore_bits(codebook_entries * 5).await?;
+            bs.ignore_bits(codebook_entries * 5)?;
         }
     }
     else {
         // Codeword list is length ordered.
         let mut cur_entry = 0;
-        let mut _cur_len = bs.read_bits_leq32(5).await? + 1;
+        let mut _cur_len = bs.read_bits_leq32(5)? + 1;
 
         loop {
             let num_bits =
                 if codebook_entries > cur_entry { ilog(codebook_entries - cur_entry) } else { 0 };
 
-            let num = bs.read_bits_leq32(num_bits).await?;
+            let num = bs.read_bits_leq32(num_bits)?;
 
             cur_entry += num;
 
@@ -482,15 +479,15 @@ pub async fn skip_codebook(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     }
 
     // Read and unpack vector quantization (VQ) lookup table.
-    let lookup_type = bs.read_bits_leq32(4).await?;
+    let lookup_type = bs.read_bits_leq32(4)?;
 
     match lookup_type & 0xf {
         0 => (),
         1 | 2 => {
-            let _min_value = bs.read_bits_leq32(32).await?;
-            let _delta_value = bs.read_bits_leq32(32).await?;
-            let value_bits = bs.read_bits_leq32(4).await? + 1;
-            let _sequence_p = bs.read_bool().await?;
+            let _min_value = bs.read_bits_leq32(32)?;
+            let _delta_value = bs.read_bits_leq32(32)?;
+            let value_bits = bs.read_bits_leq32(4)? + 1;
+            let _sequence_p = bs.read_bool()?;
 
             // Lookup type is either 1 or 2 as per outer match.
             let lookup_values = match lookup_type {
@@ -500,7 +497,7 @@ pub async fn skip_codebook(bs: &mut BitReaderRtl<'_>) -> Result<()> {
             };
 
             // Multiplicands
-            bs.ignore_bits(lookup_values * value_bits).await?;
+            bs.ignore_bits(lookup_values * value_bits)?;
         }
         _ => return decode_error("ogg (vorbis): invalid codeword lookup type"),
     }
@@ -508,12 +505,12 @@ pub async fn skip_codebook(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     Ok(())
 }
 
-async fn skip_time_domain_transforms(bs: &mut BitReaderRtl<'_>) -> Result<()> {
-    let count = bs.read_bits_leq32(6).await? + 1;
+fn skip_time_domain_transforms(bs: &mut BitReaderRtl<'_>) -> Result<()> {
+    let count = bs.read_bits_leq32(6)? + 1;
 
     for _ in 0..count {
         // All these values are placeholders and must be 0.
-        if bs.read_bits_leq32(16).await? != 0 {
+        if bs.read_bits_leq32(16)? != 0 {
             return decode_error("ogg (vorbis): invalid time domain tranform");
         }
     }
@@ -521,39 +518,39 @@ async fn skip_time_domain_transforms(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     Ok(())
 }
 
-async fn skip_floors(bs: &mut BitReaderRtl<'_>) -> Result<()> {
-    let count = bs.read_bits_leq32(6).await? + 1;
+fn skip_floors(bs: &mut BitReaderRtl<'_>) -> Result<()> {
+    let count = bs.read_bits_leq32(6)? + 1;
     for _ in 0..count {
-        skip_floor(bs).await?;
+        skip_floor(bs)?;
     }
     Ok(())
 }
 
-async fn skip_floor(bs: &mut BitReaderRtl<'_>) -> Result<()> {
-    let floor_type = bs.read_bits_leq32(16).await?;
+fn skip_floor(bs: &mut BitReaderRtl<'_>) -> Result<()> {
+    let floor_type = bs.read_bits_leq32(16)?;
 
     match floor_type {
-        0 => skip_floor0_setup(bs).await,
-        1 => skip_floor1_setup(bs).await,
+        0 => skip_floor0_setup(bs),
+        1 => skip_floor1_setup(bs),
         _ => decode_error("ogg (vorbis): invalid floor type"),
     }
 }
 
-async fn skip_floor0_setup(bs: &mut BitReaderRtl<'_>) -> Result<()> {
+fn skip_floor0_setup(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     // floor0_order
     // floor0_rate
     // floor0_bark_map_size
     // floor0_amplitude_bits
     // floor0_amplitude_offset
-    bs.ignore_bits(8 + 16 + 16 + 6 + 8).await?;
-    let floor0_number_of_books = bs.read_bits_leq32(4).await? + 1;
-    bs.ignore_bits(floor0_number_of_books * 8).await?;
+    bs.ignore_bits(8 + 16 + 16 + 6 + 8)?;
+    let floor0_number_of_books = bs.read_bits_leq32(4)? + 1;
+    bs.ignore_bits(floor0_number_of_books * 8)?;
     Ok(())
 }
 
-async fn skip_floor1_setup(bs: &mut BitReaderRtl<'_>) -> Result<()> {
+fn skip_floor1_setup(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     // The number of partitions. 5-bit value, 0..31 range.
-    let floor1_partitions = bs.read_bits_leq32(5).await? as usize;
+    let floor1_partitions = bs.read_bits_leq32(5)? as usize;
 
     // Parition list of up-to 32 partitions (floor1_partitions), with each partition indicating
     // a 4-bit class (0..16) identifier.
@@ -564,97 +561,97 @@ async fn skip_floor1_setup(bs: &mut BitReaderRtl<'_>) -> Result<()> {
         let mut max_class = 0; // 4-bits, 0..15
 
         for class_idx in &mut floor1_partition_class_list[..floor1_partitions] {
-            *class_idx = bs.read_bits_leq32(4).await? as u8;
+            *class_idx = bs.read_bits_leq32(4)? as u8;
             max_class = max_class.max(*class_idx);
         }
 
         let num_classes = usize::from(1 + max_class);
 
         for dimensions in floor1_classes_dimensions[..num_classes].iter_mut() {
-            *dimensions = bs.read_bits_leq32(3).await? as u8 + 1;
+            *dimensions = bs.read_bits_leq32(3)? as u8 + 1;
 
-            let subclass_bits = bs.read_bits_leq32(2).await?;
+            let subclass_bits = bs.read_bits_leq32(2)?;
 
             if subclass_bits != 0 {
-                let _main_book = bs.read_bits_leq32(8).await?;
+                let _main_book = bs.read_bits_leq32(8)?;
             }
 
             let num_subclasses = 1 << subclass_bits;
 
             // Sub-class books
-            bs.ignore_bits(num_subclasses * 8).await?;
+            bs.ignore_bits(num_subclasses * 8)?;
         }
     }
 
-    let _floor1_multiplier = bs.read_bits_leq32(2).await?;
+    let _floor1_multiplier = bs.read_bits_leq32(2)?;
 
-    let rangebits = bs.read_bits_leq32(4).await?;
+    let rangebits = bs.read_bits_leq32(4)?;
 
     for &class_idx in &floor1_partition_class_list[..floor1_partitions] {
         let class_dimensions = u32::from(floor1_classes_dimensions[class_idx as usize]);
         // TODO? No more than 65 elements are allowed.
-        bs.ignore_bits(class_dimensions * rangebits).await?;
+        bs.ignore_bits(class_dimensions * rangebits)?;
     }
 
     Ok(())
 }
 
-async fn skip_residues(bs: &mut BitReaderRtl<'_>) -> Result<()> {
-    let count = bs.read_bits_leq32(6).await? + 1;
+fn skip_residues(bs: &mut BitReaderRtl<'_>) -> Result<()> {
+    let count = bs.read_bits_leq32(6)? + 1;
     for _ in 0..count {
-        let _residue_type = bs.read_bits_leq32(16).await?;
-        skip_residue_setup(bs).await?
+        let _residue_type = bs.read_bits_leq32(16)?;
+        skip_residue_setup(bs)?
     }
     Ok(())
 }
 
-async fn skip_residue_setup(bs: &mut BitReaderRtl<'_>) -> Result<()> {
+fn skip_residue_setup(bs: &mut BitReaderRtl<'_>) -> Result<()> {
     // residue_begin
     // residue_end
     // residue_partition_size
-    bs.ignore_bits(24 + 24 + 24).await?;
-    let residue_classifications = bs.read_bits_leq32(6).await? as u8 + 1;
+    bs.ignore_bits(24 + 24 + 24)?;
+    let residue_classifications = bs.read_bits_leq32(6)? as u8 + 1;
 
     // residue_classbook
-    bs.ignore_bits(8).await?;
+    bs.ignore_bits(8)?;
 
     let mut num_codebooks = 0;
 
     for _ in 0..residue_classifications {
-        let low_bits = bs.read_bits_leq32(3).await? as u8;
-        let high_bits = if bs.read_bool().await? { bs.read_bits_leq32(5).await? as u8 } else { 0 };
+        let low_bits = bs.read_bits_leq32(3)? as u8;
+        let high_bits = if bs.read_bool()? { bs.read_bits_leq32(5)? as u8 } else { 0 };
         let is_used = (high_bits << 3) | low_bits;
         num_codebooks += is_used.count_ones();
     }
 
-    bs.ignore_bits(num_codebooks * 8).await?;
+    bs.ignore_bits(num_codebooks * 8)?;
 
     Ok(())
 }
 
-async fn skip_mappings(bs: &mut BitReaderRtl<'_>, audio_channels: u8) -> Result<()> {
-    let count = bs.read_bits_leq32(6).await? + 1;
+fn skip_mappings(bs: &mut BitReaderRtl<'_>, audio_channels: u8) -> Result<()> {
+    let count = bs.read_bits_leq32(6)? + 1;
     for _ in 0..count {
-        skip_mapping(bs, audio_channels).await?
+        skip_mapping(bs, audio_channels)?
     }
     Ok(())
 }
 
-async fn skip_mapping(bs: &mut BitReaderRtl<'_>, audio_channels: u8) -> Result<()> {
-    let mapping_type = bs.read_bits_leq32(16).await?;
+fn skip_mapping(bs: &mut BitReaderRtl<'_>, audio_channels: u8) -> Result<()> {
+    let mapping_type = bs.read_bits_leq32(16)?;
 
     match mapping_type {
-        0 => skip_mapping_type0_setup(bs, audio_channels).await,
+        0 => skip_mapping_type0_setup(bs, audio_channels),
         _ => decode_error("ogg (vorbis): invalid mapping type"),
     }
 }
 
-async fn skip_mapping_type0_setup(bs: &mut BitReaderRtl<'_>, audio_channels: u8) -> Result<()> {
-    let num_submaps = if bs.read_bool().await? { bs.read_bits_leq32(4).await? + 1 } else { 1 };
+fn skip_mapping_type0_setup(bs: &mut BitReaderRtl<'_>, audio_channels: u8) -> Result<()> {
+    let num_submaps = if bs.read_bool()? { bs.read_bits_leq32(4)? + 1 } else { 1 };
 
-    if bs.read_bool().await? {
+    if bs.read_bool()? {
         // Number of channel couplings (up-to 256).
-        let coupling_steps = bs.read_bits_leq32(8).await? as u16 + 1;
+        let coupling_steps = bs.read_bits_leq32(8)? as u16 + 1;
 
         // The maximum channel number.
         let max_ch = audio_channels - 1;
@@ -665,12 +662,12 @@ async fn skip_mapping_type0_setup(bs: &mut BitReaderRtl<'_>, audio_channels: u8)
 
         // Read each channel coupling.
         for _ in 0..coupling_steps {
-            let _magnitude_ch = bs.read_bits_leq32(coupling_bits).await?;
-            let _angle_ch = bs.read_bits_leq32(coupling_bits).await?;
+            let _magnitude_ch = bs.read_bits_leq32(coupling_bits)?;
+            let _angle_ch = bs.read_bits_leq32(coupling_bits)?;
         }
     }
 
-    if bs.read_bits_leq32(2).await? != 0 {
+    if bs.read_bits_leq32(2)? != 0 {
         return decode_error("ogg (vorbis): reserved mapping bits non-zero");
     }
 
@@ -678,24 +675,18 @@ async fn skip_mapping_type0_setup(bs: &mut BitReaderRtl<'_>, audio_channels: u8)
     // they're all 0.
     if num_submaps > 1 {
         // Mux to use per channel.
-        bs.ignore_bits(u32::from(audio_channels) * 4).await?;
+        bs.ignore_bits(u32::from(audio_channels) * 4)?;
     }
 
     // Reserved, floor, and residue to use per submap.
-    bs.ignore_bits(num_submaps * (8 + 8 + 8)).await?;
+    bs.ignore_bits(num_submaps * (8 + 8 + 8))?;
 
     Ok(())
 }
 
-async fn read_modes(bs: &mut BitReaderRtl<'_>) -> Result<Vec<Mode>> {
-    let count = bs.read_bits_leq32(6).await? + 1;
-    let mut modes = Vec::with_capacity(count as usize);
-
-    for _ in 0..count {
-        modes.push(read_mode(bs).await);
-    }
-
-    modes.into_iter().collect()
+fn read_modes(bs: &mut BitReaderRtl<'_>) -> Result<Vec<Mode>> {
+    let count = bs.read_bits_leq32(6)? + 1;
+    (0..count).map(|_| read_mode(bs)).collect()
 }
 
 #[derive(Debug)]
@@ -703,11 +694,11 @@ struct Mode {
     block_flag: bool,
 }
 
-async fn read_mode(bs: &mut BitReaderRtl<'_>) -> Result<Mode> {
-    let block_flag = bs.read_bool().await?;
-    let window_type = bs.read_bits_leq32(16).await? as u16;
-    let transform_type = bs.read_bits_leq32(16).await? as u16;
-    let _mapping = bs.read_bits_leq32(8).await? as u8;
+fn read_mode(bs: &mut BitReaderRtl<'_>) -> Result<Mode> {
+    let block_flag = bs.read_bool()?;
+    let window_type = bs.read_bits_leq32(16)? as u16;
+    let transform_type = bs.read_bits_leq32(16)? as u16;
+    let _mapping = bs.read_bits_leq32(8)? as u8;
 
     // Only window type 0 is allowed in Vorbis 1 (section 4.2.4).
     if window_type != 0 {

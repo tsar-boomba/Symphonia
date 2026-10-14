@@ -88,79 +88,58 @@ impl<'s> FlacReader<'s> {
         let mut parser = Default::default();
 
         loop {
-            let header = MetadataBlockHeader::read(&mut reader).await?;
-
-            // Create a scoped bytestream to error if the metadata block read functions exceed the
-            // stated length of the block.
-            let mut block_stream = ScopedStream::new(&mut reader, u64::from(header.block_len));
+            // Read the metadata block header from the stream.
+            let header =
+                MetadataBlockHeader::read(&mut BufReader::new(&reader.read_quad_bytes().await?))?;
 
             match header.block_type {
-                // The StreamInfo block is parsed into a track.
-                MetadataBlockType::StreamInfo => {
-                    // Only a single stream information block is allowed.
-                    if track.is_none() {
-                        track = Some(read_stream_info_block(&mut block_stream, &mut parser).await?);
-                    }
-                    else {
-                        return decode_error("flac: found more than one stream info block");
-                    }
-                }
-                MetadataBlockType::Application => {
-                    let vendor_data =
-                        read_flac_application_block(&mut block_stream, header.block_len).await?;
-                    attachments.push(Attachment::VendorData(vendor_data));
-                }
-                // SeekTable blocks are parsed into a SeekIndex.
-                MetadataBlockType::SeekTable => {
-                    // Only a single seek table block is allowed.
-                    if index.is_none() {
-                        index = Some(
-                            read_flac_seektable_block(&mut block_stream, header.block_len).await?,
-                        );
-                    }
-                    else {
-                        return decode_error("flac: found more than one seek table block");
-                    }
-                }
-                // VorbisComment blocks are parsed into Tags.
-                MetadataBlockType::VorbisComment => {
-                    read_flac_comment_block(&mut block_stream, &mut metadata_builder).await?;
-                }
-                // Cuesheet blocks are parsed into Cues.
-                MetadataBlockType::Cuesheet => {
-                    // A cuesheet block must appear before the stream information block so that the
-                    // timebase is known to calculate the cue times. This should always be the case
-                    // since the stream information block must always be the first metadata block.
-                    if let Some(tb) = track.as_ref().and_then(|track| track.time_base) {
-                        chapters = Some(read_flac_cuesheet_block(&mut block_stream, tb).await?);
-                    }
-                    else {
-                        return decode_error("flac: cuesheet block before stream info");
-                    }
-                }
-                // Picture blocks are read as Visuals.
-                MetadataBlockType::Picture => {
-                    metadata_builder.add_visual(read_flac_picture_block(&mut block_stream).await?);
-                }
                 // Padding blocks are skipped.
                 MetadataBlockType::Padding => {
-                    block_stream.ignore_bytes(u64::from(header.block_len)).await?;
+                    reader.ignore_bytes(u64::from(header.block_len)).await?;
                 }
                 // Unknown block encountered. Skip these blocks as they may be part of a future
                 // version of FLAC, but  print a message.
                 MetadataBlockType::Unknown(id) => {
-                    block_stream.ignore_bytes(u64::from(header.block_len)).await?;
+                    reader.ignore_bytes(u64::from(header.block_len)).await?;
                     info!("ignoring {} bytes of block width id={}.", header.block_len, id);
                 }
-            }
+                ref block_type => {
+                    // Ensure the block length is correct for a stream information block before
+                    // allocating a buffer for it.
+                    if *block_type == MetadataBlockType::StreamInfo
+                        && !StreamInfo::is_valid_size(u64::from(header.block_len))
+                    {
+                        return decode_error("flac: invalid stream info block size");
+                    }
 
-            // If the stated block length is longer than the number of bytes from the block read,
-            // ignore the remaining unread data.
-            let block_unread_len = block_stream.bytes_available();
+                    // Read the entire metadata block from the stream so that it may be parsed
+                    // synchronously.
+                    let block = reader.read_boxed_slice_exact(header.block_len as usize).await?;
 
-            if block_unread_len > 0 {
-                info!("under read block by {block_unread_len} bytes.");
-                block_stream.ignore_bytes(block_unread_len).await?;
+                    // Create a scoped bytestream to error if the metadata block read functions
+                    // exceed the stated length of the block.
+                    let mut block_stream =
+                        ScopedStream::new(BufReader::new(&block), u64::from(header.block_len));
+
+                    read_metadata_block(
+                        &mut block_stream,
+                        &header,
+                        &mut parser,
+                        &mut track,
+                        &mut attachments,
+                        &mut chapters,
+                        &mut index,
+                        &mut metadata_builder,
+                    )?;
+
+                    // If the stated block length is longer than the number of bytes from the block
+                    // read, the remaining data is ignored.
+                    let block_unread_len = block_stream.bytes_available();
+
+                    if block_unread_len > 0 {
+                        info!("under read block by {block_unread_len} bytes.");
+                    }
+                }
             }
 
             // Exit when the last header is read.
@@ -205,7 +184,7 @@ pub struct FlacFormat;
 
 impl Scoreable for FlacFormat {
     fn score<'a, 'b>(
-        _src: ScopedStream<&'a mut MediaSourceStream<'b>>,
+        _src: AsyncScopedStream<&'a mut MediaSourceStream<'b>>,
     ) -> Pin<Box<dyn Future<Output = Result<Score>> + Send + 'a>> {
         Box::pin(async { Ok(Score::Supported(255)) })
     }
@@ -407,7 +386,71 @@ impl FormatReader for FlacReader<'_> {
 }
 
 /// Reads a StreamInfo block and populates the reader with stream information.
-async fn read_stream_info_block<B: ReadBytes + FiniteStream>(
+/// Parse an in-memory metadata block.
+#[allow(clippy::too_many_arguments)]
+fn read_metadata_block<B: ReadBytes + FiniteStream>(
+    block_stream: &mut B,
+    header: &MetadataBlockHeader,
+    parser: &mut PacketParser,
+    track: &mut Option<Track>,
+    attachments: &mut Vec<Attachment>,
+    chapters: &mut Option<ChapterGroup>,
+    index: &mut Option<SeekIndex>,
+    metadata_builder: &mut MetadataBuilder,
+) -> Result<()> {
+    match header.block_type {
+        // The StreamInfo block is parsed into a track.
+        MetadataBlockType::StreamInfo => {
+            // Only a single stream information block is allowed.
+            if track.is_none() {
+                *track = Some(read_stream_info_block(block_stream, parser)?);
+            }
+            else {
+                return decode_error("flac: found more than one stream info block");
+            }
+        }
+        MetadataBlockType::Application => {
+            let vendor_data = read_flac_application_block(block_stream, header.block_len)?;
+            attachments.push(Attachment::VendorData(vendor_data));
+        }
+        // SeekTable blocks are parsed into a SeekIndex.
+        MetadataBlockType::SeekTable => {
+            // Only a single seek table block is allowed.
+            if index.is_none() {
+                *index = Some(read_flac_seektable_block(block_stream, header.block_len)?);
+            }
+            else {
+                return decode_error("flac: found more than one seek table block");
+            }
+        }
+        // VorbisComment blocks are parsed into Tags.
+        MetadataBlockType::VorbisComment => {
+            read_flac_comment_block(block_stream, metadata_builder)?;
+        }
+        // Cuesheet blocks are parsed into Cues.
+        MetadataBlockType::Cuesheet => {
+            // A cuesheet block must appear before the stream information block so that the
+            // timebase is known to calculate the cue times. This should always be the case
+            // since the stream information block must always be the first metadata block.
+            if let Some(tb) = track.as_ref().and_then(|track| track.time_base) {
+                *chapters = Some(read_flac_cuesheet_block(block_stream, tb)?);
+            }
+            else {
+                return decode_error("flac: cuesheet block before stream info");
+            }
+        }
+        // Picture blocks are read as Visuals.
+        MetadataBlockType::Picture => {
+            metadata_builder.add_visual(read_flac_picture_block(block_stream)?);
+        }
+        // Padding and unknown blocks are skipped by the caller.
+        MetadataBlockType::Padding | MetadataBlockType::Unknown(_) => (),
+    }
+
+    Ok(())
+}
+
+fn read_stream_info_block<B: ReadBytes + FiniteStream>(
     reader: &mut B,
     parser: &mut PacketParser,
 ) -> Result<Track> {
@@ -419,10 +462,10 @@ async fn read_stream_info_block<B: ReadBytes + FiniteStream>(
 
     // Read the stream information block as a boxed slice so that it may be attached as extra
     // data on the codec parameters.
-    let extra_data = reader.read_boxed_slice_exact(reader.byte_len() as usize).await?;
+    let extra_data = reader.read_boxed_slice_exact(reader.byte_len() as usize)?;
 
     // Parse the stream info block.
-    let info = StreamInfo::read(&mut BufReader::new(&extra_data)).await?;
+    let info = StreamInfo::read(&mut BufReader::new(&extra_data))?;
 
     // Populate the codec parameters with the basic audio parameters of the track.
     let mut codec_params = AudioCodecParameters::new();

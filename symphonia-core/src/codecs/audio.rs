@@ -8,7 +8,6 @@
 //! Audio decoder specific support.
 
 use alloc::boxed::Box;
-use async_trait::async_trait;
 use core::fmt;
 
 use crate::audio::sample::SampleFormat;
@@ -250,7 +249,6 @@ impl AudioDecoderOptions {
 
 /// An `AudioDecoder` implements an audio codec's decode algorithm. It consumes `Packet`s and
 /// produces buffers of PCM audio.
-#[async_trait]
 pub trait AudioDecoder: Send + Sync {
     /// Reset the decoder.
     ///
@@ -279,15 +277,15 @@ pub trait AudioDecoder: Send + Sync {
     /// the decoded audio buffer to change. All other errors are unrecoverable.
     ///
     /// Implementors of decoders *must* `clear` the internal audio buffer if an error occurs.
-    async fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
-        self.decode_ref(&packet.as_packet_ref()).await
+    fn decode(&mut self, packet: &Packet) -> Result<GenericAudioBufferRef<'_>> {
+        self.decode_ref(&packet.as_packet_ref())
     }
 
     /// Decodes a `PacketRef` of audio data and returns a generic (untyped) audio buffer reference
     /// containing the decoded audio.
     ///
     /// This method is identical to `decode` but takes a `PacketRef` for zero-copy packet passing.
-    async fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>>;
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>>;
 
     /// Optionally, obtain post-decode information such as the verification status.
     fn finalize(&mut self) -> FinalizeResult;

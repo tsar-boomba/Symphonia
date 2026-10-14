@@ -40,7 +40,7 @@ impl Atom for HvcCAtom {
             data: it.read_boxed_slice_exact(len).await?,
         };
 
-        let hevc_config = HEVCDecoderConfigurationRecord::read(&extra_data.data).await?;
+        let hevc_config = HEVCDecoderConfigurationRecord::read(&extra_data.data)?;
 
         Ok(Self { extra_data, profile: hevc_config.profile, level: hevc_config.level })
     }

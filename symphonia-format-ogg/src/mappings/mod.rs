@@ -8,7 +8,6 @@
 use super::common::SideData;
 
 use alloc::boxed::Box;
-use symphonia_core::async_trait;
 use symphonia_core::errors::Result;
 use symphonia_core::formats::Track;
 use symphonia_core::units::{Duration, Timestamp};
@@ -18,11 +17,10 @@ mod opus;
 mod vorbis;
 
 /// Detect a `Mapper` for a logical stream given the identification packet of the stream.
-pub async fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
-    let mapper = flac::detect(serial, buf)
-        .await?
-        .or(vorbis::detect(serial, buf).await?)
-        .or(opus::detect(serial, buf).await?)
+pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
+    let mapper = flac::detect(serial, buf)?
+        .or(vorbis::detect(serial, buf)?)
+        .or(opus::detect(serial, buf)?)
         .or_else(make_null_mapper);
 
     Ok(mapper)
@@ -42,13 +40,11 @@ pub enum MapResult {
 
 /// A `PacketParser` implements a packet parser that decodes the timestamp and duration for a
 /// packet.
-#[async_trait]
 pub trait PacketParser: Send + Sync {
-    async fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration);
+    fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration);
 }
 
 /// A `Mapper` implements packet-handling for a specific `Codec`.
-#[async_trait]
 pub trait Mapper: Send + Sync {
     /// Gets the name of the mapper.
     fn name(&self) -> &'static str;
@@ -78,7 +74,7 @@ pub trait Mapper: Send + Sync {
     fn make_parser(&self) -> Option<Box<dyn PacketParser>>;
 
     /// Map a packet.
-    async fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult>;
+    fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult>;
 
     /// Returns `true` if the stream can is ready for usage. If the stream is not ready then the
     /// mapper needs to consume more setup packets.
@@ -101,7 +97,6 @@ impl NullMapper {
     }
 }
 
-#[async_trait]
 impl Mapper for NullMapper {
     fn name(&self) -> &'static str {
         "null"
@@ -123,16 +118,15 @@ impl Mapper for NullMapper {
         Some(Box::new(NullPacketParser {}))
     }
 
-    async fn map_packet(&mut self, _: &[u8]) -> Result<MapResult> {
+    fn map_packet(&mut self, _: &[u8]) -> Result<MapResult> {
         Ok(MapResult::Unknown)
     }
 }
 
 struct NullPacketParser {}
 
-#[async_trait]
 impl PacketParser for NullPacketParser {
-    async fn parse_next_packet_dur(&mut self, _: &[u8]) -> (Duration, Duration) {
+    fn parse_next_packet_dur(&mut self, _: &[u8]) -> (Duration, Duration) {
         (Duration::ZERO, Duration::ZERO)
     }
 }

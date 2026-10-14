@@ -279,7 +279,7 @@ async fn decode_only(mut reader: Box<dyn FormatReader>, opts: DecodeOptions) -> 
 
     // Create a decoder for the track.
     let mut decoder =
-        symphonia::default::get_codecs().make_audio_decoder(codec_params, &opts.dec_opts).await?;
+        symphonia::default::get_codecs().make_audio_decoder(codec_params, &opts.dec_opts)?;
 
     // Save the track ID to filter demuxed packets.
     let track_id = track.id;
@@ -292,7 +292,7 @@ async fn decode_only(mut reader: Box<dyn FormatReader>, opts: DecodeOptions) -> 
         }
 
         // Decode the packet into audio samples.
-        match decoder.decode(&packet).await {
+        match decoder.decode(&packet) {
             Ok(_decoded) => continue,
             Err(Error::DecodeError(err)) => warn!("decode error: {err}"),
             Err(err) => return Err(err),
@@ -420,9 +420,8 @@ async fn play_track(
     };
 
     // Create a decoder for the track.
-    let mut decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(codec_params, &opts.decoder_opts)
-        .await?;
+    let mut decoder =
+        symphonia::default::get_codecs().make_audio_decoder(codec_params, &opts.decoder_opts)?;
 
     // Get the selected track's timebase and duration.
     let tb = track.time_base;
@@ -445,7 +444,7 @@ async fn play_track(
         }
 
         // Decode the packet into audio samples.
-        match decoder.decode(&packet).await {
+        match decoder.decode(&packet) {
             Ok(decoded) => {
                 // If the audio output is not open, try to open it.
                 if audio_output.is_none() {

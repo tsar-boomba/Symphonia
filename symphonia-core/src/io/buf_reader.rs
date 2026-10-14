@@ -97,7 +97,7 @@ impl<'a> BufReader<'a> {
 
 impl ReadBytes for BufReader<'_> {
     #[inline(always)]
-    async fn read_byte(&mut self) -> super::Result<u8> {
+    fn read_byte(&mut self) -> super::Result<u8> {
         if self.buf.len() - self.pos < 1 {
             return underrun_error();
         }
@@ -107,7 +107,7 @@ impl ReadBytes for BufReader<'_> {
     }
 
     #[inline(always)]
-    async fn read_double_bytes(&mut self) -> super::Result<[u8; 2]> {
+    fn read_double_bytes(&mut self) -> super::Result<[u8; 2]> {
         if self.buf.len() - self.pos < 2 {
             return underrun_error();
         }
@@ -120,7 +120,7 @@ impl ReadBytes for BufReader<'_> {
     }
 
     #[inline(always)]
-    async fn read_triple_bytes(&mut self) -> super::Result<[u8; 3]> {
+    fn read_triple_bytes(&mut self) -> super::Result<[u8; 3]> {
         if self.buf.len() - self.pos < 3 {
             return underrun_error();
         }
@@ -133,7 +133,7 @@ impl ReadBytes for BufReader<'_> {
     }
 
     #[inline(always)]
-    async fn read_quad_bytes(&mut self) -> super::Result<[u8; 4]> {
+    fn read_quad_bytes(&mut self) -> super::Result<[u8; 4]> {
         if self.buf.len() - self.pos < 4 {
             return underrun_error();
         }
@@ -145,7 +145,7 @@ impl ReadBytes for BufReader<'_> {
         Ok(bytes)
     }
 
-    async fn read_buf(&mut self, buf: &mut [u8]) -> super::Result<usize> {
+    fn read_buf(&mut self, buf: &mut [u8]) -> super::Result<usize> {
         let len = cmp::min(self.buf.len() - self.pos, buf.len());
         buf[..len].copy_from_slice(&self.buf[self.pos..self.pos + len]);
         self.pos += len;
@@ -153,7 +153,7 @@ impl ReadBytes for BufReader<'_> {
         Ok(len)
     }
 
-    async fn read_buf_exact(&mut self, buf: &mut [u8]) -> super::Result<()> {
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> super::Result<()> {
         let len = buf.len();
 
         if self.buf.len() - self.pos < len {
@@ -166,7 +166,7 @@ impl ReadBytes for BufReader<'_> {
         Ok(())
     }
 
-    async fn read_boxed_slice(&mut self, len: usize) -> super::Result<Box<[u8]>> {
+    fn read_boxed_slice(&mut self, len: usize) -> super::Result<Box<[u8]>> {
         let len = cmp::min(self.buf.len() - self.pos, len);
 
         // The boxed slice will always have a length <= the length of the inner buffer. Therefore,
@@ -179,7 +179,7 @@ impl ReadBytes for BufReader<'_> {
         Ok(buf.into_boxed_slice())
     }
 
-    async fn read_boxed_slice_exact(&mut self, len: usize) -> super::Result<Box<[u8]>> {
+    fn read_boxed_slice_exact(&mut self, len: usize) -> super::Result<Box<[u8]>> {
         if self.buf.len() - self.pos < len {
             return underrun_error();
         }
@@ -194,7 +194,7 @@ impl ReadBytes for BufReader<'_> {
         Ok(buf.into_boxed_slice())
     }
 
-    async fn scan_bytes_aligned<'b>(
+    fn scan_bytes_aligned<'b>(
         &mut self,
         pattern: &[u8],
         align: usize,
@@ -206,7 +206,7 @@ impl ReadBytes for BufReader<'_> {
         Ok(&mut buf[..scanned.len()])
     }
 
-    async fn ignore_bytes(&mut self, count: u64) -> super::Result<()> {
+    fn ignore_bytes(&mut self, count: u64) -> super::Result<()> {
         if self.buf.len() - self.pos < count as usize {
             return underrun_error();
         }
@@ -269,12 +269,12 @@ mod tests {
         assert_eq!(reader.pos(), 3);
     }
 
-    #[futures_test::test]
-    async fn verify_scan_bytes_aligned_into_smaller_buffer() {
+    #[test]
+    fn verify_scan_bytes_aligned_into_smaller_buffer() {
         // No match and a destination buffer smaller than the remaining input must not panic.
         let mut reader = BufReader::new(b"ABCDEF");
         let mut buf = [0u8; 3];
-        let scanned = reader.scan_bytes_aligned(&[0x00, 0x00], 2, &mut buf).await.unwrap();
+        let scanned = reader.scan_bytes_aligned(&[0x00, 0x00], 2, &mut buf).unwrap();
         assert_eq!(scanned, b"ABC");
         assert_eq!(reader.pos(), 3);
     }
