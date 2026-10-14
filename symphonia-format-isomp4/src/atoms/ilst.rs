@@ -18,7 +18,6 @@ use symphonia_core::meta::{
 };
 use symphonia_core::meta::{RawValue, Visual};
 use symphonia_core::util::{bits, text};
-use symphonia_metadata::utils::images::try_get_image_info;
 use symphonia_metadata::utils::{id3v1, itunes};
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, ReadAtom, Result, decode_error};
@@ -347,17 +346,15 @@ async fn add_visual_tag<R: ReadAtom>(
     iter: &mut AtomIterator<R>,
     builder: &mut MetadataBuilder,
 ) -> Result<()> {
-    let tag = iter.read_atom::<MetaTagAtom>().await?;
+    let tag = iter.read_atom::<CoverTagAtom>().await?;
 
     // There could be more than one attached image.
-    for value in tag.values {
-        let image_info = try_get_image_info(&value.data);
-
+    for image in tag.images {
         builder.add_visual(Visual {
-            media_type: image_info.as_ref().map(|info| info.media_type.clone()),
+            media_type: image.media_type(),
             usage: Some(StandardVisualKey::FrontCover),
             tags: Default::default(),
-            data: ImageData::Location { pos: value.pos, len: value.data.len() },
+            data: ImageData::Location { pos: image.pos, len: image.len },
         });
     }
 
@@ -552,13 +549,79 @@ async fn add_freeform_tag<R: ReadAtom>(
     Ok(())
 }
 
+/// The location of an image in a cover art tag.
+///
+/// Unlike [`MetaTagDataAtom`], the image data is not read. It is skipped when the atom iterator
+/// moves to the next atom, which seeks past it if the source is seekable.
+struct CoverDataAtom {
+    /// The data type of the image.
+    data_type: DataType,
+    /// The position of the image data.
+    pos: u64,
+    /// The length of the image data in bytes.
+    len: usize,
+}
+
+impl CoverDataAtom {
+    /// Get the media type of the image from its data type, if known.
+    fn media_type(&self) -> Option<String> {
+        match self.data_type {
+            DataType::Jpeg => Some("image/jpeg".into()),
+            DataType::Png => Some("image/png".into()),
+            DataType::Bmp => Some("image/bmp".into()),
+            _ => None,
+        }
+    }
+}
+
+impl Atom for CoverDataAtom {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        // See `MetaTagDataAtom` for the layout of the data atom.
+        let (version, flags) = it.read_extended_header().await?;
+
+        if version != 0 {
+            return decode_error("isomp4 (data): invalid data atom version");
+        }
+
+        let data_type = DataType::from(flags);
+
+        let _country = it.read_u16().await?;
+        let _language = it.read_u16().await?;
+
+        // The image data is the remainder of the atom.
+        let pos = it.pos();
+        let len = it
+            .data_left()?
+            .ok_or(Error::DecodeError("isomp4 (data): expected atom size to be known"))?;
+
+        Ok(CoverDataAtom { data_type, pos, len: len as usize })
+    }
+}
+
+/// A cover art tag atom containing the locations of one or more images.
+struct CoverTagAtom {
+    images: Vec<CoverDataAtom>,
+}
+
+impl Atom for CoverTagAtom {
+    async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
+        let mut images = Vec::new();
+
+        while let Some(header) = it.next_header().await? {
+            if header.atom_type == AtomType::MetaTagData {
+                images.push(it.read_atom::<CoverDataAtom>().await?);
+            }
+        }
+
+        Ok(CoverTagAtom { images })
+    }
+}
+
 /// Metadata tag data atom.
 #[allow(dead_code)]
 pub struct MetaTagDataAtom {
     /// Tag data.
     pub data: Box<[u8]>,
-    /// Tag data location in file (used for images)
-    pub pos: u64,
     /// The data type contained in buf.
     pub data_type: DataType,
 }
@@ -596,7 +659,6 @@ impl Atom for MetaTagDataAtom {
         let _language = it.read_u16().await?;
 
         // The data payload is the remainder of the atom.
-        let pos = it.pos();
         let data = {
             // TODO: Apply the metadata limit.
             let size = it
@@ -606,7 +668,7 @@ impl Atom for MetaTagDataAtom {
             it.read_boxed_slice_exact(size as usize).await?
         };
 
-        Ok(MetaTagDataAtom { data, pos, data_type })
+        Ok(MetaTagDataAtom { data, data_type })
     }
 }
 
