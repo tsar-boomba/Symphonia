@@ -80,7 +80,7 @@ impl<'s> MediaSourceStream<'s> {
     ) -> Self {
         // The buffer length must be a power of 2, and > the maximum read block length.
         assert!(options.buffer_len.count_ones() == 1);
-        assert!(options.buffer_len >= Self::MAX_BLOCK_LEN);
+        assert!(options.buffer_len > Self::MAX_BLOCK_LEN);
 
         MediaSourceStream {
             inner: source,
@@ -578,7 +578,7 @@ impl SeekBuffered for MediaSourceStream<'_> {
 mod tests {
     use alloc::{boxed::Box, vec, vec::Vec};
 
-    use super::{AsyncReadBytes, MediaSourceStream, SeekBuffered};
+    use super::{AsyncReadBytes, MediaSourceStream, MediaSourceStreamOptions, SeekBuffered};
     use crate::io::{Cursor, Read};
 
     /// Generate a random vector of bytes of the specified length using a PRNG.
@@ -718,5 +718,27 @@ mod tests {
         assert_eq!(mss.read_u24().await.unwrap(), 6710386);
         assert_eq!(mss.read_u32().await.unwrap(), 2378776723);
         assert_eq!(mss.read_u64().await.unwrap(), 5170196279331153683);
+    }
+
+    #[futures_test::test]
+    async fn verify_mss_read_with_min_buffer_len() {
+        // The smallest valid buffer length is the next power of two greater than the maximum read
+        // block length. Reading must not lose data when a refill fills an entire block.
+        let data = generate_random_bytes(64 * 1024);
+
+        let opts = MediaSourceStreamOptions { buffer_len: 2 * MediaSourceStream::MAX_BLOCK_LEN };
+        let mut mss = MediaSourceStream::new(Box::new(Cursor::new(data.clone())), opts);
+
+        let mut out = vec![0; data.len()];
+        mss.read_buf_exact(&mut out).await.unwrap();
+
+        assert_eq!(&out[..], &data[..]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn verify_mss_buffer_len_must_exceed_max_block_len() {
+        let opts = MediaSourceStreamOptions { buffer_len: MediaSourceStream::MAX_BLOCK_LEN };
+        let _ = MediaSourceStream::new(Box::new(Cursor::new(vec![0u8; 16])), opts);
     }
 }
