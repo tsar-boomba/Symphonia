@@ -17,14 +17,15 @@ use symphonia_core::formats::util::SeekIndex;
 use symphonia_core::io::ReadBytes;
 use symphonia_core::meta::well_known::METADATA_ID_FLAC;
 use symphonia_core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, MetadataBuilder, MetadataInfo, Size, StandardTag, Tag,
-    Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, ImageData, MetadataBuilder, MetadataInfo,
+    MetadataOptions, StandardTag, StandardVisualKey, Tag, Visual,
 };
 use symphonia_core::units::{TimeBase, Timestamp};
 
+use crate::DEFAULT_MAX_META_SIZE;
 use crate::embedded::vorbis;
 use crate::utils::id3v2::get_visual_key_from_picture_type;
-use crate::utils::images::try_get_image_info;
+use crate::utils::images::DEFAULT_MAX_IMAGE_SIZE;
 
 pub const FLAC_METADATA_INFO: MetadataInfo = MetadataInfo {
     metadata: METADATA_ID_FLAC,
@@ -52,21 +53,46 @@ fn printable_ascii_to_string(bytes: &[u8]) -> Option<String> {
 pub fn read_flac_comment_block<B: ReadBytes>(
     reader: &mut B,
     builder: &mut MetadataBuilder,
+    opts: &MetadataOptions,
 ) -> Result<()> {
     // Discard side data.
     let mut side_data = Default::default();
-    vorbis::read_vorbis_comment(reader, builder, &mut side_data)
+    vorbis::read_vorbis_comment(reader, builder, &mut side_data, opts)
 }
 
-/// Read a picture metadata block.
-pub fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Visual> {
+/// The header of a picture metadata block. This is everything in the block preceding the image
+/// data.
+pub struct FlacPictureHeader {
+    /// The Media Type (MIME Type) of the image.
+    pub media_type: Option<String>,
+    /// The usage of the image.
+    pub usage: Option<StandardVisualKey>,
+    /// Tags associated with the image.
+    pub tags: Vec<Tag>,
+    /// The length of the image data in bytes.
+    pub data_len: usize,
+}
+
+/// Read the header of a picture metadata block, leaving the reader positioned at the start of the
+/// image data.
+///
+/// Returns `None` if the picture should be skipped because it exceeds the provided limits. In this
+/// case, the reader is left at an unspecified position within the block.
+pub fn read_flac_picture_header<B: ReadBytes>(
+    reader: &mut B,
+    opts: &MetadataOptions,
+) -> Result<Option<FlacPictureHeader>> {
     let type_enc = reader.read_be_u32()?;
 
     // Read the Media Type length in bytes.
-    // TODO: Apply a limit.
     let media_type_len = reader.read_be_u32()? as usize;
 
     // Read the Media Type bytes
+    if !opts.limit_tag_bytes.within_limit_w_default(media_type_len as u64, DEFAULT_MAX_META_SIZE) {
+        log::debug!("skipping flac picture: media type too long");
+        return Ok(None);
+    }
+
     let media_type_buf = reader.read_boxed_slice_exact(media_type_len)?;
 
     // Convert Media Type bytes to an ASCII string. Non-printable ASCII characters are invalid.
@@ -81,10 +107,14 @@ pub fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Visual> {
     let mut tags = vec![];
 
     // Read the description length in bytes.
-    // TODO: Apply a limit.
     let desc_len = reader.read_be_u32()? as usize;
 
     // Read the description bytes.
+    if !opts.limit_tag_bytes.within_limit_w_default(desc_len as u64, DEFAULT_MAX_META_SIZE) {
+        log::debug!("skipping flac picture: description too long");
+        return Ok(None);
+    }
+
     let desc_buf = reader.read_boxed_slice_exact(desc_len)?;
 
     // Convert to a UTF-8 string.
@@ -99,11 +129,8 @@ pub fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Visual> {
     }
 
     // Read the width, and height of the visual.
-    let width = reader.read_be_u32()?;
-    let height = reader.read_be_u32()?;
-
-    // If either the width or height is 0, then the size is invalid.
-    let dimensions = if width > 0 && height > 0 { Some(Size { width, height }) } else { None };
+    let _width = reader.read_be_u32()?;
+    let _height = reader.read_be_u32()?;
 
     // Read bits-per-pixel of the visual.
     let _bits_per_pixel = NonZeroU8::new(reader.read_be_u32()? as u8);
@@ -113,24 +140,49 @@ pub fn read_flac_picture_block<B: ReadBytes>(reader: &mut B) -> Result<Visual> {
     let _color_mode = reader.read_be_u32()?;
 
     // Read the image data length in bytes.
-    // TODO: Apply a limit.
     let data_len = reader.read_be_u32()? as usize;
 
-    // Read the image data.
-    let data = reader.read_boxed_slice_exact(data_len)?;
-
-    // Try to detect the image characteristics from the image data. Detect image characteristics
-    // will be preferred over what's been stated in the picture block.
-    let image_info = try_get_image_info(&data);
-
-    Ok(Visual {
-        media_type: image_info.as_ref().map(|info| info.media_type.clone()).or(media_type),
-        dimensions: image_info.as_ref().map(|info| info.dimensions).or(dimensions),
-        color_mode: image_info.as_ref().map(|info| info.color_mode),
+    Ok(Some(FlacPictureHeader {
+        media_type,
         usage: get_visual_key_from_picture_type(type_enc),
         tags,
-        data,
-    })
+        data_len,
+    }))
+}
+
+/// Read a picture metadata block.
+///
+/// If `image_data_location` is `true`, the image data is skipped and its location is returned
+/// instead. Otherwise, the image data is read into memory if it is within the provided limits.
+///
+/// Returns `None` if the picture was skipped because it exceeds the provided limits.
+pub fn read_flac_picture_block<B: ReadBytes>(
+    reader: &mut B,
+    opts: &MetadataOptions,
+    image_data_location: bool,
+) -> Result<Option<Visual>> {
+    let Some(header) = read_flac_picture_header(reader, opts)?
+    else {
+        return Ok(None);
+    };
+
+    let data = if image_data_location {
+        let pos = reader.pos();
+        reader.ignore_bytes(header.data_len as u64)?;
+        ImageData::Location { pos, len: header.data_len }
+    }
+    else if opts
+        .limit_visual_bytes
+        .within_limit_w_default(header.data_len as u64, DEFAULT_MAX_IMAGE_SIZE)
+    {
+        ImageData::Data(Some(reader.read_boxed_slice_exact(header.data_len)?))
+    }
+    else {
+        // The image data is the last field of the block, so it does not need to be skipped.
+        ImageData::Data(None)
+    };
+
+    Ok(Some(Visual { media_type: header.media_type, usage: header.usage, tags: header.tags, data }))
 }
 
 /// Read a seek table metadata block as a seek index.

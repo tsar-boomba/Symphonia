@@ -22,7 +22,7 @@ use symphonia::core::errors::{Error, Result};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::{FromStd, MediaSource, MediaSourceStream, ReadOnlySource};
-use symphonia::core::meta::{MetadataOptions, Visual};
+use symphonia::core::meta::{ImageData, MetadataOptions, Visual};
 use symphonia::core::units::{Duration, Time, Timestamp};
 
 use clap::{Arg, ArgAction, ArgMatches};
@@ -550,8 +550,14 @@ fn dump_visual(visual: &Visual, file_name: &OsStr, index: usize) {
     let mut out_file_name = OsString::from(file_name);
     out_file_name.push(format!("-{index:0>2}{extension}"));
 
-    if let Err(err) = File::create(out_file_name).and_then(|mut file| file.write_all(&visual.data))
-    {
+    // Only visuals that were read into memory can be dumped.
+    let ImageData::Data(Some(data)) = &visual.data
+    else {
+        warn!("not dumping visual since its data was not read");
+        return;
+    };
+
+    if let Err(err) = File::create(out_file_name).and_then(|mut file| file.write_all(data)) {
         warn!("failed to dump visual due to error {err}");
     }
 }

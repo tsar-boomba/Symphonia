@@ -22,6 +22,7 @@ use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{AsyncReadBytes, MediaSourceStream};
 
 use log::{debug, info};
+use symphonia_core::meta::MetadataOptions;
 
 pub enum ByteOrder {
     LittleEndian,
@@ -151,16 +152,22 @@ impl<T: ParseChunkTag> ChunksReader<T> {
 /// Common trait implemented for all chunks that are parsed by a `ChunkParser`.
 pub trait ParseChunk: Sized {
     /// Parse the chunk.
-    async fn parse<B: AsyncReadBytes>(reader: &mut B, tag: [u8; 4], len: u32) -> Result<Self>;
+    async fn parse<B: AsyncReadBytes>(
+        reader: &mut B,
+        tag: [u8; 4],
+        len: u32,
+        opts: &MetadataOptions,
+    ) -> Result<Self>;
 
     /// Parse the chunk and discard any unread data in the chunk.
     async fn parse_and_skip_unread<B: AsyncReadBytes>(
         reader: &mut B,
         tag: [u8; 4],
         len: u32,
+        opts: &MetadataOptions,
     ) -> Result<Self> {
         let pos = reader.pos();
-        let result = Self::parse(reader, tag, len).await;
+        let result = Self::parse(reader, tag, len, opts).await;
 
         // Only discard unread data if parsing was successful.
         if result.is_ok() {
@@ -186,12 +193,20 @@ impl<P: ParseChunk> ChunkParser<P> {
         ChunkParser { tag, len, phantom: PhantomData }
     }
 
-    pub async fn parse<B: AsyncReadBytes>(&self, reader: &mut B) -> Result<P> {
-        P::parse(reader, self.tag, self.len).await
+    pub async fn parse<B: AsyncReadBytes>(
+        &self,
+        reader: &mut B,
+        opts: &MetadataOptions,
+    ) -> Result<P> {
+        P::parse(reader, self.tag, self.len, opts).await
     }
 
-    pub async fn parse_and_skip_unread<B: AsyncReadBytes>(&self, reader: &mut B) -> Result<P> {
-        P::parse_and_skip_unread(reader, self.tag, self.len).await
+    pub async fn parse_and_skip_unread<B: AsyncReadBytes>(
+        &self,
+        reader: &mut B,
+        opts: &MetadataOptions,
+    ) -> Result<P> {
+        P::parse_and_skip_unread(reader, self.tag, self.len, opts).await
     }
 }
 

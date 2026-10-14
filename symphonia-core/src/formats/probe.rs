@@ -442,26 +442,31 @@ impl Probe {
         meta_opts: MetadataOptions,
     ) -> Result<Box<dyn FormatReader + 's>> {
         // Probe for trailing metadata only if the media source stream is seekable, and the length
-        // is known.
-        if mss.is_seekable().await {
-            if let Some(end) = mss.byte_len().await {
-                // The initial position of the stream will be restored after probing for trailing
-                // metadata.
-                let init_pos = mss.pos();
+        // is known. Not really necessary and kills performance for embedded
+        // if mss.is_seekable().await {
+        //     if let Some(end) = mss.byte_len().await {
+        //         // The initial position of the stream will be restored after probing for trailing
+        //         // metadata.
+        //         let init_pos = mss.pos();
 
-                mss = self.probe_trailing(mss, end, &mut fmt_opts, meta_opts).await?;
+        //         mss = self.probe_trailing(mss, end, &mut fmt_opts, meta_opts).await?;
 
-                // Restore position.
-                mss.seek(SeekFrom::Start(init_pos)).await?;
-            }
-        }
+        //         // Restore position.
+        //         mss.seek(SeekFrom::Start(init_pos)).await?;
+        //     }
+        // }
 
         // Loop over all elements in the stream until a container format is found.
         loop {
             match self.next(&mut mss, hint).await? {
                 // If a container format is found, return an instance to it's reader.
                 ProbeMatch::Format { factory, .. } => {
-                    // Instantiate the format reader.
+                    // Instantiate the format reader. Use the provided meta_opts if the user didn't specify any
+                    // for the format reader specifically
+                    if fmt_opts.metadata_options == MetadataOptions::default() {
+                        fmt_opts.metadata_options = meta_opts;
+                    }
+
                     return factory(mss, fmt_opts).await;
                 }
                 // If metadata was found, instantiate the metadata reader, read the metadata, and

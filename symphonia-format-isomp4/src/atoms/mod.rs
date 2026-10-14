@@ -623,6 +623,11 @@ impl<R: ReadAtom> AtomIterator<R> {
         self.reader
     }
 
+    /// Get the absolute position of the inner reader.
+    pub(crate) fn pos(&self) -> u64 {
+        self.reader.pos()
+    }
+
     /// Get an immutable reference to the pending atom.
     pub(crate) fn pending(&self) -> Option<&AtomHeader> {
         self.pending.as_ref()

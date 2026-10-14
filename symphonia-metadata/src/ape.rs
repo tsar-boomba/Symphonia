@@ -24,13 +24,14 @@ use symphonia_core::io::{
 };
 use symphonia_core::meta::well_known::{METADATA_ID_APEV1, METADATA_ID_APEV2};
 use symphonia_core::meta::{
-    MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader, RawTag,
-    RawValue, StandardTag, StandardVisualKey, Tag, Visual,
+    ImageData, MetadataBuffer, MetadataBuilder, MetadataInfo, MetadataOptions, MetadataReader,
+    RawTag, RawValue, StandardTag, StandardVisualKey, Tag, Visual,
 };
 use symphonia_core::util::text;
 use symphonia_core::{Lazy, async_trait, support_metadata};
 
-use crate::utils::images::{ImageInfo, try_get_image_info};
+use crate::DEFAULT_MAX_META_SIZE;
+use crate::utils::images::{DEFAULT_MAX_IMAGE_SIZE, ImageInfo, try_get_image_info};
 use crate::utils::std_tag::*;
 
 static APE_TAG_MAP: Lazy<RawTagParserMap> = Lazy::new(|| {
@@ -247,7 +248,13 @@ struct ApeItem {
 
 impl ApeItem {
     /// Try to read and return an APE tag item.
-    async fn read<B: AsyncReadBytes>(reader: &mut B, header: &ApeHeader) -> Result<ApeItem> {
+    /// Try to read and return an APE tag item. Returns `None` if the item was skipped because it
+    /// exceeds a limit.
+    async fn read<B: AsyncReadBytes>(
+        reader: &mut B,
+        header: &ApeHeader,
+        opts: &MetadataOptions,
+    ) -> Result<Option<ApeItem>> {
         // The length of the value in bytes.
         let len = reader.read_u32().await? as usize;
 
@@ -267,17 +274,29 @@ impl ApeItem {
         // Read the value.
         let value = match (flags >> 1) & 0x3 {
             // UTF-8
-            0 => ApeItemValue::String(read_utf8_value(reader, len).await?),
+            0 if opts.limit_tag_bytes.within_limit_w_default(len as u64, DEFAULT_MAX_META_SIZE) => {
+                Some(ApeItemValue::String(read_utf8_value(reader, len).await?))
+            }
             // Binary
-            1 => ApeItemValue::Binary(reader.read_boxed_slice_exact(len).await?),
+            1 if opts
+                .limit_visual_bytes
+                .within_limit_w_default(len as u64, DEFAULT_MAX_IMAGE_SIZE) =>
+            {
+                Some(ApeItemValue::Binary(reader.read_boxed_slice_exact(len).await?))
+            }
             // Locator
-            2 => ApeItemValue::Locator(read_utf8_value(reader, len).await?),
+            2 => Some(ApeItemValue::Locator(read_utf8_value(reader, len).await?)),
             // Reserved
             3 => return decode_error("ape: reserved item value type"),
-            _ => unreachable!(),
+            // The value exceeds a limit.
+            _ => None,
         };
 
-        Ok(ApeItem { key, value })
+        if value.is_none() {
+            reader.ignore_bytes(len as u64).await?;
+        }
+
+        Ok(value.map(|value| ApeItem { key, value }))
     }
 }
 
@@ -285,15 +304,16 @@ impl ApeItem {
 pub struct ApeReader<'s> {
     reader: MediaSourceStream<'s>,
     version: ApeVersion,
+    opts: MetadataOptions,
 }
 
 impl<'s> ApeReader<'s> {
-    pub async fn try_new(mut mss: MediaSourceStream<'s>, _opts: MetadataOptions) -> Result<Self> {
+    pub async fn try_new(mut mss: MediaSourceStream<'s>, opts: MetadataOptions) -> Result<Self> {
         // Read and verify the APE tag preamble and version.
         let version = ApeHeader::read_identity(&mut mss).await?;
         mss.seek_buffered_rel(-12);
 
-        Ok(Self { reader: mss, version })
+        Ok(Self { reader: mss, version, opts })
     }
 }
 
@@ -389,7 +409,10 @@ impl MetadataReader for ApeReader<'_> {
 
         // Read APE tag items.
         for _ in 0..header.num_items {
-            let item = ApeItem::read(&mut self.reader, &header).await?;
+            let Some(item) = ApeItem::read(&mut self.reader, &header, &self.opts).await?
+            else {
+                continue;
+            };
 
             let key_lower = item.key.to_ascii_lowercase();
 
@@ -405,11 +428,9 @@ impl MetadataReader for ApeReader<'_> {
 
                     builder.add_visual(Visual {
                         media_type: image_info.as_ref().map(|info| info.media_type.clone()),
-                        dimensions: image_info.as_ref().map(|info| info.dimensions),
-                        color_mode: image_info.as_ref().map(|info| info.color_mode),
                         usage: Some(std_key),
                         tags,
-                        data,
+                        data: ImageData::Data(Some(data)), // TODO: consider using Location variant here
                     });
 
                     continue;

@@ -13,8 +13,8 @@ use symphonia::core::Lazy;
 use symphonia::core::codecs::{CodecInfo, CodecParameters, CodecProfile};
 use symphonia::core::formats::{Attachment, FormatReader, MediaInfo, Track, TrackFlags};
 use symphonia::core::meta::{
-    Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, ContentAdvisory, MetadataInfo,
-    MetadataRevision, StandardTag, Tag, Visual,
+    Chapter, ChapterGroup, ChapterGroupItem, ColorMode, ColorModel, ContentAdvisory, ImageData,
+    MetadataInfo, MetadataRevision, StandardTag, Tag, Visual,
 };
 use symphonia::core::units::{Duration, Time, TimeBase, Timestamp};
 use symphonia::core::util::text;
@@ -405,35 +405,16 @@ pub fn print_visuals(info: &MetadataInfo, visuals: &[Visual]) {
                     if visual.usage.is_some() { Bullet::None } else { Bullet::Num(idx + 1) };
                 print_pair("Media Type:", media_type, bullet, 1);
             }
-            if let Some(dimensions) = visual.dimensions {
-                print_pair(
-                    "Dimensions:",
-                    &format!("{} x {} px", dimensions.width, dimensions.height),
-                    Bullet::None,
-                    1,
-                );
-            }
-
-            match visual.color_mode {
-                Some(ColorMode::Direct(model)) => {
-                    print_pair("Color Mode:", &"Direct", Bullet::None, 1);
-                    print_pair("Color Model:", &fmt_color_model(model), Bullet::None, 1);
-                    print_pair("Bits/Pixel:", &model.bits_per_pixel(), Bullet::None, 1);
+            match &visual.data {
+                ImageData::Location { pos, len } => {
+                    print_pair("Size:", &fmt_size(*len), Bullet::None, 1);
+                    print_pair("Position:", &format!("{pos}"), Bullet::None, 1);
                 }
-                Some(ColorMode::Indexed(palette)) => {
-                    print_pair("Color Mode:", &"Indexed", Bullet::None, 1);
-                    print_pair("Bits/Pixel:", &palette.bits_per_pixel, Bullet::None, 1);
-                    print_pair(
-                        "Color Model:",
-                        &fmt_color_model(palette.color_model),
-                        Bullet::None,
-                        1,
-                    );
+                ImageData::Data(Some(data)) => {
+                    print_pair("Size:", &fmt_size(data.len()), Bullet::None, 1)
                 }
-                _ => (),
+                ImageData::Data(None) => print_pair("Size:", &"Skipped", Bullet::None, 1),
             }
-
-            print_pair("Size:", &fmt_size(visual.data.len()), Bullet::None, 1);
 
             // Print out tags similar to how regular tags are printed.
             if !visual.tags.is_empty() {

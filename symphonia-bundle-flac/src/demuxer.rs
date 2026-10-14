@@ -24,7 +24,10 @@ use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Sc
 use symphonia_core::formats::util::{SeekIndex, SeekSearchResult};
 use symphonia_core::formats::well_known::FORMAT_ID_FLAC;
 use symphonia_core::io::*;
-use symphonia_core::meta::{Metadata, MetadataBuilder, MetadataLog};
+use symphonia_core::meta::{
+    ImageData, Metadata, MetadataBuilder, MetadataLog, MetadataOptions, Visual,
+};
+use symphonia_metadata::DEFAULT_MAX_META_SIZE;
 use symphonia_metadata::embedded::flac::*;
 
 use log::{debug, info};
@@ -103,6 +106,28 @@ impl<'s> FlacReader<'s> {
                     reader.ignore_bytes(u64::from(header.block_len)).await?;
                     info!("ignoring {} bytes of block width id={}.", header.block_len, id);
                 }
+                // Picture blocks may contain large images. Only read the picture header into memory,
+                // and record the location of the image data instead of reading it.
+                MetadataBlockType::Picture => {
+                    let block_end = reader.pos() + u64::from(header.block_len);
+
+                    if let Some(visual) = read_picture_block_from_stream(
+                        &mut reader,
+                        header.block_len,
+                        &opts.metadata_options,
+                    )
+                    .await?
+                    {
+                        metadata_builder.add_visual(visual);
+                    }
+
+                    // Skip the image data, and any other unread data in the block.
+                    let pos = reader.pos();
+
+                    if pos < block_end {
+                        reader.ignore_bytes(block_end - pos).await?;
+                    }
+                }
                 ref block_type => {
                     // Ensure the block length is correct for a stream information block before
                     // allocating a buffer for it.
@@ -124,6 +149,7 @@ impl<'s> FlacReader<'s> {
                     read_metadata_block(
                         &mut block_stream,
                         &header,
+                        &opts.metadata_options,
                         &mut parser,
                         &mut track,
                         &mut attachments,
@@ -386,11 +412,81 @@ impl FormatReader for FlacReader<'_> {
 }
 
 /// Reads a StreamInfo block and populates the reader with stream information.
+/// Read a picture block from the stream without reading the image data into memory.
+///
+/// Only the picture header (all fields preceding the image data) is read into memory. The returned
+/// visual records the location of the image data in the stream. The stream is left positioned at
+/// the start of the image data, or at an unspecified position within the block if the picture was
+/// skipped.
+async fn read_picture_block_from_stream(
+    reader: &mut MediaSourceStream<'_>,
+    block_len: u32,
+    opts: &MetadataOptions,
+) -> Result<Option<Visual>> {
+    let block_len = block_len as usize;
+
+    /// Read `len` more bytes of the picture header from the stream into `head`.
+    async fn extend(
+        reader: &mut MediaSourceStream<'_>,
+        head: &mut Vec<u8>,
+        len: usize,
+        block_len: usize,
+    ) -> Result<()> {
+        if head.len() + len > block_len {
+            return decode_error("flac: picture block header exceeds block length");
+        }
+        let start = head.len();
+        head.resize(start + len, 0);
+        reader.read_buf_exact(&mut head[start..]).await?;
+        Ok(())
+    }
+
+    /// Get the big-endian u32 ending at the end of `head`.
+    fn last_be_u32(head: &[u8]) -> usize {
+        let bytes = &head[head.len() - 4..];
+        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize
+    }
+
+    // Picture type, and media type length.
+    let mut head = Vec::new();
+    extend(reader, &mut head, 8, block_len).await?;
+
+    // Media type, and description length.
+    let media_type_len = last_be_u32(&head);
+    if !opts.limit_tag_bytes.within_limit_w_default(media_type_len as u64, DEFAULT_MAX_META_SIZE) {
+        return Ok(None);
+    }
+    extend(reader, &mut head, media_type_len + 4, block_len).await?;
+
+    // Description, width, height, colour depth, number of indexed colours, and data length.
+    let desc_len = last_be_u32(&head);
+    if !opts.limit_tag_bytes.within_limit_w_default(desc_len as u64, DEFAULT_MAX_META_SIZE) {
+        return Ok(None);
+    }
+    extend(reader, &mut head, desc_len + 20, block_len).await?;
+
+    // The image data starts at the current position.
+    let data_pos = reader.pos();
+
+    let Some(header) = read_flac_picture_header(&mut BufReader::new(&head), opts)?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(Visual {
+        media_type: header.media_type,
+        usage: header.usage,
+        tags: header.tags,
+        data: ImageData::Location { pos: data_pos, len: header.data_len },
+    }))
+}
+
 /// Parse an in-memory metadata block.
 #[allow(clippy::too_many_arguments)]
 fn read_metadata_block<B: ReadBytes + FiniteStream>(
     block_stream: &mut B,
     header: &MetadataBlockHeader,
+    meta_opts: &MetadataOptions,
     parser: &mut PacketParser,
     track: &mut Option<Track>,
     attachments: &mut Vec<Attachment>,
@@ -425,7 +521,7 @@ fn read_metadata_block<B: ReadBytes + FiniteStream>(
         }
         // VorbisComment blocks are parsed into Tags.
         MetadataBlockType::VorbisComment => {
-            read_flac_comment_block(block_stream, metadata_builder)?;
+            read_flac_comment_block(block_stream, metadata_builder, meta_opts)?;
         }
         // Cuesheet blocks are parsed into Cues.
         MetadataBlockType::Cuesheet => {
@@ -439,12 +535,9 @@ fn read_metadata_block<B: ReadBytes + FiniteStream>(
                 return decode_error("flac: cuesheet block before stream info");
             }
         }
-        // Picture blocks are read as Visuals.
-        MetadataBlockType::Picture => {
-            metadata_builder.add_visual(read_flac_picture_block(block_stream)?);
+        // Picture, padding, and unknown blocks are handled by the caller.
+        MetadataBlockType::Picture | MetadataBlockType::Padding | MetadataBlockType::Unknown(_) => {
         }
-        // Padding and unknown blocks are skipped by the caller.
-        MetadataBlockType::Padding | MetadataBlockType::Unknown(_) => (),
     }
 
     Ok(())

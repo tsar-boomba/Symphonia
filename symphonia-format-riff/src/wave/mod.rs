@@ -113,7 +113,7 @@ impl<'s> WavReader<'s> {
 
             match chunk {
                 RiffWaveChunks::Format(fmt) => {
-                    let format = fmt.parse(&mut mss).await?;
+                    let format = fmt.parse(&mut mss, &opts.metadata_options).await?;
 
                     // The Format chunk contains the block_align field and possible additional
                     // information to handle packetization and seeking.
@@ -128,20 +128,22 @@ impl<'s> WavReader<'s> {
                     packet_info = Some(info);
                 }
                 RiffWaveChunks::Fact(fct) => {
-                    fact = Some(fct.parse(&mut mss).await?);
+                    fact = Some(fct.parse(&mut mss, &opts.metadata_options).await?);
                 }
                 RiffWaveChunks::List(lst) => {
-                    let list = lst.parse(&mut mss).await?;
+                    let list = lst.parse(&mut mss, &opts.metadata_options).await?;
 
                     // Riff Lists can have many different forms, but WavReader only supports Info
                     // lists.
                     match &list.form {
-                        b"INFO" => metadata.push(read_info_chunk(&mut mss, list.len).await?),
+                        b"INFO" => metadata.push(
+                            read_info_chunk(&mut mss, list.len, &opts.metadata_options).await?,
+                        ),
                         _ => list.skip(&mut mss).await?,
                     }
                 }
                 RiffWaveChunks::Data(dat) => {
-                    let data = dat.parse(&mut mss).await?;
+                    let data = dat.parse(&mut mss, &opts.metadata_options).await?;
 
                     // Record the bounds of the data chunk.
                     let data_start_pos = mss.pos();

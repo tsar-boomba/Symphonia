@@ -20,7 +20,9 @@ use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{self, BufReader, FiniteStream, ReadBytes};
 use symphonia_core::meta::RawTag;
 use symphonia_core::meta::RawTagSubField;
-use symphonia_core::meta::{Chapter, RawValue, StandardTag, Tag, Visual};
+use symphonia_core::meta::{
+    Chapter, ImageData, MetadataOptions, RawValue, StandardTag, Tag, Visual,
+};
 use symphonia_core::units::Time;
 use symphonia_core::util::text;
 
@@ -48,6 +50,8 @@ pub struct FrameInfo<'a> {
     major_version: u8,
     /// An optional raw tag parser to be applied if the frame is generic.
     raw_tag_parser: Option<RawTagParser>,
+    /// The metadata options in effect.
+    opts: &'a MetadataOptions,
 }
 
 impl<'a> FrameInfo<'a> {
@@ -55,11 +59,17 @@ impl<'a> FrameInfo<'a> {
     /// raw tag parser.
     ///
     /// Panics if the frame ID is invalid.
-    pub fn new(id: &'a [u8], major_version: u8, raw_tag_parser: Option<RawTagParser>) -> Self {
+    pub fn new(
+        id: &'a [u8],
+        major_version: u8,
+        raw_tag_parser: Option<RawTagParser>,
+        opts: &'a MetadataOptions,
+    ) -> Self {
         FrameInfo {
             id: core::str::from_utf8(id).expect("validated frame id bytes"),
             major_version,
             raw_tag_parser,
+            opts,
         }
     }
 }
@@ -341,12 +351,10 @@ pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
     let image_info = try_get_image_info(&data);
 
     let visual = Visual {
-        media_type: image_info.as_ref().map(|info| info.media_type.clone()).or(media_type),
-        dimensions: image_info.as_ref().map(|info| info.dimensions),
-        color_mode: image_info.as_ref().map(|info| info.color_mode),
+        media_type: image_info.map(|info| info.media_type).or(media_type),
         usage,
         tags,
-        data,
+        data: ImageData::Data(Some(data)),
     };
 
     Ok(FrameResult::Visual(visual))
@@ -416,9 +424,9 @@ pub fn read_chap_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 
     while reader.bytes_available() >= min_frame_size(frame.major_version) {
         let frame = match frame.major_version {
-            2 => read_id3v2p2_frame(&mut reader),
-            3 => read_id3v2p3_frame(&mut reader),
-            4 => read_id3v2p4_frame(&mut reader),
+            2 => read_id3v2p2_frame(&mut reader, frame.opts),
+            3 => read_id3v2p3_frame(&mut reader, frame.opts),
+            4 => read_id3v2p4_frame(&mut reader, frame.opts),
             _ => break,
         }?;
 
@@ -589,9 +597,9 @@ pub fn read_ctoc_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
 
     while reader.bytes_available() >= min_frame_size(frame.major_version) {
         let frame = match frame.major_version {
-            2 => read_id3v2p2_frame(&mut reader),
-            3 => read_id3v2p3_frame(&mut reader),
-            4 => read_id3v2p4_frame(&mut reader),
+            2 => read_id3v2p2_frame(&mut reader, frame.opts),
+            3 => read_id3v2p3_frame(&mut reader, frame.opts),
+            4 => read_id3v2p4_frame(&mut reader, frame.opts),
             _ => break,
         }?;
 

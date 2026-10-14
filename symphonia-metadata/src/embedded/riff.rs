@@ -97,15 +97,18 @@ mod id3 {
 
     use symphonia_core::errors::Result;
     use symphonia_core::io::AsyncReadBytes;
-    use symphonia_core::meta::{MetadataBuilder, MetadataRevision, MetadataSideData};
+    use symphonia_core::meta::{
+        MetadataBuilder, MetadataOptions, MetadataRevision, MetadataSideData,
+    };
 
     /// Read a RIFF ID3 chunk payload.
     pub async fn read_riff_id3_chunk<B: AsyncReadBytes>(
         reader: &mut B,
         side_data: &mut Vec<MetadataSideData>,
+        opts: &MetadataOptions,
     ) -> Result<MetadataRevision> {
         let mut builder = MetadataBuilder::new(crate::id3v2::ID3V2_METADATA_INFO);
-        crate::id3v2::read_id3v2(reader, &mut builder, side_data).await?;
+        crate::id3v2::read_id3v2(reader, &mut builder, side_data, opts).await?;
         Ok(builder.build())
     }
 }

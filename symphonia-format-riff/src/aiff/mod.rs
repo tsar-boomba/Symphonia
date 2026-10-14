@@ -119,7 +119,9 @@ impl<'s> AiffReader<'s> {
                     }
 
                     comm = match riff_form {
-                        AIFF_RIFF_FORM => Some(chunk.parse_aiff(&mut mss).await?),
+                        AIFF_RIFF_FORM => {
+                            Some(chunk.parse_aiff(&mut mss, &opts.metadata_options).await?)
+                        }
                         AIFC_RIFF_FORM => Some(chunk.parse_aifc(&mut mss).await?),
                         _ => unreachable!(),
                     };
@@ -130,7 +132,7 @@ impl<'s> AiffReader<'s> {
                         return decode_error("aiff: multiple sound data chunks");
                     }
 
-                    ssnd = Some(chunk.parse(&mut mss).await?);
+                    ssnd = Some(chunk.parse(&mut mss, &opts.metadata_options).await?);
 
                     // If the media source is not seekable, then it is not possible to scan for
                     // chunks past the sound data chunk.
@@ -154,7 +156,7 @@ impl<'s> AiffReader<'s> {
                     }
 
                     // Saver makers chunk for post-processing.
-                    mark = Some(chunk.parse(&mut mss).await?)
+                    mark = Some(chunk.parse(&mut mss, &opts.metadata_options).await?)
                 }
                 RiffAiffChunks::Comments(chunk) => {
                     // Only one comments chunk is allowed.
@@ -163,11 +165,11 @@ impl<'s> AiffReader<'s> {
                     }
 
                     // Save comments chunk for post-processing.
-                    comt = Some(chunk.parse_and_skip_unread(&mut mss).await?);
+                    comt = Some(chunk.parse(&mut mss, &opts.metadata_options).await?);
                 }
                 RiffAiffChunks::AppSpecific(chunk) => {
                     // Add application-specific data.
-                    let appl = chunk.parse_and_skip_unread(&mut mss).await?;
+                    let appl = chunk.parse(&mut mss, &opts.metadata_options).await?;
 
                     attachments.push(Attachment::VendorData(VendorDataAttachment {
                         ident: appl.application,
@@ -176,11 +178,11 @@ impl<'s> AiffReader<'s> {
                 }
                 RiffAiffChunks::Text(chunk) => {
                     // Add tag.
-                    let text = chunk.parse_and_skip_unread(&mut mss).await?;
+                    let text = chunk.parse(&mut mss, &opts.metadata_options).await?;
                     builder.add_tag(text.tag);
                 }
                 RiffAiffChunks::Id3(chunk) => {
-                    id3 = Some(chunk.parse_and_skip_unread(&mut mss).await?)
+                    id3 = Some(chunk.parse(&mut mss, &opts.metadata_options).await?)
                 }
             }
         }

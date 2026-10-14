@@ -17,6 +17,9 @@ use symphonia_core::meta::{ColorMode, ColorModel, ColorPaletteInfo, Size};
 use log::debug;
 
 /// Image information.
+/// The default maximum size, in bytes, of an image that will be read into memory.
+pub const DEFAULT_MAX_IMAGE_SIZE: u64 = 500 * 1024;
+
 #[derive(Clone, Debug)]
 pub struct ImageInfo {
     /// The Media Type (MIME Type) of the image format.

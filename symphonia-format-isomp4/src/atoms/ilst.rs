@@ -13,8 +13,8 @@ use alloc::vec::Vec;
 use symphonia_core::errors::Error;
 use symphonia_core::meta::well_known::METADATA_ID_ISOMP4;
 use symphonia_core::meta::{
-    ContentAdvisory, MetadataBuilder, MetadataInfo, MetadataRevision, RawTag, StandardTag,
-    StandardVisualKey, Tag,
+    ContentAdvisory, ImageData, MetadataBuilder, MetadataInfo, MetadataRevision, RawTag,
+    StandardTag, StandardVisualKey, Tag,
 };
 use symphonia_core::meta::{RawValue, Visual};
 use symphonia_core::util::{bits, text};
@@ -355,11 +355,9 @@ async fn add_visual_tag<R: ReadAtom>(
 
         builder.add_visual(Visual {
             media_type: image_info.as_ref().map(|info| info.media_type.clone()),
-            dimensions: image_info.as_ref().map(|info| info.dimensions),
-            color_mode: image_info.as_ref().map(|info| info.color_mode),
             usage: Some(StandardVisualKey::FrontCover),
             tags: Default::default(),
-            data: value.data,
+            data: ImageData::Location { pos: value.pos, len: value.data.len() },
         });
     }
 
@@ -559,6 +557,8 @@ async fn add_freeform_tag<R: ReadAtom>(
 pub struct MetaTagDataAtom {
     /// Tag data.
     pub data: Box<[u8]>,
+    /// Tag data location in file (used for images)
+    pub pos: u64,
     /// The data type contained in buf.
     pub data_type: DataType,
 }
@@ -596,6 +596,7 @@ impl Atom for MetaTagDataAtom {
         let _language = it.read_u16().await?;
 
         // The data payload is the remainder of the atom.
+        let pos = it.pos();
         let data = {
             // TODO: Apply the metadata limit.
             let size = it
@@ -605,7 +606,7 @@ impl Atom for MetaTagDataAtom {
             it.read_boxed_slice_exact(size as usize).await?
         };
 
-        Ok(MetaTagDataAtom { data, data_type })
+        Ok(MetaTagDataAtom { data, pos, data_type })
     }
 }
 

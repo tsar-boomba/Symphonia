@@ -106,7 +106,7 @@ pub struct MetadataInfo {
 
 /// A common set of options that all metadata readers use.
 #[non_exhaustive]
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MetadataOptions {
     /// The maximum size in bytes that a tag may occupy in memory once decoded. Tags exceeding this
     /// limit will be skipped by the demuxer. Take note that tags in memory are stored as UTF-8 and
@@ -643,27 +643,37 @@ pub enum ColorMode {
     Indexed(ColorPaletteInfo),
 }
 
+#[derive(Clone)]
+pub enum ImageData {
+    Location {
+        pos: u64,
+        len: usize,
+    },
+    /// Will be `None` when the user requested to skip image data
+    Data(Option<Box<[u8]>>),
+}
+
 /// A `Visual` is any 2 dimensional graphic.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Visual {
     /// The Media Type (MIME Type) used to encode the `Visual`.
     pub media_type: Option<String>,
-    /// The dimensions of the `Visual`.
-    ///
-    /// Note: This value may not be accurate as it comes from metadata, not the embedded graphic
-    /// itself. Consider it only a hint.
-    pub dimensions: Option<Size>,
-    /// The color mode of the `Visual`.
-    ///
-    /// Note: This value may not be accurate as it comes from metadata, not the embedded graphic
-    /// itself. Consider it only a hint.
-    pub color_mode: Option<ColorMode>,
     /// The usage and/or content of the `Visual`.
     pub usage: Option<StandardVisualKey>,
     /// Any tags associated with the `Visual`.
     pub tags: Vec<Tag>,
-    /// The data of the `Visual`, encoded as per `media_type`.
-    pub data: Box<[u8]>,
+    /// Image data found in the file. The position if posible, otherwise the data allocated on the heap.
+    pub data: ImageData,
+}
+
+impl core::fmt::Debug for Visual {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Visual")
+            .field("media_type", &self.media_type)
+            .field("usage", &self.usage)
+            .field("tags", &self.tags)
+            .finish()
+    }
 }
 
 /// A group of chapters and/or other chapter groups.
