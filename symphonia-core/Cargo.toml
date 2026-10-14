@@ -14,7 +14,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-default = ["opt-cmsis-dsp"] # TODO: remove
+default = []
 
 std = ["embedded-io/std", "embedded-io-adapters/std", "once_cell/std"]
 defmt = ["embedded-io/defmt"]
