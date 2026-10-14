@@ -11,7 +11,6 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 
 use alloc::vec::Vec;
-use embassy_time::Instant;
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
 use symphonia_core::errors::{decode_error, reset_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
@@ -31,6 +30,35 @@ use super::physical;
 
 const OGG_FORMAT_INFO: FormatInfo =
     FormatInfo { format: FORMAT_ID_OGG, short_name: "ogg", long_name: "Ogg" };
+
+/// Optional profiling of the stream setup, enabled with the `embassy-time` feature.
+mod profile {
+    /// A timer measuring elapsed time in milliseconds. Always reports 0 if profiling is disabled.
+    pub struct Timer {
+        #[cfg(feature = "embassy-time")]
+        start: embassy_time::Instant,
+    }
+
+    impl Timer {
+        pub fn start() -> Self {
+            Timer {
+                #[cfg(feature = "embassy-time")]
+                start: embassy_time::Instant::now(),
+            }
+        }
+
+        pub fn elapsed_ms(&self) -> u64 {
+            #[cfg(feature = "embassy-time")]
+            {
+                self.start.elapsed().as_millis()
+            }
+            #[cfg(not(feature = "embassy-time"))]
+            {
+                0
+            }
+        }
+    }
+}
 
 /// OGG demultiplexer.
 ///
@@ -349,7 +377,7 @@ impl<'s> OggReader<'s> {
 
         info!("starting new physical stream");
         debug!("Header: {:?}", self.pages.page().header);
-        let t0 = Instant::now();
+        let t0 = profile::Timer::start();
 
         // The first page of each logical stream, marked with the first page flag, must contain the
         // identification packet for the encapsulated codec bitstream. The first page for each
@@ -382,14 +410,14 @@ impl<'s> OggReader<'s> {
             // Read the next page.
             self.pages.try_next_page(&mut self.reader).await?;
         }
-        info!("header pages: {}ms", (Instant::now() - t0).as_millis());
+        info!("header pages: {}ms", t0.elapsed_ms());
 
         // Each logical stream may contain additional header packets after the identification packet
         // that contains format-relevant information such as setup and metadata. These packets,
         // for all logical streams, should be grouped together after the identification packets.
         // Reading pages consumes these headers and returns any relevant data as side data. Read
         // pages until all headers are consumed and the first bitstream packets are buffered.
-        let t1 = Instant::now();
+        let t1 = profile::Timer::start();
         let mut setup_iters = 0;
         loop {
             setup_iters += 1;
@@ -425,10 +453,10 @@ impl<'s> OggReader<'s> {
 
             self.pages.try_next_page(&mut self.reader).await?;
         }
-        info!("setup pages: {}ms ({} iters)", (Instant::now() - t1).as_millis(), setup_iters);
+        info!("setup pages: {}ms ({} iters)", t1.elapsed_ms(), setup_iters);
 
         // Probe the logical streams for their start and end pages.
-        let t2 = Instant::now();
+        let t2 = profile::Timer::start();
         physical::probe_stream_start(
             &mut self.reader,
             &mut self.pages,
@@ -436,7 +464,7 @@ impl<'s> OggReader<'s> {
             byte_range_start,
         )
         .await?;
-        info!("probe stream start: {}ms", (Instant::now() - t2).as_millis());
+        info!("probe stream start: {}ms", t2.elapsed_ms());
 
         let mut byte_range_end = Default::default();
 
@@ -444,11 +472,11 @@ impl<'s> OggReader<'s> {
         // logical stream, and the length in bytes of the physical stream.
         if self.reader.is_seekable().await {
             if let Some(total_len) = self.reader.byte_len().await {
-                let t3 = Instant::now();
+                let t3 = profile::Timer::start();
                 byte_range_end =
                     physical::probe_stream_end_fast(&mut self.reader, &mut streams, total_len)
                         .await?;
-                info!("probe_end: {}ms", (Instant::now() - t3).as_millis());
+                info!("probe_end: {}ms", t3.elapsed_ms());
             }
         }
 
