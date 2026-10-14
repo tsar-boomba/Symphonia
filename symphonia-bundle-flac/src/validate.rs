@@ -55,13 +55,17 @@ impl Validator {
             self.buf.resize(buf_len, 0u8);
         }
 
+        // The decoder shifts all samples up to occupy the full 32 bits of the sample. Shift them
+        // back down to the encoded bit-width before hashing.
+        let shift = 32 - bps;
+
         // Populate the hash buffer with samples truncated to the correct width. A &[u8] slice of
         // all the samples in hash buffer will be returned.
         let buf_slice = match bytes_per_sample {
-            1 => copy_as_i8(buf, &mut self.buf, n_channels, n_frames),
-            2 => copy_as_i16(buf, &mut self.buf, n_channels, n_frames),
-            3 => copy_as_i24(buf, &mut self.buf, n_channels, n_frames),
-            4 => copy_as_i32(buf, &mut self.buf, n_channels, n_frames),
+            1 => copy_as_i8(buf, &mut self.buf, n_channels, n_frames, shift),
+            2 => copy_as_i16(buf, &mut self.buf, n_channels, n_frames, shift),
+            3 => copy_as_i24(buf, &mut self.buf, n_channels, n_frames, shift),
+            4 => copy_as_i32(buf, &mut self.buf, n_channels, n_frames, shift),
             _ => unreachable!(),
         };
 
@@ -80,6 +84,7 @@ fn copy_as_i24<'a>(
     buf: &'a mut [u8],
     n_channels: usize,
     n_frames: usize,
+    shift: u32,
 ) -> &'a [u8] {
     const SIZE_OF_I24: usize = 24 / 8;
 
@@ -90,7 +95,7 @@ fn copy_as_i24<'a>(
             .step_by(n_channels)
             .zip(samples.plane(ch).expect("ch is bounded to n_channels"))
         {
-            out.copy_from_slice(&sample.to_le_bytes()[0..SIZE_OF_I24]);
+            out.copy_from_slice(&(sample >> shift).to_le_bytes()[0..SIZE_OF_I24]);
         }
     }
 
@@ -104,6 +109,7 @@ macro_rules! copy_as {
             buf: &'a mut [u8],
             n_channels: usize,
             n_frames: usize,
+            shift: u32,
         ) -> &'a [u8] {
             for ch in 0..n_channels {
                 for (out, sample) in buf
@@ -112,7 +118,7 @@ macro_rules! copy_as {
                     .step_by(n_channels)
                     .zip(samples.plane(ch).expect("ch is bounded to n_channels"))
                 {
-                    out.copy_from_slice(&(*sample as $type).to_le_bytes());
+                    out.copy_from_slice(&((*sample >> shift) as $type).to_le_bytes());
                 }
             }
 
