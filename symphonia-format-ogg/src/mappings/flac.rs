@@ -277,6 +277,18 @@ struct FlacMapper {
 }
 
 impl Mapper for FlacMapper {
+    fn is_skippable_metadata_packet(&self, packet_prefix: &[u8]) -> bool {
+        // Metadata block packets start with the block header. Only Vorbis comment and picture
+        // blocks may be skipped. Audio packets start with 0xff.
+        match packet_prefix.first() {
+            Some(&byte) if byte != 0xff => {
+                // Block types 4 and 6 are the Vorbis comment and picture blocks, respectively.
+                matches!(byte & 0x7f, 4 | 6)
+            }
+            _ => false,
+        }
+    }
+
     fn name(&self) -> &'static str {
         "flac"
     }

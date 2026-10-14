@@ -153,6 +153,11 @@ struct VorbisMapper {
 }
 
 impl Mapper for VorbisMapper {
+    fn is_skippable_metadata_packet(&self, packet_prefix: &[u8]) -> bool {
+        // Only the comment header (packet type 3) may be skipped.
+        packet_prefix.starts_with(b"\x03vorbis")
+    }
+
     fn name(&self) -> &'static str {
         "vorbis"
     }

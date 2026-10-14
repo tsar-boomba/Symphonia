@@ -90,6 +90,13 @@ pub trait Mapper: Send + Sync {
     fn force_headers_done(&mut self) {
         // Default: no-op
     }
+
+    /// Returns `true` if a packet starting with the provided bytes is a metadata packet that may
+    /// be skipped (e.g., because it contains large images). The provided bytes may only be a
+    /// prefix of the complete packet.
+    fn is_skippable_metadata_packet(&self, _packet_prefix: &[u8]) -> bool {
+        false
+    }
 }
 
 fn make_null_mapper() -> Option<Box<dyn Mapper>> {

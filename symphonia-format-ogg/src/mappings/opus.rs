@@ -137,6 +137,10 @@ struct OpusMapper {
 }
 
 impl Mapper for OpusMapper {
+    fn is_skippable_metadata_packet(&self, packet_prefix: &[u8]) -> bool {
+        packet_prefix.starts_with(b"OpusTags")
+    }
+
     fn name(&self) -> &'static str {
         "opus"
     }

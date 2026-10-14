@@ -245,7 +245,8 @@ impl LogicalStream {
             log::info!("skipping partial packet!");
             match self.mapper.map_packet(&partial_packet, opts) {
                 Ok(MapResult::StreamData { .. }) => {
-                    unreachable!("Should only discard large metadata, not data!");
+                    // Only metadata packets are abandoned, so this should not happen.
+                    warn!("abandoned partial packet was not a metadata packet");
                 }
                 Ok(MapResult::SideData { data }) => side_data.push(data),
                 Err(e) => {
@@ -663,8 +664,15 @@ impl LogicalStream {
         const INIT_MAX_PACKET_LEN: usize = 4 * 1020;
         let new_part_len = self.part_len + buf.len();
 
-        // If user wants to ignore all visuals, we definitely need to skip reading the whole partial packet
-        if opts.limit_visual_bytes == Limit::Maximum(0) && new_part_len > INIT_MAX_PACKET_LEN {
+        // The start of the packet being assembled.
+        let packet_prefix = if self.part_len > 0 { &self.part_buf[..self.part_len] } else { buf };
+
+        // If user wants to ignore all visuals, we definitely need to skip reading the whole partial
+        // packet. Only metadata packets may be skipped since audio and setup packets are required.
+        if opts.limit_visual_bytes == Limit::Maximum(0)
+            && new_part_len > INIT_MAX_PACKET_LEN
+            && self.mapper.is_skippable_metadata_packet(packet_prefix)
+        {
             // Too large, discard and signal the mapper to move on
             let partial = self.get_partial_assembled(buf);
             self.part_len = 0;
