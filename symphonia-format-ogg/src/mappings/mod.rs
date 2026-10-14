@@ -10,6 +10,7 @@ use super::common::SideData;
 use alloc::boxed::Box;
 use symphonia_core::errors::Result;
 use symphonia_core::formats::Track;
+use symphonia_core::meta::MetadataOptions;
 use symphonia_core::units::{Duration, Timestamp};
 
 mod flac;
@@ -18,9 +19,9 @@ mod vorbis;
 
 /// Detect a `Mapper` for a logical stream given the identification packet of the stream.
 pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
-    let mapper = flac::detect(serial, buf)?
+    let mapper = opus::detect(serial, buf)?
+        .or(flac::detect(serial, buf)?)
         .or(vorbis::detect(serial, buf)?)
-        .or(opus::detect(serial, buf)?)
         .or_else(make_null_mapper);
 
     Ok(mapper)
@@ -74,12 +75,20 @@ pub trait Mapper: Send + Sync {
     fn make_parser(&self) -> Option<Box<dyn PacketParser>>;
 
     /// Map a packet.
-    fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult>;
+    fn map_packet(&mut self, packet: &[u8], opts: &MetadataOptions) -> Result<MapResult>;
 
     /// Returns `true` if the stream can is ready for usage. If the stream is not ready then the
     /// mapper needs to consume more setup packets.
     fn is_ready(&self) -> bool {
         true
+    }
+
+    fn headers_done(&self) -> bool {
+        true // default: no setup headers needed
+    }
+
+    fn force_headers_done(&mut self) {
+        // Default: no-op
     }
 }
 
@@ -118,7 +127,7 @@ impl Mapper for NullMapper {
         Some(Box::new(NullPacketParser {}))
     }
 
-    fn map_packet(&mut self, _: &[u8]) -> Result<MapResult> {
+    fn map_packet(&mut self, _: &[u8], _opts: &MetadataOptions) -> Result<MapResult> {
         Ok(MapResult::Unknown)
     }
 }

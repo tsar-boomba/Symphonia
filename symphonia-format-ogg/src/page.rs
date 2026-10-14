@@ -19,7 +19,7 @@ const OGG_PAGE_HEADER_SIZE: usize = 27;
 
 pub const OGG_PAGE_MAX_SIZE: usize = OGG_PAGE_HEADER_SIZE + 255 + 255 * 255;
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct PageHeader {
     #[allow(dead_code)]
     pub version: u8,
@@ -159,7 +159,7 @@ impl PageReader {
         let mut page_reader = PageReader {
             header: Default::default(),
             packet_lens: Vec::new(),
-            page_buf: Vec::new(),
+            page_buf: Vec::with_capacity(8 * 1024),
             page_buf_len: 0,
         };
 

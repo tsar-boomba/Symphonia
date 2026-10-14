@@ -11,12 +11,13 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 
 use alloc::vec::Vec;
+use embassy_time::Instant;
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
 use symphonia_core::errors::{decode_error, reset_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
 use symphonia_core::formats::well_known::FORMAT_ID_OGG;
-use symphonia_core::meta::{Metadata, MetadataLog, MetadataSideData};
+use symphonia_core::meta::{Metadata, MetadataLog, MetadataOptions, MetadataSideData};
 use symphonia_core::support_format;
 use symphonia_core::{async_trait, io::*};
 
@@ -39,6 +40,7 @@ pub struct OggReader<'s> {
     media_info: MediaInfo,
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
+    meta_options: MetadataOptions,
     metadata: MetadataLog,
     /// The page reader.
     pages: PageReader,
@@ -67,6 +69,7 @@ impl<'s> OggReader<'s> {
             tracks: Default::default(),
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
+            meta_options: opts.metadata_options,
             streams: Default::default(),
             pages,
             phys_byte_range_start: 0,
@@ -94,13 +97,41 @@ impl<'s> OggReader<'s> {
 
         // If the page is marked as a first page, then try to start a new physical stream.
         if page.header.is_first_page {
-            self.start_new_physical_stream().await?;
-            return reset_error();
+            // Handling of OGG that has 2 Beginning of Stream (BoS) pages (why??????)
+            // Basically if we find a second BoS in the stream with a serial # we've already seen
+            // we just skip that page and any pages after that we've already seen, by sequence #
+            if let Some(stream) = self.streams.get_mut(&page.header.serial) {
+                warn!(
+                    "Duplicate BOS for {:#x}. Performing silent internal reset.",
+                    page.header.serial
+                );
+
+                // Just keep going through pages until get to one thats new
+                loop {
+                    match self.pages.try_next_page(&mut self.reader).await {
+                        Ok(_) => {
+                            if stream.is_next_page(&self.pages.page()) {
+                                break;
+                            }
+                        }
+                        Err(Error::IoError(e)) => return Err(Error::from(e)),
+                        Err(e) => {
+                            warn!("{e}");
+                        }
+                    }
+                }
+            }
+            else {
+                self.start_new_physical_stream().await?;
+                return reset_error();
+            }
         }
+
+        let page = self.pages.page();
 
         if let Some(stream) = self.streams.get_mut(&page.header.serial) {
             // TODO: Process side data.
-            let _side_data = stream.read_page(&page)?;
+            let _side_data = stream.read_page(&page, &self.meta_options)?;
         }
         else {
             // If there is no associated logical stream with this page, then this is a
@@ -257,7 +288,7 @@ impl<'s> OggReader<'s> {
 
                 // Read in the current page since it contains our timestamp.
                 if s == serial {
-                    stream.read_page(&self.pages.page())?;
+                    stream.read_page(&self.pages.page(), &self.meta_options)?;
                 }
             }
         }
@@ -317,6 +348,8 @@ impl<'s> OggReader<'s> {
         assert!(self.pages.header().is_first_page);
 
         info!("starting new physical stream");
+        debug!("Header: {:?}", self.pages.page().header);
+        let t0 = Instant::now();
 
         // The first page of each logical stream, marked with the first page flag, must contain the
         // identification packet for the encapsulated codec bitstream. The first page for each
@@ -349,17 +382,21 @@ impl<'s> OggReader<'s> {
             // Read the next page.
             self.pages.try_next_page(&mut self.reader).await?;
         }
+        info!("header pages: {}ms", (Instant::now() - t0).as_millis());
 
         // Each logical stream may contain additional header packets after the identification packet
         // that contains format-relevant information such as setup and metadata. These packets,
         // for all logical streams, should be grouped together after the identification packets.
         // Reading pages consumes these headers and returns any relevant data as side data. Read
         // pages until all headers are consumed and the first bitstream packets are buffered.
+        let t1 = Instant::now();
+        let mut setup_iters = 0;
         loop {
+            setup_iters += 1;
             let page = self.pages.page();
 
             if let Some(stream) = streams.get_mut(&page.header.serial) {
-                let side_data = stream.read_page_init(&page, true)?;
+                let side_data = stream.read_page_init(&page, true, &self.meta_options)?;
 
                 // Consume each piece of side data.
                 for data in side_data {
@@ -377,7 +414,7 @@ impl<'s> OggReader<'s> {
                     }
                 }
 
-                if stream.has_packets() {
+                if stream.has_packets() || stream.headers_done() {
                     break;
                 }
             }
@@ -388,8 +425,10 @@ impl<'s> OggReader<'s> {
 
             self.pages.try_next_page(&mut self.reader).await?;
         }
+        info!("setup pages: {}ms ({} iters)", (Instant::now() - t1).as_millis(), setup_iters);
 
         // Probe the logical streams for their start and end pages.
+        let t2 = Instant::now();
         physical::probe_stream_start(
             &mut self.reader,
             &mut self.pages,
@@ -397,6 +436,7 @@ impl<'s> OggReader<'s> {
             byte_range_start,
         )
         .await?;
+        info!("probe stream start: {}ms", (Instant::now() - t2).as_millis());
 
         let mut byte_range_end = Default::default();
 
@@ -404,14 +444,11 @@ impl<'s> OggReader<'s> {
         // logical stream, and the length in bytes of the physical stream.
         if self.reader.is_seekable().await {
             if let Some(total_len) = self.reader.byte_len().await {
-                byte_range_end = physical::probe_stream_end(
-                    &mut self.reader,
-                    &mut self.pages,
-                    &mut streams,
-                    byte_range_start,
-                    total_len,
-                )
-                .await?;
+                let t3 = Instant::now();
+                byte_range_end =
+                    physical::probe_stream_end_fast(&mut self.reader, &mut streams, total_len)
+                        .await?;
+                info!("probe_end: {}ms", (Instant::now() - t3).as_millis());
             }
         }
 

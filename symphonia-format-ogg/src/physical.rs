@@ -6,6 +6,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 use alloc::collections::{BTreeMap, BTreeSet};
 
+use memchr::memmem;
 use symphonia_core::errors::Result;
 use symphonia_core::io::{
     AsyncReadBytes, AsyncScopedStream, MediaSourceStream, Seek, SeekBuffered, SeekFrom,
@@ -189,9 +190,11 @@ async fn scan_stream_end(
     loop {
         let page = pages.page();
 
-        // If the page does not belong to the current physical stream, then exit. The extent of the
-        // physical stream has been found.
-        let Some(stream) = streams.get_mut(&page.header.serial)
+        // If the page does not belong to the current physical stream, then break out, the
+        // extent of the physical stream has been found.
+        let stream = if let Some(stream) = streams.get_mut(&page.header.serial) {
+            stream
+        }
         else {
             break;
         };
@@ -209,4 +212,56 @@ async fn scan_stream_end(
     }
 
     upper_pos
+}
+
+pub async fn probe_stream_end_fast(
+    reader: &mut MediaSourceStream<'_>,
+    streams: &mut BTreeMap<u32, LogicalStream>,
+    byte_range_end: u64,
+) -> Result<Option<u64>> {
+    let original_pos = reader.pos();
+
+    // Try a small window first, fall back to larger if no match found
+    for &search_size in &[4096usize, 16384, OGG_PAGE_MAX_SIZE] {
+        let search_start = byte_range_end.saturating_sub(search_size as u64);
+        reader.seek(SeekFrom::Start(search_start)).await?;
+
+        let buf_len = (byte_range_end - search_start) as usize;
+        let mut buf = vec![0u8; buf_len];
+        reader.read_buf_exact(&mut buf).await?;
+
+        let last_granule = memmem::rfind_iter(&buf, b"OggS")
+            .filter_map(|i| {
+                // i is at the index of OggS
+                // Ensure we have enough bytes after the magic for a full header
+                // (Serial ends at index 18, so we need i + 18)
+                let header_chunk = buf.get(i..i + 18)?;
+
+                let granule = u64::from_le_bytes(header_chunk[6..14].try_into().ok()?);
+                let serial = u32::from_le_bytes(header_chunk[14..18].try_into().ok()?);
+
+                if streams.contains_key(&serial) && granule != u64::MAX {
+                    Some((serial, granule))
+                }
+                else {
+                    None
+                }
+            })
+            .next();
+
+        if last_granule.is_some() {
+            // found it, update stream and return
+            reader.seek(SeekFrom::Start(original_pos)).await?;
+            // Update stream duration from granule position
+            if let Some((serial, granule)) = last_granule
+                && let Some(stream) = streams.get_mut(&serial)
+            {
+                stream.set_end_granule(granule);
+            }
+
+            return Ok(last_granule.map(|_| byte_range_end));
+        }
+    }
+
+    Ok(None)
 }

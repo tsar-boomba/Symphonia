@@ -18,7 +18,7 @@ use symphonia_core::codecs::audio::{AudioCodecParameters, VerificationCheck};
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, MonitorStream, ReadBytes};
-use symphonia_core::meta::MetadataBuilder;
+use symphonia_core::meta::{MetadataBuilder, MetadataOptions};
 use symphonia_core::units::Duration;
 use symphonia_metadata::embedded::flac::{
     FLAC_METADATA_INFO, read_flac_comment_block, read_flac_picture_block,
@@ -297,7 +297,7 @@ impl Mapper for FlacMapper {
         // Nothing to do.
     }
 
-    fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
+    fn map_packet(&mut self, packet: &[u8], opts: &MetadataOptions) -> Result<MapResult> {
         let packet_type = BufReader::new(packet).read_u8()?;
 
         // A packet type of 0xff is an audio packet.
@@ -325,7 +325,7 @@ impl Mapper for FlacMapper {
                 MetadataBlockType::VorbisComment => {
                     let mut builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
-                    read_flac_comment_block(&mut reader, &mut builder)?;
+                    read_flac_comment_block(&mut reader, &mut builder, opts)?;
 
                     let rev = builder.build();
 
@@ -334,7 +334,9 @@ impl Mapper for FlacMapper {
                 MetadataBlockType::Picture => {
                     let mut builder = MetadataBuilder::new(FLAC_METADATA_INFO);
 
-                    builder.add_visual(read_flac_picture_block(&mut reader)?);
+                    if let Some(visual) = read_flac_picture_block(&mut reader, opts, false)? {
+                        builder.add_visual(visual);
+                    }
 
                     let rev = builder.build();
 

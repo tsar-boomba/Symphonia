@@ -18,7 +18,7 @@ use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BitReaderRtl, BufReader, ReadBitsRtl, ReadBytes};
-use symphonia_core::meta::MetadataBuilder;
+use symphonia_core::meta::{MetadataBuilder, MetadataOptions};
 use symphonia_core::units::Duration;
 use symphonia_metadata::embedded::vorbis::*;
 
@@ -196,7 +196,7 @@ impl Mapper for VorbisMapper {
         }
     }
 
-    fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
+    fn map_packet(&mut self, packet: &[u8], opts: &MetadataOptions) -> Result<MapResult> {
         let mut reader = BufReader::new(packet);
 
         // All Vorbis packets indicate the packet type in the first byte.
@@ -227,7 +227,7 @@ impl Mapper for VorbisMapper {
                     let mut builder = MetadataBuilder::new(VORBIS_COMMENT_METADATA_INFO);
                     let mut side_data = Default::default();
 
-                    read_vorbis_comment(&mut reader, &mut builder, &mut side_data)?;
+                    read_vorbis_comment(&mut reader, &mut builder, &mut side_data, opts)?;
 
                     let rev = builder.build();
 

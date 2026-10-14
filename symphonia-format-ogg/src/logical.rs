@@ -9,8 +9,10 @@ use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 
 use alloc::vec::Vec;
+use symphonia_core::common::Limit;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::Track;
+use symphonia_core::meta::MetadataOptions;
 use symphonia_core::packet::{Packet, PacketBuilder};
 use symphonia_core::units::{Duration, Timestamp};
 
@@ -57,6 +59,7 @@ pub struct LogicalStream {
     prev_page_info: Option<PageInfo>,
     start_bound: Option<Bound>,
     end_bound: Option<Bound>,
+    part_abandoned: bool,
 }
 
 impl LogicalStream {
@@ -66,11 +69,12 @@ impl LogicalStream {
         LogicalStream {
             mapper,
             packets: Default::default(),
-            part_buf: Default::default(),
+            part_buf: vec![0; 500 * 1024], // Pre-allocate a large buffer to parse ogg faster
             part_len: 0,
             prev_page_info: None,
             start_bound: None,
             end_bound: None,
+            part_abandoned: false,
         }
     }
 
@@ -102,13 +106,32 @@ impl LogicalStream {
         self.prev_page_info.map(|info| info.is_last_page)
     }
 
+    pub fn is_next_page(&self, page: &Page<'_>) -> bool {
+        if let Some(prev_page_info) = &self.prev_page_info {
+            prev_page_info.seq < page.header.sequence
+        }
+        else {
+            true
+        }
+    }
+
+    pub fn set_end_granule(&mut self, end_granule: u64) {
+        let end_ts = self.mapper.absgp_to_ts(end_granule);
+        self.mapper.track_mut().with_num_frames(end_ts.get() as u64);
+    }
+
     /// Reads a page.
-    pub fn read_page(&mut self, page: &Page<'_>) -> Result<Vec<SideData>> {
-        self.read_page_init(page, false)
+    pub fn read_page(&mut self, page: &Page<'_>, opts: &MetadataOptions) -> Result<Vec<SideData>> {
+        self.read_page_init(page, false, opts)
     }
 
     /// Read a page. Specifying whether this is the initial bitstream page.
-    pub fn read_page_init(&mut self, page: &Page<'_>, is_init_page: bool) -> Result<Vec<SideData>> {
+    pub fn read_page_init(
+        &mut self,
+        page: &Page<'_>,
+        is_init_page: bool,
+        opts: &MetadataOptions,
+    ) -> Result<Vec<SideData>> {
         // Side data vector. This will not allocate unless data is pushed to it (normal case).
         let mut side_data = Vec::new();
 
@@ -150,6 +173,21 @@ impl LogicalStream {
 
         let mut iter = page.packets();
 
+        if page.header.is_continuation && self.part_abandoned {
+            // Still skipping this oversized packet
+            if iter.partial_packet().is_none() {
+                // Packet finally completed, stop abandoning
+                self.part_abandoned = false;
+            }
+
+            return Ok(side_data);
+        }
+
+        // Clear abandoned state on non-continuation page
+        if !page.header.is_continuation {
+            self.part_abandoned = false;
+        }
+
         // If there is no partial packet data buffered, a continuation page is not expected.
         if page.header.is_continuation && self.part_len == 0 {
             // If the continuation page contains packets, drop the first packet since it would
@@ -176,7 +214,7 @@ impl LogicalStream {
             // Perform packet mapping. If the packet contains stream data, queue it onto the packet
             // queue. If it contains side data, then add it to the side data list. Ignore other
             // types of packet data.
-            match self.mapper.map_packet(&data) {
+            match self.mapper.map_packet(&data, opts) {
                 Ok(MapResult::StreamData { dur, discard }) => {
                     total_pkt_dur = total_pkt_dur.saturating_add(dur);
                     total_pkt_discard = total_pkt_discard.saturating_add(discard);
@@ -201,8 +239,20 @@ impl LogicalStream {
 
         // If the page contains partial packet data, then save the partial packet data for later
         // as the packet will be completed on a later page.
-        if let Some(buf) = iter.partial_packet() {
-            self.save_partial_packet(buf)?;
+        if let Some(buf) = iter.partial_packet()
+            && let Some(partial_packet) = self.save_partial_packet(buf, opts)?
+        {
+            log::info!("skipping partial packet!");
+            match self.mapper.map_packet(&partial_packet, opts) {
+                Ok(MapResult::StreamData { .. }) => {
+                    unreachable!("Should only discard large metadata, not data!");
+                }
+                Ok(MapResult::SideData { data }) => side_data.push(data),
+                Err(e) => {
+                    warn!("mapping packet failed ({e}), skipping")
+                }
+                _ => (),
+            }
         }
 
         // If one or more bitstream packets ended in this page, process them.
@@ -305,6 +355,11 @@ impl LogicalStream {
         }
 
         Ok(side_data)
+    }
+
+    /// Returns true if the mapper has all the data it needs from headers
+    pub fn headers_done(&self) -> bool {
+        self.mapper.headers_done()
     }
 
     /// Returns true if the logical stream has packets buffered.
@@ -598,8 +653,24 @@ impl LogicalStream {
         }
     }
 
-    fn save_partial_packet(&mut self, buf: &[u8]) -> Result<()> {
+    /// Returns `Some` with what we have of the partial so far and gives up on the rest
+    fn save_partial_packet(
+        &mut self,
+        buf: &[u8],
+        opts: &MetadataOptions,
+    ) -> Result<Option<Box<[u8]>>> {
+        // If a partial gets longer than this, it's probably an image and we might wanna skip it
+        const INIT_MAX_PACKET_LEN: usize = 4 * 1020;
         let new_part_len = self.part_len + buf.len();
+
+        // If user wants to ignore all visuals, we definitely need to skip reading the whole partial packet
+        if opts.limit_visual_bytes == Limit::Maximum(0) && new_part_len > INIT_MAX_PACKET_LEN {
+            // Too large, discard and signal the mapper to move on
+            let partial = self.get_partial_assembled(buf);
+            self.part_len = 0;
+            self.part_abandoned = true;
+            return Ok(Some(partial));
+        }
 
         if new_part_len > self.part_buf.len() {
             // Do not exceed an a certain limit to prevent unbounded memory growth.
@@ -617,6 +688,13 @@ impl LogicalStream {
         self.part_buf[self.part_len..new_part_len].copy_from_slice(buf);
         self.part_len = new_part_len;
 
-        Ok(())
+        Ok(None)
+    }
+
+    fn get_partial_assembled(&mut self, new_buf: &[u8]) -> Box<[u8]> {
+        let mut out = vec![0u8; self.part_len + new_buf.len()];
+        out[..self.part_len].copy_from_slice(&self.part_buf[..self.part_len]);
+        out[self.part_len..].copy_from_slice(new_buf);
+        out.into_boxed_slice()
     }
 }
