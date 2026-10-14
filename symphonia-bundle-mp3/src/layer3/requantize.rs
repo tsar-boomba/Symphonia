@@ -287,8 +287,11 @@ fn requantize_long(channel: &GranuleChannel, bands: &[usize], buf: &mut [f32; 57
         // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
         // Since scalefac_shift was multiplies by 4 above, the final equation becomes
         // 2^{ 0.25 * (A - B) }.
-        let exp_idx = (a - b + 256) as u8; // cast to u8 should remove bounds check
-        let pow2ab = POW2_TABLE[exp_idx as usize];
+        // The exponent (A - B) is in the range [-346, 45]. Clamping the index to the table length
+        // also allows the bounds check to be removed. Exponents below the table range produce
+        // gains below 2^-64, which are effectively 0.
+        let exp_idx = (a - b + 256).clamp(0, 511) as usize;
+        let pow2ab = POW2_TABLE[exp_idx];
 
         // Calculate the ending sample index for the scale-factor band, clamping it to the length of
         // the sample buffer.
