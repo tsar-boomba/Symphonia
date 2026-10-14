@@ -463,7 +463,7 @@ fn decode_fixed_linear<B: ReadBitsLtr>(
     // TODO: The fixed predictor uses 64-bit accumulators by default to support bps > 26. On 64-bit
     // machines, this is preferable, but on 32-bit machines if bps <= 26, run a 32-bit predictor,
     // and fallback to the 64-bit predictor if necessary (which is basically never).
-    fixed_predict(bps, order, buf);
+    fixed_predict(order, buf);
 
     Ok(())
 }
@@ -498,10 +498,17 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
 
         decode_residual(bs, order, buf)?;
 
+        // Use 32-bit math if the prediction, before shifting, can never overflow a 32-bit integer
+        // for a valid stream. This is the case if sum(|coeff|) * 2^(bps - 1) <= i32::MAX. This is
+        // much faster on CPUs without 64-bit multiply instructions. This is the same check libFLAC
+        // performs.
+        let coeff_abs_sum: u64 = qlp_coeffs.iter().map(|c| u64::from(c.unsigned_abs())).sum();
+        let use_i32 = (coeff_abs_sum << (bps - 1)) <= i32::MAX as u64;
+
         // Helper function to dispatch to a predictor with a maximum order of N.
         #[inline(always)]
         fn lpc<const N: usize>(
-            bps: u32,
+            use_i32: bool,
             order: u32,
             coeffs: &[i32; 32],
             coeff_shift: i32,
@@ -509,9 +516,7 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
         ) {
             let coeffs_n = (&coeffs[32 - N..32]).try_into().unwrap();
 
-            // Use 32-bit math when sample size is smaller. This will be much faster on CPUs that
-            // don't have instructions for 64-bit math
-            if bps <= 20 {
+            if use_i32 {
                 lpc_predict_i32(order as usize, coeffs_n, coeff_shift as u32, buf);
             }
             else {
@@ -525,12 +530,12 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
         // then there will be wasted computations. On the other hand, it is not worth the code bloat
         // to specialize for every order <= 12.
         match order {
-            0..=4 => lpc::<4>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
-            5..=6 => lpc::<6>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
-            7..=8 => lpc::<8>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
-            9..=10 => lpc::<10>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
-            11..=12 => lpc::<12>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
-            _ => lpc::<32>(bps, order, &qlp_coeffs, qlp_coeff_shift, buf),
+            0..=4 => lpc::<4>(use_i32, order, &qlp_coeffs, qlp_coeff_shift, buf),
+            5..=6 => lpc::<6>(use_i32, order, &qlp_coeffs, qlp_coeff_shift, buf),
+            7..=8 => lpc::<8>(use_i32, order, &qlp_coeffs, qlp_coeff_shift, buf),
+            9..=10 => lpc::<10>(use_i32, order, &qlp_coeffs, qlp_coeff_shift, buf),
+            11..=12 => lpc::<12>(use_i32, order, &qlp_coeffs, qlp_coeff_shift, buf),
+            _ => lpc::<32>(use_i32, order, &qlp_coeffs, qlp_coeff_shift, buf),
         };
     }
     else {
@@ -744,15 +749,11 @@ macro_rules! make_fixed_predict {
 }
 
 make_fixed_predict!(fixed_predict_i32, i32);
-make_fixed_predict!(fixed_predict_i64, i64);
 
-fn fixed_predict(bps: u32, order: u32, buf: &mut [i32]) {
-    if bps <= 26 {
-        fixed_predict_i32(order, buf);
-    }
-    else {
-        fixed_predict_i64(order, buf);
-    }
+fn fixed_predict(order: u32, buf: &mut [i32]) {
+    // The fixed predictor has no shift, and the prediction is truncated to 32 bits. Therefore,
+    // wrapping 32-bit math always produces exactly the same result as 64-bit math.
+    fixed_predict_i32(order, buf);
 }
 
 macro_rules! make_lpc_predict {
