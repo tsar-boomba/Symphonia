@@ -16,7 +16,7 @@ use crate::common::FrameHeader;
 use super::{GranuleChannel, codebooks, common::*};
 
 use core::cmp::min;
-use core::{f32, f64};
+use core::f32;
 
 use log::info;
 
@@ -28,6 +28,15 @@ const POW43_LEN: usize = 8207;
 static POW43: Lazy<Box<[f32; POW43_LEN]>> = Lazy::new(|| {
     let pow43: Vec<f32> = (0..POW43_LEN).map(|i| f32::powf(i as f32, 4.0 / 3.0)).collect();
     pow43.into_boxed_slice().try_into().expect("vec initialized to POW43_LEN")
+});
+
+static POW2_TABLE: Lazy<[f32; 512]> = Lazy::new(|| {
+    let mut table = [0f32; 512];
+    for (i, v) in table.iter_mut().enumerate() {
+        let exp = i as f32 - 256.0; // centered at 0
+        *v = f32::powf(2.0, exp * 0.25);
+    }
+    table
 });
 
 /// Zero a sample buffer.
@@ -249,6 +258,8 @@ fn requantize_long(channel: &GranuleChannel, bands: &[usize], buf: &mut [f32; 57
     //
     // Note: The samples in buf are the result of s(i)^(4/3) for each sample i.
     debug_assert!(bands.len() <= 23);
+    // Remove bounds checks
+    assert!(channel.rzero <= 576);
 
     // The preemphasis table is from table B.6 in ISO/IEC 11172-3.
     const PRE_EMPHASIS: [u8; 22] =
@@ -276,7 +287,8 @@ fn requantize_long(channel: &GranuleChannel, bands: &[usize], buf: &mut [f32; 57
         // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
         // Since scalefac_shift was multiplies by 4 above, the final equation becomes
         // 2^{ 0.25 * (A - B) }.
-        let pow2ab = f64::powf(2.0, 0.25 * f64::from(a - b)) as f32;
+        let exp_idx = (a - b + 256) as u8; // cast to u8 should remove bounds check
+        let pow2ab = POW2_TABLE[exp_idx as usize];
 
         // Calculate the ending sample index for the scale-factor band, clamping it to the length of
         // the sample buffer.
@@ -308,6 +320,8 @@ fn requantize_short(
     //
     // Note: The samples in buf are the result of s(i)^(4/3) for each sample i.
     debug_assert!(bands.len() <= 40);
+    // Remove bounds checks
+    assert!(channel.rzero <= 576);
 
     // Calculate the window-independant part of A: global_gain[gr] - 210.
     let gain = i32::from(channel.global_gain) - 210;
@@ -339,7 +353,7 @@ fn requantize_short(
         // Calculate 2^(0.25*A) * 2^(-B). This can be rewritten as 2^{ 0.25 * (A - 4 * B) }.
         // Since scalefac_shift multiplies by 4 above, the final equation becomes
         // 2^{ 0.25 * (A - B) }.
-        let pow2ab = f64::powf(2.0, 0.25 * f64::from(a[i % 3] - b)) as f32;
+        let pow2ab = f32::powf(2.0, 0.25 * (a[i % 3] - b) as f32) as f32;
 
         // Clamp the ending sample index to the rzero sample index. Since samples starting from
         // rzero are 0, there is no point in requantizing them.

@@ -775,8 +775,8 @@ async fn estimate_num_mpeg_frames(reader: &mut MediaSourceStream<'_>) -> Option<
         // Read up-to 16 frames, or 16kB, then calculate the average MPEG frame length, and from
         // that, the total number of MPEG frames.
         if total_frames > MAX_FRAMES || total_frame_len > MAX_LEN {
-            let avg_mpeg_frame_len = total_frame_len as f64 / total_frames as f64;
-            break Some((total_len as f64 / avg_mpeg_frame_len) as u64);
+            let avg_mpeg_frame_len = total_frame_len as f32 / total_frames as f32;
+            break Some((total_len as f32 / avg_mpeg_frame_len) as u64);
         }
     };
 
