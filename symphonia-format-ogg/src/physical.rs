@@ -237,6 +237,12 @@ pub async fn probe_stream_end_fast(
                 // (Serial ends at index 18, so we need i + 18)
                 let header_chunk = buf.get(i..i + 18)?;
 
+                // The stream structure version must be 0, and only the lower 3 bits of the header
+                // type flags may be set. This rejects most false matches of the capture pattern.
+                if header_chunk[4] != 0 || header_chunk[5] & !0x07 != 0 {
+                    return None;
+                }
+
                 let granule = u64::from_le_bytes(header_chunk[6..14].try_into().ok()?);
                 let serial = u32::from_le_bytes(header_chunk[14..18].try_into().ok()?);
 
@@ -262,6 +268,9 @@ pub async fn probe_stream_end_fast(
             return Ok(last_granule.map(|_| byte_range_end));
         }
     }
+
+    // No page was found, restore the original position.
+    reader.seek(SeekFrom::Start(original_pos)).await?;
 
     Ok(None)
 }
