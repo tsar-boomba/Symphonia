@@ -11,16 +11,30 @@
 
 #[cfg(any(feature = "opt-simd-sse", feature = "opt-simd-avx", feature = "opt-simd-neon"))]
 mod simd;
-
 #[cfg(any(feature = "opt-simd-sse", feature = "opt-simd-avx", feature = "opt-simd-neon"))]
 pub use simd::*;
 
-#[cfg(not(any(feature = "opt-simd-sse", feature = "opt-simd-avx", feature = "opt-simd-neon")))]
+#[cfg(all(
+    not(any(feature = "opt-simd-sse", feature = "opt-simd-avx", feature = "opt-simd-neon")),
+    feature = "opt-cmsis-dsp"
+))]
+mod cmsis;
+#[cfg(all(
+    not(any(feature = "opt-simd-sse", feature = "opt-simd-avx", feature = "opt-simd-neon")),
+    feature = "opt-cmsis-dsp"
+))]
+pub use cmsis::*;
+
+#[cfg(any(
+    not(any(feature = "opt-simd-sse", feature = "opt-simd-avx", feature = "opt-simd-neon")),
+    feature = "opt-cmsis-dsp"
+))]
 mod no_simd;
 #[cfg(not(any(
     feature = "opt-simd-sse",
     feature = "opt-simd-avx",
-    feature = "opt-simd-neon"
+    feature = "opt-simd-neon",
+    feature = "opt-cmsis-dsp"
 )))]
 pub use no_simd::*;
 
