@@ -173,14 +173,21 @@ impl LogicalStream {
 
         let mut iter = page.packets();
 
+        // Set if the first packet in this page completes a previously abandoned packet, and was
+        // skipped.
+        let mut skipped_abandoned = false;
+
         if page.header.is_continuation && self.part_abandoned {
-            // Still skipping this oversized packet
-            if iter.partial_packet().is_none() {
-                // Packet finally completed, stop abandoning
-                self.part_abandoned = false;
+            // If no packet ends in this page, the abandoned packet continues past this page.
+            if page.num_packets() == 0 {
+                return Ok(side_data);
             }
 
-            return Ok(side_data);
+            // Otherwise, the first packet completes the abandoned packet. Skip it, and process any
+            // remaining packets in the page normally.
+            iter.next();
+            self.part_abandoned = false;
+            skipped_abandoned = true;
         }
 
         // Clear abandoned state on non-continuation page
@@ -189,7 +196,7 @@ impl LogicalStream {
         }
 
         // If there is no partial packet data buffered, a continuation page is not expected.
-        if page.header.is_continuation && self.part_len == 0 {
+        if page.header.is_continuation && self.part_len == 0 && !skipped_abandoned {
             // If the continuation page contains packets, drop the first packet since it would
             // require partial packet data to be complete. Otherwise, ignore this page entirely.
             if page.num_packets() > 0 {

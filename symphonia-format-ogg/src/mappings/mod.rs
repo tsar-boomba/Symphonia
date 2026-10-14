@@ -83,8 +83,10 @@ pub trait Mapper: Send + Sync {
         true
     }
 
+    /// Returns `true` if all header packets required to use the stream have been consumed. By
+    /// default, this is the case once the stream is ready.
     fn headers_done(&self) -> bool {
-        true // default: no setup headers needed
+        self.is_ready()
     }
 
     fn force_headers_done(&mut self) {
