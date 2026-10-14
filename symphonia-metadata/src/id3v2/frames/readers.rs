@@ -34,7 +34,7 @@ use crate::id3v2::sub_fields::*;
 use crate::utils::id3v2::get_visual_key_from_picture_type;
 use crate::utils::std_tag::*;
 
-use crate::utils::images::try_get_image_info;
+use crate::utils::images::{DEFAULT_MAX_IMAGE_SIZE, try_get_image_info};
 
 /// Function pointer to an ID3v2 frame reader.
 pub type FrameReader = fn(BufReader<'_>, &FrameInfo<'_>) -> Result<FrameResult>;
@@ -343,19 +343,27 @@ pub fn read_apic_frame(mut reader: BufReader<'_>, frame: &FrameInfo<'_>) -> Resu
         tags.push(Tag::new_from_parts("", "", Some(StandardTag::Description(Arc::from(desc)))));
     }
 
-    // The remainder of the APIC frame is the image data.
-    // TODO: Apply a limit.
-    let data = Box::from(reader.read_buf_bytes_available_ref());
+    // The remainder of the APIC frame is the image data. Only copy it if it is within the visual
+    // size limit.
+    let data_len = reader.bytes_available();
 
-    // Try to get information about the image.
-    let image_info = try_get_image_info(&data);
+    let visual =
+        if frame.opts.limit_visual_bytes.within_limit_w_default(data_len, DEFAULT_MAX_IMAGE_SIZE) {
+            let data = Box::from(reader.read_buf_bytes_available_ref());
 
-    let visual = Visual {
-        media_type: image_info.map(|info| info.media_type).or(media_type),
-        usage,
-        tags,
-        data: ImageData::Data(Some(data)),
-    };
+            // Try to get information about the image.
+            let image_info = try_get_image_info(&data);
+
+            Visual {
+                media_type: image_info.map(|info| info.media_type).or(media_type),
+                usage,
+                tags,
+                data: ImageData::Data(Some(data)),
+            }
+        }
+        else {
+            Visual { media_type, usage, tags, data: ImageData::Data(None) }
+        };
 
     Ok(FrameResult::Visual(visual))
 }
