@@ -483,10 +483,10 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
 mod tests {
     use super::IMDCT_WINDOWS;
     use super::imdct12_win;
-    use core::f32;
+    use core::f64;
 
     fn imdct12_analytical(x: &[f32; 6]) -> [f32; 12] {
-        const PI_24: f32 = f32::consts::PI / 24.0;
+        const PI_24: f64 = f64::consts::PI / 24.0;
 
         let mut result = [0f32; 12];
 
@@ -494,7 +494,7 @@ mod tests {
             let mut sum = 0.0;
             for k in 0..6 {
                 sum +=
-                    (x[k] as f32) * (PI_24 * ((2 * i + (12 / 2) + 1) * (2 * k + 1)) as f32).cos();
+                    (x[k] as f64) * (PI_24 * ((2 * i + (12 / 2) + 1) * (2 * k + 1)) as f64).cos();
             }
             result[i] = sum as f32;
         }
@@ -778,18 +778,18 @@ mod imdct36 {
     #[cfg(test)]
     mod tests {
         use super::imdct36;
-        use core::f32;
+        use core::f64;
 
         fn imdct36_analytical(x: &[f32; 18]) -> [f32; 36] {
             let mut result = [0f32; 36];
 
-            const PI_72: f32 = f32::consts::PI / 72.0;
+            const PI_72: f64 = f64::consts::PI / 72.0;
 
             for i in 0..36 {
                 let mut sum = 0.0;
                 for j in 0..18 {
                     sum +=
-                        (x[j] as f32) * (PI_72 * (((2 * i) + 1 + 18) * ((2 * j) + 1)) as f32).cos();
+                        (x[j] as f64) * (PI_72 * (((2 * i) + 1 + 18) * ((2 * j) + 1)) as f64).cos();
                 }
                 result[i] = sum as f32;
             }

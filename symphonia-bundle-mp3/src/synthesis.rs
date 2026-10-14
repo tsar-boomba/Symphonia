@@ -858,17 +858,17 @@ fn dct32(x: &[f32; 32], y: &mut [f32; 32]) {
 #[cfg(test)]
 mod tests {
     use super::dct32;
-    use core::f32;
+    use core::f64;
 
     fn dct32_analytical(x: &[f32; 32]) -> [f32; 32] {
-        const PI_32: f32 = f32::consts::PI / 32.0;
+        const PI_32: f64 = f64::consts::PI / 32.0;
 
         let mut result = [0f32; 32];
         for (i, item) in result.iter_mut().enumerate() {
             *item = x
                 .iter()
                 .enumerate()
-                .map(|(j, &jtem)| jtem * (PI_32 * (i as f32) * ((j as f32) + 0.5)).cos() as f32)
+                .map(|(j, &jtem)| jtem * (PI_32 * (i as f64) * ((j as f64) + 0.5)).cos() as f32)
                 .sum();
         }
 
