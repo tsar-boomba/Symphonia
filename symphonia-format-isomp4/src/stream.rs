@@ -438,8 +438,10 @@ impl StreamSegment for MoovSegment {
                     // desired sample in the chunk.
                     let chunk_first_sample = (sample_num - sample_in_chunk) as usize;
 
-                    if let Some(samples) = entries.get(chunk_first_sample..sample_num as usize) {
-                        samples.iter().map(|&size| u64::from(size)).sum()
+                    if let Some(samples) =
+                        entries.sum_range(chunk_first_sample..sample_num as usize)
+                    {
+                        samples
                     }
                     else {
                         return decode_error("isomp4: missing one or more stsz entries");
@@ -458,7 +460,7 @@ impl StreamSegment for MoovSegment {
             SampleSize::Constant(size) => size,
             SampleSize::Variable(ref entries) => {
                 if let Some(size) = entries.get(sample_num as usize) {
-                    *size
+                    size
                 }
                 else {
                     return decode_error("isomp4: missing stsz entry");
