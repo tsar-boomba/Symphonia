@@ -577,8 +577,8 @@ fn make_raw_codebook(table: &VlcTable) -> Codebook<Entry16x16> {
     // Generate the codebook.
     let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
 
-    // Read in 8-bit blocks.
-    builder.bits_per_read(8);
+    // Read in 5-bit blocks.
+    builder.bits_per_read(5);
 
     builder.make(table.codes, table.lens, &indicies).expect("valid static codebook data")
 }
@@ -666,8 +666,8 @@ pub static SCALEFACTORS: Lazy<Codebook<Entry8x16>> = Lazy::new(|| {
     // Generate the codebook.
     let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
 
-    // Read in 8-bit blocks.
-    builder.bits_per_read(8);
+    // Read in 5-bit blocks.
+    builder.bits_per_read(5);
 
     builder
         .make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values)

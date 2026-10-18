@@ -362,6 +362,7 @@ pub mod vlc {
                 }
             }
 
+            table.shrink_to_fit();
             Ok(table)
         }
 
