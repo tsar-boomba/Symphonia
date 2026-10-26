@@ -82,8 +82,8 @@ pub struct OggReader<'s> {
 
 impl<'s> OggReader<'s> {
     pub async fn try_new(mut mss: MediaSourceStream<'s>, opts: FormatOptions) -> Result<Self> {
-        // A seekback buffer equal to the maximum OGG page size is required for this reader.
-        mss.ensure_seekback_buffer(OGG_PAGE_MAX_SIZE);
+        // Enough buffer for most ogg files
+        mss.ensure_seekback_buffer(16 * 1024);
 
         let pages = PageReader::try_new(&mut mss).await?;
 
