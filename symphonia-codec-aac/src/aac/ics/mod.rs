@@ -161,10 +161,7 @@ pub struct Ics {
     pulse: Option<pulse::Pulse>,
     tns: Option<tns::Tns>,
     gain: Option<gain::GainControl>,
-    sect_cb: [[u8; MAX_SFBS]; MAX_WINDOWS],
-    sect_len: [[usize; MAX_SFBS]; MAX_WINDOWS],
     sfb_cb: [[u8; MAX_SFBS]; MAX_WINDOWS],
-    num_sec: [usize; MAX_WINDOWS],
     pub scales: [[f32; MAX_SFBS]; MAX_WINDOWS],
     sbinfo: GASubbandInfo,
     pub coeffs: [f32; 1024],
@@ -179,11 +176,8 @@ impl Ics {
             pulse: None,
             tns: None,
             gain: None,
-            sect_cb: [[0; MAX_SFBS]; MAX_WINDOWS],
-            sect_len: [[0; MAX_SFBS]; MAX_WINDOWS],
             sfb_cb: [[0; MAX_SFBS]; MAX_WINDOWS],
             scales: [[0.0; MAX_SFBS]; MAX_WINDOWS],
-            num_sec: [0; MAX_WINDOWS],
             sbinfo,
             coeffs: [0.0; 1024],
             delay: [0.0; 1024],
@@ -205,38 +199,36 @@ impl Ics {
 
             while k < self.info.max_sfb {
                 // `l` counts sections, not bands, and advances once per section. A crafted
-                // stream with many zero-length sections can push it past the section arrays
-                // even though `k` (the band index) stays below `max_sfb`, so bound it here.
+                // stream with many zero-length sections never advances `k` (the band index),
+                // so bound the section count to fail fast instead of reading to the end of
+                // the bitstream.
                 validate!(l < MAX_SFBS);
 
-                self.sect_cb[g][l] = bs.read_bits_leq32(4)? as u8;
-                self.sect_len[g][l] = 0;
+                let sect_cb = bs.read_bits_leq32(4)? as u8;
 
-                if self.sect_cb[g][l] == RESERVED_HCB {
+                if sect_cb == RESERVED_HCB {
                     return decode_error("aac: invalid band type");
                 }
+
+                let mut sect_len = 0;
 
                 loop {
                     let sect_len_incr = bs.read_bits_leq32(sect_bits)? as usize;
 
-                    self.sect_len[g][l] += sect_len_incr;
+                    sect_len += sect_len_incr;
 
                     if sect_len_incr < sect_esc_val {
                         break;
                     }
                 }
 
-                validate!(k + self.sect_len[g][l] <= self.info.max_sfb);
+                validate!(k + sect_len <= self.info.max_sfb);
 
-                for sfb in k..k + self.sect_len[g][l] {
-                    self.sfb_cb[g][sfb] = self.sect_cb[g][l];
-                }
+                self.sfb_cb[g][k..k + sect_len].fill(sect_cb);
 
-                k += self.sect_len[g][l];
+                k += sect_len;
                 l += 1;
             }
-
-            self.num_sec[g] = l;
         }
         Ok(())
     }
@@ -584,8 +576,8 @@ mod tests {
         // length increments. An all-zero bitstream therefore reads codebook 0
         // and a zero-length section every time, so the band index never reaches
         // `max_sfb` while the section index keeps climbing. More than MAX_SFBS
-        // such sections used to run off the end of `sect_cb`; parsing must now
-        // fail cleanly instead of panicking. (MAX_SFBS + 1) sections at 9 bits
+        // such sections used to run off the end of the section arrays; parsing
+        // must still fail cleanly instead of panicking. (MAX_SFBS + 1) sections at 9 bits
         // each fit comfortably in this buffer.
         let buf = [0u8; (MAX_SFBS + 1) * 9 / 8 + 1];
 
