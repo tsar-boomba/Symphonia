@@ -1,0 +1,20 @@
+[package]
+name = "symphonia-codebook-gen"
+description = "Generates Symphonia's pre-built codebook lookup tables."
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+publish = false
+# Common package metadata located in workspace Cargo.toml.
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+critical-section = { version = "1", features = ["std"] }
+libm = "0.2"
+symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
+
+[lints]
+workspace = true

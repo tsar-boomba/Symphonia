@@ -5,6 +5,7 @@ members = [
     "symphonia",
     "symphonia-bundle-flac",
     "symphonia-bundle-mp3",
+    "symphonia-codebook-gen",
     "symphonia-codec-aac",
     "symphonia-codec-adpcm",
     "symphonia-codec-alac",

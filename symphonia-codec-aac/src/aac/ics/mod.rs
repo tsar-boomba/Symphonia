@@ -17,7 +17,6 @@ use symphonia_core::Float;
 use symphonia_core::Lazy;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
-use symphonia_core::io::vlc::{Codebook, Entry8x16};
 
 use symphonia_common::mpeg::audio::AudioObjectType;
 
@@ -310,7 +309,7 @@ impl Ics {
         let mut scf_noise = i16::from(self.global_gain) - 90 - NORMAL_SCALE_MIN;
         let mut scf_normal = i16::from(self.global_gain);
 
-        let scf_cb: &Codebook<Entry8x16> = &codebooks::SCALEFACTORS;
+        let scf_cb = &codebooks::SCALEFACTORS;
 
         let table_normal_scf: &[f32; NORMAL_SCF_TABLE_LEN] = &NORMAL_SCF_TABLE;
         let table_intensity_scf: &[f32; 256] = &INTENSITY_SCF_TABLE;
