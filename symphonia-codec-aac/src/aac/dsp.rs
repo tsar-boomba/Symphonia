@@ -14,16 +14,12 @@
 use symphonia_core::dsp::mdct::Imdct;
 
 use crate::aac::common::*;
-use crate::aac::window::*;
+use crate::aac::tables::{KBD_LONG_WINDOW, KBD_SHORT_WINDOW, SINE_LONG_WINDOW, SINE_SHORT_WINDOW};
 
 const SHORT_WIN_POINT0: usize = 512 - 64;
 const SHORT_WIN_POINT1: usize = 512 + 64;
 
 pub struct Dsp {
-    kbd_long_win: [f32; 1024],
-    kbd_short_win: [f32; 128],
-    sine_long_win: [f32; 1024],
-    sine_short_win: [f32; 128],
     imdct_long: Imdct,
     imdct_short: Imdct,
     pcm_long: [f32; 2048],
@@ -32,20 +28,7 @@ pub struct Dsp {
 
 impl Dsp {
     pub fn new() -> Self {
-        let mut kbd_long_win: [f32; 1024] = [0.0; 1024];
-        let mut kbd_short_win: [f32; 128] = [0.0; 128];
-        generate_window(WindowType::KaiserBessel(4.0), 1.0, 1024, true, &mut kbd_long_win);
-        generate_window(WindowType::KaiserBessel(6.0), 1.0, 128, true, &mut kbd_short_win);
-        let mut sine_long_win: [f32; 1024] = [0.0; 1024];
-        let mut sine_short_win: [f32; 128] = [0.0; 128];
-        generate_window(WindowType::Sine, 1.0, 1024, true, &mut sine_long_win);
-        generate_window(WindowType::Sine, 1.0, 128, true, &mut sine_short_win);
-
         Self {
-            kbd_long_win,
-            kbd_short_win,
-            sine_long_win,
-            sine_short_win,
             imdct_long: Imdct::new_scaled(1024, 1.0 / 2048.0),
             imdct_short: Imdct::new_scaled(128, 1.0 / 256.0),
             pcm_long: [0.0; 2048],
@@ -64,13 +47,13 @@ impl Dsp {
         dst: &mut [f32],
     ) {
         let (long_win, short_win) = match window_shape {
-            true => (&self.kbd_long_win, &self.kbd_short_win),
-            false => (&self.sine_long_win, &self.sine_short_win),
+            true => (&KBD_LONG_WINDOW, &KBD_SHORT_WINDOW),
+            false => (&SINE_LONG_WINDOW, &SINE_SHORT_WINDOW),
         };
 
         let (prev_long_win, prev_short_win) = match prev_window_shape {
-            true => (&self.kbd_long_win, &self.kbd_short_win),
-            false => (&self.sine_long_win, &self.sine_short_win),
+            true => (&KBD_LONG_WINDOW, &KBD_SHORT_WINDOW),
+            false => (&SINE_LONG_WINDOW, &SINE_SHORT_WINDOW),
         };
 
         // Inverse MDCT

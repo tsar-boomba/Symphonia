@@ -5,14 +5,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Generates the pre-built codebook lookup tables used by the AAC and MP3 decoders.
+//! Generates the pre-built lookup tables used by the AAC and MP3 decoders.
 //!
-//! The decoders store their Huffman codebooks as `static` tables so that they are placed in
-//! read-only memory instead of being built on the heap at runtime. This tool builds those tables
-//! from the specification's codewords with `CodebookBuilder`, and overwrites:
+//! The decoders store their Huffman codebooks and floating-point tables as `static` tables so
+//! that they are placed in read-only memory instead of being built on the heap at runtime. This
+//! tool builds the codebooks from the specification's codewords with `CodebookBuilder`, computes
+//! the floating-point tables, and overwrites:
 //!
 //!  - `symphonia-codec-aac/src/aac/codebooks/tables.rs`
+//!  - `symphonia-codec-aac/src/aac/tables.rs`
 //!  - `symphonia-bundle-mp3/src/layer3/codebooks/tables.rs`
+//!  - `symphonia-bundle-mp3/src/tables.rs`
 //!
 //! To change the lookup table size/speed trade-off, edit `AAC_BITS_PER_READ` or
 //! `MP3_BITS_PER_READ`, then run `cargo run -p symphonia-codebook-gen`.
@@ -27,6 +30,7 @@ use critical_section as _;
 use symphonia_core::io::vlc::{BitOrder, Codebook, CodebookBuilder, CodebookEntry, Entry};
 
 mod aac;
+mod float_tables;
 mod mp3;
 
 /// The number of bits read per lookup for the AAC codebooks.
@@ -62,14 +66,18 @@ const fn v<E: CodebookEntry>(value: E::ValueType, code_len: u8) -> Entry<E> {
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
 
-    let aac_path = root.join("symphonia-codec-aac/src/aac/codebooks/tables.rs");
-    let mp3_path = root.join("symphonia-bundle-mp3/src/layer3/codebooks/tables.rs");
+    let files = [
+        ("symphonia-codec-aac/src/aac/codebooks/tables.rs", gen_aac()),
+        ("symphonia-codec-aac/src/aac/tables.rs", float_tables::gen_aac()),
+        ("symphonia-bundle-mp3/src/layer3/codebooks/tables.rs", gen_mp3()),
+        ("symphonia-bundle-mp3/src/tables.rs", float_tables::gen_mp3()),
+    ];
 
-    std::fs::write(&aac_path, gen_aac()).expect("write aac tables");
-    println!("wrote {}", aac_path.display());
-
-    std::fs::write(&mp3_path, gen_mp3()).expect("write mp3 tables");
-    println!("wrote {}", mp3_path.display());
+    for (path, contents) in files {
+        let path = root.join(path);
+        std::fs::write(&path, contents).expect("write tables");
+        println!("wrote {}", path.display());
+    }
 }
 
 /// Build a codebook with `CodebookBuilder`.

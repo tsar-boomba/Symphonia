@@ -5,7 +5,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::Lazy;
 use symphonia_core::audio::{AudioBuffer, AudioMut};
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr, ReadBytes};
@@ -14,34 +13,7 @@ use symphonia_core::util::bits::sign_extend_leq32_to_i32;
 use crate::common::*;
 use crate::layer12::LAYER12_SCALEFACTORS;
 use crate::synthesis;
-
-static FACTOR: Lazy<[f32; 16]> = Lazy::new(|| {
-    let mut factor = [0f32; 16];
-
-    for (i, factor) in factor.iter_mut().enumerate().skip(2) {
-        // As per ISO/IEC 11172-3, given the nb-bit signed raw sample, val, dequantization is
-        // defined as follows.
-        //
-        // fractional = val / 2^(nb - 1)
-        // dequantized = (2^nb) / (2^nb - 1) * (fractional * 2^(-nb + 1))
-        //
-        // After combining, expanding, and simplifying the above equations, the complete
-        // calculation can be expressed as below.
-        //
-        // [(2^nb) / ((2^nb) - 1)] * 2^(-nb + 1) * (val + 1)
-        // -------------------------------------
-        //                 factor
-        //
-        // Therefore, dequantization can be reduced to a single multiplication and addition.
-        // This lookup table generator computes factor for nb-bits between 2..15, inclusive.
-        let a = 1 << i;
-        let b = 1 << (i - 1);
-
-        *factor = (a as f32 / (a - 1) as f32) * (b as f32).recip();
-    }
-
-    factor
-});
+use crate::tables::LAYER1_FACTOR;
 
 /// Dequantize a sample, `raw`, of length `bits` bits.
 #[inline(always)]
@@ -134,7 +106,7 @@ impl Layer for Layer1 {
             }
         }
 
-        let factor = &FACTOR;
+        let factor = &LAYER1_FACTOR;
 
         // Decode samples.
         let mut samples = [[0f32; 384]; 2];

@@ -11,14 +11,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use alloc::boxed::Box;
-use alloc::vec::Vec;
 use symphonia_core::Float;
-use symphonia_core::Lazy;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
 
 use symphonia_common::mpeg::audio::AudioObjectType;
+
+use crate::aac::tables::{INTENSITY_SCF_TABLE, NORMAL_SCF_TABLE, POW43_TABLE};
 
 use crate::aac::codebooks;
 use crate::aac::common::*;
@@ -43,39 +42,8 @@ const NORMAL_SCALE_MIN: i16 = -100;
 /// The length of the `POW43` table.
 const POW43_TABLE_LEN: usize = 8192;
 
-/// Pre-computed table of y = x^(4/3).
-static POW43_TABLE: Lazy<Box<[f32; POW43_TABLE_LEN]>> = Lazy::new(|| {
-    let table: Vec<f32> = (0..POW43_TABLE_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
-    table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
-});
-
 /// The length of the `NORMAL_SCF_TABLE` table.
 const NORMAL_SCF_TABLE_LEN: usize = 256;
-
-/// Pre-computed table of y = 2^(0.25 * (x - 156)) for decoding scale factors for normal bands.
-/// This table is indexed relative to -100, the minimum encoded scale factor value for normal
-/// bands. Therefore, an input of 0 corresponds to -100.
-static NORMAL_SCF_TABLE: Lazy<Box<[f32; NORMAL_SCF_TABLE_LEN]>> = Lazy::new(|| {
-    let table: Vec<f32> = (0..NORMAL_SCF_TABLE_LEN)
-        .map(|i| 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN)))
-        .collect();
-
-    table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
-});
-
-/// The length of the `INTENSITY_SCF_TABLE` table.
-const INTENSITY_SCF_TABLE_LEN: usize = 256;
-
-/// Pre-computed table of y = 0.5^(0.25 * (x - 155)) for decoding scale factors for intensity
-/// coded bands. This table is indexed relative to -155, the minimum encoded scale factor value
-/// for intensity coded bands. Therefore, an input of 0 corresponds to -155.
-static INTENSITY_SCF_TABLE: Lazy<Box<[f32; INTENSITY_SCF_TABLE_LEN]>> = Lazy::new(|| {
-    let table: Vec<f32> = (0..INTENSITY_SCF_TABLE_LEN)
-        .map(|i| 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN)))
-        .collect();
-
-    table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
-});
 
 #[derive(Clone)]
 pub struct IcsInfo {

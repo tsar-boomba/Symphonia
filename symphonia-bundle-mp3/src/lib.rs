@@ -30,6 +30,7 @@ mod demuxer;
 mod decoder;
 #[cfg(any(feature = "mp1", feature = "mp2", feature = "mp3"))]
 mod synthesis;
+mod tables;
 
 // Shared layer 1 & 2 decoder support module.
 #[cfg(any(feature = "mp1", feature = "mp2"))]

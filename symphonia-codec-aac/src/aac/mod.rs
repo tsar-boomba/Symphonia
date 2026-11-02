@@ -33,7 +33,7 @@ mod common;
 mod cpe;
 mod dsp;
 mod ics;
-mod window;
+mod tables;
 
 use common::*;
 
