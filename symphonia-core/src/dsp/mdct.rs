@@ -15,10 +15,14 @@ use crate::dsp::complex::{Complex, ComplexFloat};
 use crate::dsp::fft::*;
 
 /// The Inverse Modified Discrete Transform (IMDCT).
-pub struct Imdct {
+///
+/// The twiddle factors are stored in `T`. An IMDCT instantiated with `new` or `new_scaled` computes
+/// and owns its twiddle factors, while an IMDCT known at compile-time may borrow a pre-computed
+/// `static` table with `from_twiddle`.
+pub struct Imdct<T = Box<[Complex<f32>]>> {
     fft: Fft,
     scratch: Box<[Complex<f32>]>,
-    twiddle: Box<[Complex<f32>]>,
+    twiddle: T,
 }
 
 impl Imdct {
@@ -60,6 +64,26 @@ impl Imdct {
 
         Imdct { fft: Fft::new(n2), scratch, twiddle: twiddle.into_boxed_slice() }
     }
+}
+
+impl<T: AsRef<[Complex<f32>]>> Imdct<T> {
+    /// Instantiate a N-point IMDCT using pre-computed twiddle factors, where N is twice the number
+    /// of twiddle factors.
+    ///
+    /// The twiddle factors must be those that `new_scaled` would compute for the same N and scale.
+    pub fn from_twiddle(twiddle: T) -> Self {
+        let n2 = twiddle.as_ref().len();
+
+        // The FFT requires a power-of-two N.
+        assert!(n2.is_power_of_two(), "n must be a power of two");
+        // A complex FFT of size N/2 is used to compute the IMDCT.
+        assert!(n2 <= MAX_SIZE, "maximum size exceeded");
+
+        // Allocate scratch for the IMDCT.
+        let scratch = vec![Default::default(); n2].into_boxed_slice();
+
+        Imdct { fft: Fft::new(n2), scratch, twiddle }
+    }
 
     /// Performs the the N-point Inverse Modified Discrete Cosine Transform.
     ///
@@ -79,8 +103,10 @@ impl Imdct {
         // The output length must be 2x the spectrum length.
         assert_eq!(out.len(), 2 * n);
 
+        let twiddle = self.twiddle.as_ref();
+
         // Pre-FFT twiddling and packing of the real input signal values into complex signal values.
-        for (i, (&w, t)) in self.twiddle.iter().zip(self.scratch.iter_mut()).enumerate() {
+        for (i, (&w, t)) in twiddle.iter().zip(self.scratch.iter_mut()).enumerate() {
             let even = spec[i * 2];
             let odd = -spec[n - 1 - i * 2];
 
@@ -99,7 +125,7 @@ impl Imdct {
 
         // Post-FFT twiddling and processing to expand the N/2 complex output values into 2N real
         // output samples.
-        for (i, (x, &w)) in self.scratch[..n4].iter().zip(self.twiddle[..n4].iter()).enumerate() {
+        for (i, (x, &w)) in self.scratch[..n4].iter().zip(twiddle[..n4].iter()).enumerate() {
             // The real and imaginary components of the post-twiddled FFT samples are used to
             // generate 4 reak output samples. Using the first half of the complex FFT output,
             // populate each of the 4 output vectors.
@@ -119,7 +145,7 @@ impl Imdct {
             vec3[fi] = val.re;
         }
 
-        for (i, (x, &w)) in self.scratch[n4..].iter().zip(self.twiddle[n4..].iter()).enumerate() {
+        for (i, (x, &w)) in self.scratch[n4..].iter().zip(twiddle[n4..].iter()).enumerate() {
             // Using the second half of the FFT output samples, finish populating each of the 4
             // output vectors.
             let val = w * x.conj();

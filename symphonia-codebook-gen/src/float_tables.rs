@@ -149,10 +149,42 @@ pub fn aac_kbd_window(alpha: f32, size: usize) -> Vec<f32> {
     kb.iter().map(|&kb| libm::sqrt(kb / sum) as f32).collect()
 }
 
+/// IMDCT twiddle factors as computed by `Imdct::new_scaled(n, scale)`, as (re, im) pairs.
+pub fn imdct_twiddle(n: usize, scale: f64) -> Vec<(f32, f32)> {
+    let n2 = n / 2;
+
+    let alpha = 1.0 / 8.0 + if scale.is_sign_positive() { 0.0 } else { n2 as f32 };
+    let pi_n = PI / n as f32;
+    let sqrt_scale = libm::sqrtf((scale as f32).abs());
+
+    (0..n2)
+        .map(|k| {
+            let theta = pi_n * (alpha + k as f32);
+            (sqrt_scale * libm::cosf(theta), sqrt_scale * libm::sinf(theta))
+        })
+        .collect()
+}
+
+/// Write IMDCT twiddle factors as a `Complex<f32>` table.
+fn write_twiddle_table(out: &mut String, vis: &str, name: &str, doc: &str, twiddle: &[(f32, f32)]) {
+    write_item_header(out, doc, None);
+    writeln!(out, "{vis} static {name}: [Complex<f32>; {}] = [", twiddle.len()).unwrap();
+    write_list(out, twiddle, 4, 4, |&(re, im)| format!("c({re:?}, {im:?})"));
+    writeln!(out, "];").unwrap();
+}
+
 pub fn gen_aac() -> String {
     let mut out = String::new();
 
     write_header(&mut out, "AAC decoder");
+
+    writeln!(out).unwrap();
+    writeln!(out, "use symphonia_core::dsp::complex::Complex;").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "/// A complex value.").unwrap();
+    writeln!(out, "const fn c(re: f32, im: f32) -> Complex<f32> {{").unwrap();
+    writeln!(out, "    Complex::new(re, im)").unwrap();
+    writeln!(out, "}}").unwrap();
 
     let vis = "pub(super)";
 
@@ -221,6 +253,22 @@ pub fn gen_aac() -> String {
         "The first half of the sine window for short blocks.",
         None,
         &aac_sine_window(128),
+    );
+
+    write_twiddle_table(
+        &mut out,
+        vis,
+        "IMDCT_LONG_TWIDDLE",
+        "Twiddle factors for the 1024-point IMDCT with a scale of 1/2048.",
+        &imdct_twiddle(1024, 1.0 / 2048.0),
+    );
+
+    write_twiddle_table(
+        &mut out,
+        vis,
+        "IMDCT_SHORT_TWIDDLE",
+        "Twiddle factors for the 128-point IMDCT with a scale of 1/256.",
+        &imdct_twiddle(128, 1.0 / 256.0),
     );
 
     out

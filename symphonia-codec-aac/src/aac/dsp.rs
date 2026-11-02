@@ -11,17 +11,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_core::dsp::complex::Complex;
 use symphonia_core::dsp::mdct::Imdct;
 
 use crate::aac::common::*;
+use crate::aac::tables::{IMDCT_LONG_TWIDDLE, IMDCT_SHORT_TWIDDLE};
 use crate::aac::tables::{KBD_LONG_WINDOW, KBD_SHORT_WINDOW, SINE_LONG_WINDOW, SINE_SHORT_WINDOW};
 
 const SHORT_WIN_POINT0: usize = 512 - 64;
 const SHORT_WIN_POINT1: usize = 512 + 64;
 
 pub struct Dsp {
-    imdct_long: Imdct,
-    imdct_short: Imdct,
+    imdct_long: Imdct<&'static [Complex<f32>]>,
+    imdct_short: Imdct<&'static [Complex<f32>]>,
     pcm_long: [f32; 2048],
     pcm_short: [f32; 1152],
 }
@@ -29,8 +31,8 @@ pub struct Dsp {
 impl Dsp {
     pub fn new() -> Self {
         Self {
-            imdct_long: Imdct::new_scaled(1024, 1.0 / 2048.0),
-            imdct_short: Imdct::new_scaled(128, 1.0 / 256.0),
+            imdct_long: Imdct::from_twiddle(&IMDCT_LONG_TWIDDLE),
+            imdct_short: Imdct::from_twiddle(&IMDCT_SHORT_TWIDDLE),
             pcm_long: [0.0; 2048],
             pcm_short: [0.0; 1152],
         }
