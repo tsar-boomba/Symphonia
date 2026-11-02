@@ -11,6 +11,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::boxed::Box;
+use alloc::vec;
+
 use symphonia_core::dsp::complex::Complex;
 use symphonia_core::dsp::mdct::Imdct;
 
@@ -24,8 +27,14 @@ const SHORT_WIN_POINT1: usize = 512 + 64;
 pub struct Dsp {
     imdct_long: Imdct<&'static [Complex<f32>]>,
     imdct_short: Imdct<&'static [Complex<f32>]>,
-    pcm_long: [f32; 2048],
-    pcm_short: [f32; 1152],
+    // Boxed so that `Dsp` (and the decoder) is small enough to construct and move on the stack.
+    pcm_long: Box<[f32; 2048]>,
+    pcm_short: Box<[f32; 1152]>,
+}
+
+/// Allocate a zeroed array directly on the heap, without a temporary on the stack.
+fn zeroed_box<const N: usize>() -> Box<[f32; N]> {
+    vec![0.0; N].into_boxed_slice().try_into().expect("boxed slice of length N")
 }
 
 impl Dsp {
@@ -33,8 +42,8 @@ impl Dsp {
         Self {
             imdct_long: Imdct::from_twiddle(&IMDCT_LONG_TWIDDLE),
             imdct_short: Imdct::from_twiddle(&IMDCT_SHORT_TWIDDLE),
-            pcm_long: [0.0; 2048],
-            pcm_short: [0.0; 1152],
+            pcm_long: zeroed_box(),
+            pcm_short: zeroed_box(),
         }
     }
 
@@ -60,7 +69,7 @@ impl Dsp {
 
         // Inverse MDCT
         if seq != EIGHT_SHORT_SEQUENCE {
-            self.imdct_long.imdct(coeffs, &mut self.pcm_long);
+            self.imdct_long.imdct(coeffs, &mut self.pcm_long[..]);
         }
         else {
             for (ain, aout) in coeffs.chunks_exact(128).zip(self.pcm_long.chunks_exact_mut(256)) {
