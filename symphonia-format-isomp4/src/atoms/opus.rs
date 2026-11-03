@@ -91,7 +91,6 @@ fn dops_to_opus_head(extra_data: &mut [u8]) {
 }
 
 impl OpusAtom {
-
     pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
         let mut reader = BufReader::new(&self.extra_data);
 

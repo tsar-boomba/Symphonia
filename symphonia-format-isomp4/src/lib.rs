@@ -19,6 +19,7 @@ extern crate alloc;
 
 mod atoms;
 mod demuxer;
+mod edit;
 mod fp;
 mod stream;
 

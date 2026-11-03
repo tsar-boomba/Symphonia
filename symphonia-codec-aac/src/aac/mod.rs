@@ -14,7 +14,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use symphonia_core::audio::{
-    AsGenericAudioBufferRef, AudioBuffer, AudioSpec, GenericAudioBufferRef,
+    AsGenericAudioBufferRef, Audio, AudioBuffer, AudioSpec, GenericAudioBufferRef,
 };
 use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
@@ -49,10 +49,12 @@ pub struct AacDecoder {
     sbinfo: GASubbandInfo,
     params: AudioCodecParameters,
     buf: AudioBuffer<f32>,
+    /// Trim delay and padding frames, as marked on packets by the demuxer.
+    gapless: bool,
 }
 
 impl AacDecoder {
-    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+    pub fn try_new(params: &AudioCodecParameters, opts: &AudioDecoderOptions) -> Result<Self> {
         // This decoder only supports AAC.
         if params.codec != CODEC_ID_AAC {
             return unsupported_error("aac: invalid codec");
@@ -107,7 +109,15 @@ impl AacDecoder {
 
         let buf = AudioBuffer::new(AudioSpec::new(asc.sample_rate, channels), asc.samples);
 
-        Ok(AacDecoder { asc, pairs: Vec::new(), dsp: dsp::Dsp::new(), sbinfo, params, buf })
+        Ok(AacDecoder {
+            asc,
+            pairs: Vec::new(),
+            dsp: dsp::Dsp::new(),
+            sbinfo,
+            params,
+            buf,
+            gapless: opts.gapless,
+        })
     }
 
     fn set_pair(&mut self, pair_no: usize, channel: usize, pair: bool) -> Result<()> {
@@ -241,6 +251,19 @@ impl AacDecoder {
         match self.asc.object_type {
             AudioObjectType::Lc => self.decode_ga(&mut bs)?,
             _ => return unsupported_error("aac: object type"),
+        }
+
+        // Trim delay (encoder priming) and padding frames.
+        if self.gapless {
+            self.buf.trim(packet.trim_start.get() as usize, packet.trim_end.get() as usize);
+
+            // The packet's duration is the number of valid frames. A container may give the last
+            // packet a shorter duration than the 1024 frames it decodes to (e.g., the final stts
+            // entry in an MP4 written by ffmpeg) to mark the rest as padding.
+            let valid = packet.dur.get() as usize;
+            if valid > 0 && valid < self.buf.frames() {
+                self.buf.truncate(valid);
+            }
         }
 
         Ok(())

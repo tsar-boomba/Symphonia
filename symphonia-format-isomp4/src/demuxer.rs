@@ -30,6 +30,7 @@ use hashbrown::HashMap;
 
 use crate::atoms::{AtomError, AtomIterator, AtomType, ReadAtom};
 use crate::atoms::{FtypAtom, MetaAtom, MoofAtom, MoovAtom, SidxAtom, TrakAtom};
+use crate::edit::TrackEdit;
 use crate::stream::*;
 
 use log::{debug, info, trace, warn};
@@ -51,10 +52,19 @@ pub struct TrackState {
     next_sample: u32,
     /// The current sample byte position relative to the start of the track.
     next_sample_pos: u64,
+    /// The presented part of the track's media from its edit list, if it trims anything.
+    /// Timestamps are shifted so that `edit.start` is presented at 0, and the media outside of
+    /// the edit is marked for trimming on the packets.
+    edit: Option<TrackEdit>,
 }
 
 impl TrackState {
-    pub fn make(track_num: usize, trak: &TrakAtom, timespan: &TimeSpan) -> (Self, Track) {
+    pub fn make(
+        track_num: usize,
+        trak: &TrakAtom,
+        timespan: &TimeSpan,
+        movie_timescale: NonZero<u32>,
+    ) -> (Self, Track) {
         let mut track = Track::new(trak.tkhd.id);
 
         // Create the codec parameters using the sample description atom.
@@ -80,8 +90,8 @@ impl TrackState {
         }
 
         // Opus streams start with `pre_skip` frames of decoder warm-up that must be discarded.
-        // The edit list is meant to express this, but edits aren't supported, so take it from the
-        // Opus identification header instead (muxers write the same value to both).
+        // The edit list (below) normally says the same and takes precedence, but use the Opus
+        // identification header in case there is no edit list.
         if let Some(CodecParameters::Audio(audio)) = &track.codec_params {
             if audio.codec == CODEC_ID_OPUS {
                 let pre_skip = audio.extra_data.as_deref().and_then(|extra| {
@@ -93,15 +103,91 @@ impl TrackState {
             }
         }
 
+        let edit = Self::apply_edit(&mut track, trak, timespan, movie_timescale);
+
         let state = Self {
             track_num,
             track_id: trak.tkhd.id,
             cur_seg: 0,
             next_sample: 0,
             next_sample_pos: 0,
+            edit,
         };
 
         (state, track)
+    }
+}
+
+impl TrackState {
+    /// The media timestamp presented at time 0.
+    fn edit_start(&self) -> u64 {
+        self.edit.map_or(0, |edit| edit.start)
+    }
+
+    /// Interprets the track's edit list and updates the track's delay, padding, and duration to
+    /// match. Returns the edit if it should be applied to the track's packets.
+    ///
+    /// Edits are only applied to audio tracks whose timescale is the sample rate, so that
+    /// timestamps count frames and can be used to trim decoded audio. Other tracks are presented
+    /// in full, as before.
+    fn apply_edit(
+        track: &mut Track,
+        trak: &TrakAtom,
+        timespan: &TimeSpan,
+        movie_timescale: NonZero<u32>,
+    ) -> Option<TrackEdit> {
+        let elst = trak.edts.as_ref()?.elst.as_ref()?;
+
+        let Some(CodecParameters::Audio(audio)) = &track.codec_params
+        else {
+            return None;
+        };
+
+        if audio.sample_rate != Some(timespan.timescale.get()) {
+            debug!("isomp4: track timescale is not the sample rate, ignoring the edit list");
+            return None;
+        }
+
+        let edit = TrackEdit::from_elst(elst, movie_timescale, timespan.timescale)?;
+
+        // The duration of all the media, if known. It's unknown (0) for fragmented files without
+        // a duration.
+        let media_dur = Some(timespan.duration.get()).filter(|&d| d > 0);
+
+        if let Some(media_dur) = media_dur {
+            if edit.start >= media_dur {
+                warn!("isomp4: edit starts after the end of the media, ignoring the edit list");
+                return None;
+            }
+        }
+
+        let Ok(delay) = u32::try_from(edit.start)
+        else {
+            warn!("isomp4: edit start out of range, ignoring the edit list");
+            return None;
+        };
+
+        // The end of the presented media. An edit may run past the end of the media, in which
+        // case there's no padding.
+        let end = match (edit.end, media_dur) {
+            (Some(end), Some(media_dur)) => Some(end.min(media_dur)),
+            (end, media_dur) => end.or(media_dur),
+        };
+
+        track.with_delay(delay);
+
+        if let (Some(end), Some(media_dur)) = (end, media_dur) {
+            if let Ok(padding) = u32::try_from(media_dur - end) {
+                track.with_padding(padding);
+            }
+        }
+
+        if let Some(end) = end {
+            let num_frames = end - edit.start;
+            track.with_num_frames(num_frames).with_duration(Duration::new(num_frames));
+        }
+
+        Some(TrackEdit { start: edit.start, end })
     }
 }
 
@@ -325,16 +411,14 @@ impl<'s> IsoMp4Reader<'s> {
             }
             else {
                 // If non-fragmented, use the total duration (media timescale) from the track's
-                // stts atom. Since edits are not currently supported, this is the duration of all
-                // samples that will be yielded.
-                //
-                // TODO: Support edits. Once supported, prefer the tkhd duration.
+                // stts atom. This is the duration of all samples that will be yielded. If the
+                // track has an edit, `TrackState::make` derives the presented duration from it.
                 let duration = Duration::from(trak.mdia.minf.stbl.stts.total_duration);
 
                 TimeSpan::new(trak.mdia.mdhd.timescale, duration)
             };
 
-            let (track_state, track) = TrackState::make(t, trak, &timespan);
+            let (track_state, track) = TrackState::make(t, trak, &timespan, moov.mvhd.timescale);
 
             tracks.push(track);
             track_states.push(track_state);
@@ -377,8 +461,11 @@ impl<'s> IsoMp4Reader<'s> {
             for (seg_idx_delta, seg) in self.segs[state.cur_seg..].iter().enumerate() {
                 // Try to get the timestamp for the next sample of the track from the segment.
                 if let Some(timing) = seg.sample_timing(state.track_num, state.next_sample)? {
-                    // Calculate the presentation time using the timestamp.
-                    let Some(ts) = timing.ts.try_into().ok()
+                    // Calculate the presentation time using the timestamp. With an edit, the
+                    // presentation starts at the edit's start, so earlier samples are negative.
+                    let Some(ts) = Timestamp::try_from(timing.ts)
+                        .ok()
+                        .and_then(|ts| ts.checked_sub(Duration::new(state.edit_start())))
                     else {
                         return Ok(None);
                     };
@@ -535,10 +622,13 @@ impl<'s> IsoMp4Reader<'s> {
             sample_num: u32,
         }
 
-        // Can only seek to 0 or positive timestamps.
-        if ts.is_negative() {
-            return seek_error(SeekErrorKind::OutOfRange);
-        }
+        // `ts` is a presentation timestamp. Find the media timestamp, which is shifted by the
+        // track's edit. Can only seek to media timestamps >= 0 (presentation >= -delay).
+        let edit_start = Duration::new(self.track_states[track_num].edit_start());
+        let media_ts = match ts.checked_add(edit_start) {
+            Some(media_ts) if !media_ts.is_negative() => media_ts,
+            _ => return seek_error(SeekErrorKind::OutOfRange),
+        };
 
         let mut seg_skip = 0;
 
@@ -546,7 +636,7 @@ impl<'s> IsoMp4Reader<'s> {
             // Iterate over all segments and attempt to find the segment and sample number that
             // contains the desired timestamp. Skip segments already examined.
             for (seg_idx, seg) in self.segs.iter().enumerate().skip(seg_skip) {
-                if let Some(sample_num) = seg.ts_sample(track_num, ts.get() as u64)? {
+                if let Some(sample_num) = seg.ts_sample(track_num, media_ts.get() as u64)? {
                     break 'locate SeekLocation { seg_idx, sample_num };
                 }
 
@@ -568,11 +658,12 @@ impl<'s> IsoMp4Reader<'s> {
             None => return seek_error(SeekErrorKind::OutOfRange),
         };
 
-        // Try to convert the sample timing to a timestamp.
-        let actual_ts = match Timestamp::try_from(timing.ts) {
-            Ok(ts) => ts,
-            _ => return seek_error(SeekErrorKind::OutOfRange),
-        };
+        // Try to convert the sample timing to a presentation timestamp.
+        let actual_ts =
+            match Timestamp::try_from(timing.ts).ok().and_then(|ts| ts.checked_sub(edit_start)) {
+                Some(ts) => ts,
+                _ => return seek_error(SeekErrorKind::OutOfRange),
+            };
 
         // Get the sample information.
         let data_desc = seg.sample_data(track_num, seek_loc.sample_num, true)?;
@@ -676,12 +767,28 @@ impl FormatReader for IsoMp4Reader<'_> {
         let data =
             self.iter.read_raw_boxed_slice_exact(sample_info.pos, sample_info.len as usize).await?;
 
-        Ok(Some(Packet::new(
-            next_sample_info.track_id,
-            next_sample_info.ts,
-            next_sample_info.dur,
-            data,
-        )))
+        let packet = match self.track_states[next_sample_info.track_num].edit {
+            // Frames before presentation time 0 are delay, and frames past the end of the edit
+            // are padding. Mark both for trimming.
+            Some(edit) => {
+                let end_ts = edit.end.and_then(|end| Timestamp::try_from(end - edit.start).ok());
+
+                PacketBuilder::new()
+                    .track_id(next_sample_info.track_id)
+                    .pts(next_sample_info.ts)
+                    .trimmed_dur(next_sample_info.dur, end_ts)
+                    .data(data)
+                    .build()
+            }
+            None => Packet::new(
+                next_sample_info.track_id,
+                next_sample_info.ts,
+                next_sample_info.dur,
+                data,
+            ),
+        };
+
+        Ok(Some(packet))
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
