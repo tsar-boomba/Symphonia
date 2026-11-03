@@ -9,7 +9,9 @@ use core::pin::Pin;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use symphonia_common::xiph::audio::opus::OpusHead;
 use symphonia_core::codecs::CodecParameters;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia_core::{async_trait, support_format};
 
 use symphonia_core::errors::{
@@ -73,6 +75,20 @@ impl TrackState {
             if let Some(sample_rate) = audio.sample_rate {
                 if sample_rate == timespan.timescale.get() {
                     track.with_num_frames(timespan.duration.get());
+                }
+            }
+        }
+
+        // Opus streams start with `pre_skip` frames of decoder warm-up that must be discarded.
+        // The edit list is meant to express this, but edits aren't supported, so take it from the
+        // Opus identification header instead (muxers write the same value to both).
+        if let Some(CodecParameters::Audio(audio)) = &track.codec_params {
+            if audio.codec == CODEC_ID_OPUS {
+                let pre_skip = audio.extra_data.as_deref().and_then(|extra| {
+                    OpusHead::read(&mut BufReader::new(extra), 1).ok().map(|h| h.pre_skip)
+                });
+                if let Some(pre_skip) = pre_skip.filter(|&p| p > 0) {
+                    track.with_delay(u32::from(pre_skip));
                 }
             }
         }

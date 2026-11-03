@@ -64,20 +64,65 @@ impl Atom for OpusAtom {
             return unsupported_error("isomp4 (opus): unsupported opus version");
         }
 
+        dops_to_opus_head(&mut extra_data);
+
         Ok(OpusAtom { extra_data })
     }
 }
 
+/// Rewrites `OpusHead` magic + `dOps` atom data in place into an Ogg Opus identification header
+/// (RFC 7845, section 5.1), which is what decoders and [`opus::OpusHead::read`] expect.
+///
+/// The two carry the same fields, but `dOps` stores its multi-byte fields big-endian and its
+/// version is 0, while the Ogg header is little-endian with version 1. The channel mapping table
+/// after the fixed fields is single bytes in both, so it is left as is.
+///
+/// `extra_data` must be at least 19 bytes (magic + the fixed `dOps` fields).
+fn dops_to_opus_head(extra_data: &mut [u8]) {
+    const VERSION: usize = OPUS_MAGIC_LEN;
+    const PRE_SKIP: usize = OPUS_MAGIC_LEN + 2;
+    const SAMPLE_RATE: usize = OPUS_MAGIC_LEN + 4;
+    const GAIN: usize = OPUS_MAGIC_LEN + 8;
+
+    extra_data[VERSION] = 1;
+    extra_data[PRE_SKIP..PRE_SKIP + 2].reverse();
+    extra_data[SAMPLE_RATE..SAMPLE_RATE + 4].reverse();
+    extra_data[GAIN..GAIN + 2].reverse();
+}
+
 impl OpusAtom {
+
     pub fn fill_audio_sample_entry(self, entry: &mut AudioSampleEntry) {
         let mut reader = BufReader::new(&self.extra_data);
 
-        if let Ok(opus_head) = opus::OpusHead::read(&mut reader, 0) {
+        if let Ok(opus_head) = opus::OpusHead::read(&mut reader, 1) {
             entry.channels = Some(opus_head.channels);
             entry.sample_rate = 48_000.0;
         }
 
         entry.codec_id = CODEC_ID_OPUS;
         entry.extra_data = Some(self.extra_data);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dops_converts_to_ogg_opus_head() {
+        // From a real file: dOps version 0, 2 channels, pre-skip 312, 48 kHz, gain -256 (-1 dB),
+        // mapping family 0. Big-endian fields.
+        let mut extra = *b"OpusHead\x00\x02\x01\x38\x00\x00\xbb\x80\xff\x00\x00";
+        dops_to_opus_head(&mut extra);
+
+        // What an Ogg Opus file would carry: version 1, little-endian fields.
+        assert_eq!(&extra, b"OpusHead\x01\x02\x38\x01\x80\xbb\x00\x00\x00\xff\x00");
+
+        let head = opus::OpusHead::read(&mut BufReader::new(&extra), 1).unwrap();
+        assert_eq!(head.pre_skip, 312);
+        assert_eq!(head.original_sample_rate, 48_000);
+        assert_eq!(head.gain, -256);
+        assert_eq!(head.channels.count(), 2);
     }
 }
