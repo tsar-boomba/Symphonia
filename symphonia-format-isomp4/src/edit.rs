@@ -14,6 +14,9 @@
 //!
 //! Only that form (optionally preceded by empty edits) is supported. Anything else, such as
 //! multiple edits, dwells, or non-unity rates, is ignored and the whole media is presented.
+//!
+//! Apple's encoders (iTunes, Music, `afconvert`) don't write an edit list. They signal the same
+//! thing with the `iTunSMPB` iTunes metadata tag instead, which is also interpreted here.
 
 use core::num::NonZero;
 
@@ -91,6 +94,36 @@ impl TrackEdit {
     }
 }
 
+impl TrackEdit {
+    /// Interprets the value of an `iTunSMPB` tag, which is a list of hex numbers separated by
+    /// spaces, such as `" 00000000 00000840 00000270 00000000000D7550 00000000 ..."`. The second
+    /// is the encoder delay, the third the padding, and the fourth the number of valid frames,
+    /// all in the track's sample rate. Returns `None` if the value is malformed or doesn't trim
+    /// anything.
+    pub(crate) fn from_itunsmpb(value: &str) -> Option<Self> {
+        let mut fields = value.split_ascii_whitespace().map(|f| u64::from_str_radix(f, 16));
+        let _reserved = fields.next()?.ok()?;
+        let delay = fields.next()?.ok()?;
+        let _padding = fields.next()?.ok()?;
+        let valid_frames = fields.next()?.ok()?;
+
+        // The number of valid frames is sometimes left as 0, in which case only the delay is
+        // known.
+        let end = match valid_frames {
+            0 => None,
+            n => Some(delay.checked_add(n)?),
+        };
+
+        if delay == 0 && end.is_none() {
+            return None;
+        }
+
+        debug!("isomp4: iTunSMPB presents media time {delay}..{end:?}");
+
+        Some(TrackEdit { start: delay, end })
+    }
+}
+
 /// Converts `value` from timescale `from` to timescale `to`, rounding to the nearest unit.
 fn rescale(value: u64, from: NonZero<u32>, to: NonZero<u32>) -> Option<u64> {
     let from = u128::from(from.get());
@@ -150,6 +183,29 @@ mod tests {
         assert_eq!(TrackEdit::from_entries(&[], ts(1000), ts(1000)), None);
         assert_eq!(TrackEdit::from_entries(&[edit(0, 0)], ts(1000), ts(1000)), None);
         assert_eq!(TrackEdit::from_entries(&[edit(10, -1)], ts(1000), ts(1000)), None);
+    }
+
+    #[test]
+    fn itunsmpb() {
+        // From an `afconvert` AAC file: 2112 frames of delay, 624 of padding, 882000 valid.
+        let smpb = " 00000000 00000840 00000270 00000000000D7550 00000000 00000000 00000000 \
+                    00000000 00000000 00000000 00000000 00000000";
+        assert_eq!(
+            TrackEdit::from_itunsmpb(smpb),
+            Some(TrackEdit { start: 2112, end: Some(2112 + 882_000) })
+        );
+
+        // Unknown length: only the delay
+        assert_eq!(
+            TrackEdit::from_itunsmpb(" 00000000 00000840 00000000 0000000000000000"),
+            Some(TrackEdit { start: 2112, end: None })
+        );
+
+        // Nothing to trim, or malformed
+        assert_eq!(TrackEdit::from_itunsmpb(" 00000000 00000000 00000000 0000000000000000"), None);
+        assert_eq!(TrackEdit::from_itunsmpb(" 00000000 00000840 00000270"), None);
+        assert_eq!(TrackEdit::from_itunsmpb(" 00000000 zz 00000270 0000000000000010"), None);
+        assert_eq!(TrackEdit::from_itunsmpb(""), None);
     }
 
     #[test]

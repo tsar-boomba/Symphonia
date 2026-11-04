@@ -21,6 +21,7 @@ use symphonia_core::util::{bits, text};
 use symphonia_metadata::utils::{id3v1, itunes};
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, ReadAtom, Result, decode_error};
+use crate::edit::TrackEdit;
 
 use log::{debug, warn};
 
@@ -528,11 +529,25 @@ async fn add_rating_tag<R: ReadAtom>(
     Ok(())
 }
 
+/// Adds a free-form tag. If it's Apple's gapless playback tag (`iTunSMPB`), also returns the edit
+/// it describes.
 async fn add_freeform_tag<R: ReadAtom>(
     iter: &mut AtomIterator<R>,
     builder: &mut MetadataBuilder,
-) -> Result<()> {
+) -> Result<Option<TrackEdit>> {
     let tag = iter.read_atom::<MetaTagAtom>().await?;
+
+    let is_itunsmpb = tag.mean.as_ref().is_some_and(|m| m.value == "com.apple.iTunes")
+        && tag.name.as_ref().is_some_and(|n| n.value == "iTunSMPB");
+    let gapless = if is_itunsmpb {
+        tag.values
+            .first()
+            .and_then(|v| core::str::from_utf8(&v.data).ok())
+            .and_then(TrackEdit::from_itunsmpb)
+    }
+    else {
+        None
+    };
 
     // A user-defined tag should only have 1 value.
     for value_atom in tag.values.iter() {
@@ -546,7 +561,7 @@ async fn add_freeform_tag<R: ReadAtom>(
         }
     }
 
-    Ok(())
+    Ok(gapless)
 }
 
 /// The location of an image in a cover art tag.
@@ -801,11 +816,14 @@ macro_rules! map_std_uint {
 pub struct IlstAtom {
     /// Metadata revision.
     pub metadata: MetadataRevision,
+    /// The presented part of the audio, from Apple's `iTunSMPB` gapless playback tag.
+    pub gapless: Option<TrackEdit>,
 }
 
 impl Atom for IlstAtom {
     async fn read<R: ReadAtom>(it: &mut AtomIterator<R>, _header: &AtomHeader) -> Result<Self> {
         let mut mb = MetadataBuilder::new(ISOMP4_METADATA_INFO);
+        let mut gapless = None;
 
         while let Some(header) = it.next_header().await? {
             // Ignore standard atoms, check if other is a metadata atom.
@@ -1001,7 +1019,11 @@ impl Atom for IlstAtom {
                     add_generic_tag(it, &mut mb, map_std_str!(StandardTag::Writer)).await?
                 }
                 // Free-form tag atom.
-                AtomType::FreeFormTag => add_freeform_tag(it, &mut mb).await?,
+                AtomType::FreeFormTag => {
+                    if let Some(edit) = add_freeform_tag(it, &mut mb).await? {
+                        gapless = Some(edit);
+                    }
+                }
                 // Completely unknown tag atom.
                 AtomType::Other(atom_type) => {
                     debug!("unknown metadata sub-atom {atom_type:x?}");
@@ -1013,7 +1035,7 @@ impl Atom for IlstAtom {
             }
         }
 
-        Ok(IlstAtom { metadata: mb.build() })
+        Ok(IlstAtom { metadata: mb.build(), gapless })
     }
 }
 

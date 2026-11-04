@@ -59,11 +59,14 @@ pub struct TrackState {
 }
 
 impl TrackState {
+    /// Creates the state and description of a track. `itunes_gapless` is the edit from Apple's
+    /// gapless playback tag (`iTunSMPB`), which an audio track takes.
     pub fn make(
         track_num: usize,
         trak: &TrakAtom,
         timespan: &TimeSpan,
         movie_timescale: NonZero<u32>,
+        itunes_gapless: &mut Option<TrackEdit>,
     ) -> (Self, Track) {
         let mut track = Track::new(trak.tkhd.id);
 
@@ -103,7 +106,7 @@ impl TrackState {
             }
         }
 
-        let edit = Self::apply_edit(&mut track, trak, timespan, movie_timescale);
+        let edit = Self::apply_edit(&mut track, trak, timespan, movie_timescale, itunes_gapless);
 
         let state = Self {
             track_num,
@@ -124,8 +127,9 @@ impl TrackState {
         self.edit.map_or(0, |edit| edit.start)
     }
 
-    /// Interprets the track's edit list and updates the track's delay, padding, and duration to
-    /// match. Returns the edit if it should be applied to the track's packets.
+    /// Interprets the track's edit list, or for an audio track without one, Apple's gapless
+    /// playback tag (`iTunSMPB`, taken from `itunes_gapless`). Updates the track's delay, padding,
+    /// and duration to match. Returns the edit if it should be applied to the track's packets.
     ///
     /// Edits are only applied to audio tracks whose timescale is the sample rate, so that
     /// timestamps count frames and can be used to trim decoded audio. Other tracks are presented
@@ -135,20 +139,26 @@ impl TrackState {
         trak: &TrakAtom,
         timespan: &TimeSpan,
         movie_timescale: NonZero<u32>,
+        itunes_gapless: &mut Option<TrackEdit>,
     ) -> Option<TrackEdit> {
-        let elst = trak.edts.as_ref()?.elst.as_ref()?;
-
         let Some(CodecParameters::Audio(audio)) = &track.codec_params
         else {
             return None;
         };
 
+        // This is the audio track, so the gapless tag is for it, even if unused.
+        let itunes_gapless = itunes_gapless.take();
+
         if audio.sample_rate != Some(timespan.timescale.get()) {
-            debug!("isomp4: track timescale is not the sample rate, ignoring the edit list");
+            debug!("isomp4: track timescale is not the sample rate, ignoring edits");
             return None;
         }
 
-        let edit = TrackEdit::from_elst(elst, movie_timescale, timespan.timescale)?;
+        // An edit list that trims takes precedence over the tag.
+        let elst = trak.edts.as_ref().and_then(|edts| edts.elst.as_ref());
+        let edit = elst
+            .and_then(|elst| TrackEdit::from_elst(elst, movie_timescale, timespan.timescale))
+            .or(itunes_gapless)?;
 
         // The duration of all the media, if known. It's unknown (0) for fragmented files without
         // a duration.
@@ -156,14 +166,14 @@ impl TrackState {
 
         if let Some(media_dur) = media_dur {
             if edit.start >= media_dur {
-                warn!("isomp4: edit starts after the end of the media, ignoring the edit list");
+                warn!("isomp4: edit starts after the end of the media, ignoring it");
                 return None;
             }
         }
 
         let Ok(delay) = u32::try_from(edit.start)
         else {
-            warn!("isomp4: edit start out of range, ignoring the edit list");
+            warn!("isomp4: edit start out of range, ignoring it");
             return None;
         };
 
@@ -275,6 +285,8 @@ impl<'s> IsoMp4Reader<'s> {
         };
 
         let mut metadata = opts.external_data.metadata.unwrap_or_default();
+        // Apple's gapless playback tag, if found in a top-level meta atom.
+        let mut top_level_gapless = None;
 
         // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
         let mut it = AtomIterator::new(mss, total_len);
@@ -332,6 +344,8 @@ impl<'s> IsoMp4Reader<'s> {
                 AtomType::Meta => {
                     // Read the metadata atom and append it to the log.
                     let mut meta = it.read_atom::<MetaAtom>().await?;
+
+                    top_level_gapless = top_level_gapless.or(meta.gapless);
 
                     if let Some(rev) = meta.take_metadata() {
                         metadata.push(rev);
@@ -397,6 +411,10 @@ impl<'s> IsoMp4Reader<'s> {
         let mut tracks = Vec::with_capacity(moov.traks.len());
         let mut track_states = Vec::with_capacity(moov.traks.len());
 
+        // Apple's gapless playback tag describes the file's (only) audio track. It's given to the
+        // first audio track, which takes it.
+        let mut itunes_gapless = moov.itunes_gapless().or(top_level_gapless);
+
         for (t, trak) in moov.traks.iter().enumerate() {
             // Determine the timespan of the track.
             let timespan = if moov.is_fragmented() {
@@ -418,7 +436,8 @@ impl<'s> IsoMp4Reader<'s> {
                 TimeSpan::new(trak.mdia.mdhd.timescale, duration)
             };
 
-            let (track_state, track) = TrackState::make(t, trak, &timespan, moov.mvhd.timescale);
+            let (track_state, track) =
+                TrackState::make(t, trak, &timespan, moov.mvhd.timescale, &mut itunes_gapless);
 
             tracks.push(track);
             track_states.push(track_state);

@@ -15,6 +15,8 @@ use crate::atoms::{
 
 use log::warn;
 
+use crate::edit::TrackEdit;
+
 /// Movie atom.
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -36,6 +38,11 @@ impl MoovAtom {
     }
 
     /// Is the movie segmented.
+    /// The presented part of the audio, from Apple's `iTunSMPB` gapless playback tag, if present.
+    pub fn itunes_gapless(&self) -> Option<TrackEdit> {
+        self.udta.as_ref()?.meta.as_ref()?.gapless
+    }
+
     pub fn is_fragmented(&self) -> bool {
         self.mvex.is_some()
     }

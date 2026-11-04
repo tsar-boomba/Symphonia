@@ -10,12 +10,15 @@ use core::fmt::Debug;
 use symphonia_core::meta::MetadataRevision;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, AtomType, IlstAtom, ReadAtom, Result};
+use crate::edit::TrackEdit;
 
 /// User data atom.
 #[allow(dead_code)]
 pub struct MetaAtom {
     /// Metadata revision.
     pub metadata: Option<MetadataRevision>,
+    /// The presented part of the audio, from Apple's `iTunSMPB` gapless playback tag.
+    pub gapless: Option<TrackEdit>,
 }
 
 impl Debug for MetaAtom {
@@ -37,17 +40,20 @@ impl Atom for MetaAtom {
         let (_, _) = it.read_extended_header().await?;
 
         let mut metadata = None;
+        let mut gapless = None;
 
         while let Some(header) = it.next_header().await? {
             match header.atom_type {
                 AtomType::MetaList => {
-                    metadata = Some(it.read_atom::<IlstAtom>().await?.metadata);
+                    let ilst = it.read_atom::<IlstAtom>().await?;
+                    metadata = Some(ilst.metadata);
+                    gapless = ilst.gapless;
                 }
                 // TODO: Support country and language lists.
                 _ => (),
             }
         }
 
-        Ok(MetaAtom { metadata })
+        Ok(MetaAtom { metadata, gapless })
     }
 }
