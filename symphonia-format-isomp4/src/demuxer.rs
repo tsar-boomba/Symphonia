@@ -539,6 +539,13 @@ impl<'s> IsoMp4Reader<'s> {
     }
 
     async fn try_read_more_segments(&mut self) -> Result<bool> {
+        // Samples may have been read since iteration stopped (after a seek past the end of the
+        // stream, for example). Return the reader to where iteration left off. A pending atom is
+        // skipped by `next_header` below, so only resynchronize when there isn't one.
+        if self.iter.pending().is_none() {
+            self.iter.resync().await?;
+        }
+
         // If all tracks ended in the last segment, then do not try to read anymore segments.
         //
         // Note, there will always be one segment because the moov atom was converted into a segment
@@ -740,13 +747,12 @@ impl FormatReader for IsoMp4Reader<'_> {
             else {
                 // The inner reader of the atom iterator has been used/seeked around to read
                 // packets, so resync the reader and iterator by seeking to the end of the current
-                // pending atom. Under regular circumstances, no actual expensive seek operation is
-                // performed since the reader should be at the end of the last iterated atom if we
-                // are trying to read another.
-                match self.iter.seek_atom_end().await {
-                    Ok(_) | Err(AtomError::NoPendingAtom) => (),
-                    Err(_) => return decode_error("sync lost"),
-                };
+                // pending atom (or, without one, back to where iteration stopped). Under regular
+                // circumstances, no actual expensive seek operation is performed since the reader
+                // should be at the end of the last iterated atom if we are trying to read another.
+                if self.iter.resync().await.is_err() {
+                    return decode_error("sync lost");
+                }
 
                 // No more segments. If the stream is unseekable, it may be the case that there are
                 // more segments coming. If the stream is seekable it might be fragmented and no

@@ -607,6 +607,9 @@ pub struct AtomIterator<R: ReadAtom> {
     /// The header of the current atom pending to be read, if there is one. If this is `Some`, then
     /// primitive reading operations are disabled.
     pending: Option<AtomHeader>,
+    /// Where iteration continues from, if raw reads moved the reader while there was no pending atom
+    /// to resynchronize to. See `resync`.
+    resume_pos: Option<u64>,
     /// The length of the container, if known.
     len: Option<u64>,
 }
@@ -615,7 +618,7 @@ impl<R: ReadAtom> AtomIterator<R> {
     /// Instantiate a new atom iterator.
     pub(crate) fn new(reader: R, len: Option<u64>) -> Self {
         let stack = Vec::with_capacity(MAX_ITERATION_DEPTH);
-        AtomIterator { reader, stack, pending: None, len }
+        AtomIterator { reader, stack, pending: None, resume_pos: None, len }
     }
 
     /// Consume the iterator and return the inner reader.
@@ -853,10 +856,29 @@ impl<R: ReadAtom> AtomIterator<R> {
         }
     }
 
+    /// Repositions the reader to where iteration continues after raw reads: the end of the pending
+    /// atom if there is one, or else where the reader was before the first raw read. Does nothing if
+    /// neither applies.
+    ///
+    /// Fails like `seek_atom_end` if the pending atom's size is unknown.
+    pub(crate) async fn resync(&mut self) -> Result<()>
+    where
+        R: MediaSource<Error = symphonia_core::io::Error>,
+    {
+        if let Some(pos) = self.resume_pos.take() {
+            self.seek_reader(pos).await?;
+        }
+        if self.pending.is_some() {
+            self.seek_atom_end().await?;
+        }
+        Ok(())
+    }
+
     /// Reads exactly the number of bytes requested, at the specified position.
     ///
     /// After this operation, it is only safe to make more raw read calls. To continue iteration,
-    /// the iterator must be re-synchronized by calling `seek_atom_start` or `seek_atom_end`.
+    /// the iterator must be re-synchronized by calling `resync`, `seek_atom_start`, or
+    /// `seek_atom_end`.
     pub(crate) async fn read_raw_boxed_slice_exact(
         &mut self,
         pos: u64,
@@ -865,8 +887,11 @@ impl<R: ReadAtom> AtomIterator<R> {
     where
         R: MediaSource<Error = symphonia_core::io::Error>,
     {
-        // Must currently have a pending atom to allow resynchronizing to it.
-        let _ = self.pending.as_ref().ok_or(AtomError::NoPendingAtom)?;
+        // Without a pending atom to resynchronize to (such as once the end of the stream was
+        // reached, then a seek was made), remember where the reader is so `resync` can return there.
+        if self.pending.is_none() && self.resume_pos.is_none() {
+            self.resume_pos = Some(self.reader.pos());
+        }
 
         // Seek to the desired position. Doesn't seek if already in position.
         self.seek_reader(pos).await?;
