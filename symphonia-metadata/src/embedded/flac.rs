@@ -60,6 +60,20 @@ pub fn read_flac_comment_block<B: ReadBytes>(
     vorbis::read_vorbis_comment(reader, builder, &mut side_data, opts)
 }
 
+/// Read a FLAC Vorbis comment metadata block of `block_len` bytes straight from an async stream,
+/// one comment at a time. Returns how many bytes of the block were read; the caller skips the
+/// rest.
+pub async fn read_flac_comment_block_async<B: symphonia_core::io::AsyncReadBytes>(
+    reader: &mut B,
+    block_len: u64,
+    builder: &mut MetadataBuilder,
+    opts: &MetadataOptions,
+) -> Result<u64> {
+    // Discard side data.
+    let mut side_data = Default::default();
+    vorbis::read_vorbis_comment_async(reader, block_len, builder, &mut side_data, opts).await
+}
+
 /// The header of a picture metadata block. This is everything in the block preceding the image
 /// data.
 pub struct FlacPictureHeader {

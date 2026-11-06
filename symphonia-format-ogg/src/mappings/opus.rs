@@ -141,6 +141,11 @@ impl Mapper for OpusMapper {
         packet_prefix.starts_with(b"OpusTags")
     }
 
+    fn vorbis_comment_offset(&self, packet_prefix: &[u8]) -> Option<usize> {
+        // "OpusTags", then the comment header.
+        packet_prefix.starts_with(b"OpusTags").then_some(8)
+    }
+
     fn name(&self) -> &'static str {
         "opus"
     }

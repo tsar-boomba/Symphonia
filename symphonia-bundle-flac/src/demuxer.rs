@@ -128,6 +128,36 @@ impl<'s> FlacReader<'s> {
                         reader.ignore_bytes(block_end - pos).await?;
                     }
                 }
+                // Vorbis comment blocks can hold embedded cover art and lyrics. Read them straight
+                // from the stream, one comment at a time, so only comments within the metadata
+                // limits are held in memory.
+                MetadataBlockType::VorbisComment => {
+                    let block_len = u64::from(header.block_len);
+                    let used = read_flac_comment_block_async(
+                        &mut reader,
+                        block_len,
+                        &mut metadata_builder,
+                        &opts.metadata_options,
+                    )
+                    .await?;
+
+                    if used < block_len {
+                        reader.ignore_bytes(block_len - used).await?;
+                    }
+                }
+                // Blocks with no inherent size bound are skipped if they're bigger than any
+                // reasonable one, instead of being read into memory.
+                MetadataBlockType::Application
+                | MetadataBlockType::Cuesheet
+                | MetadataBlockType::SeekTable
+                    if header.block_len > MAX_STRUCTURE_BLOCK_LEN =>
+                {
+                    info!(
+                        "ignoring a {} byte metadata block, over the {} byte limit.",
+                        header.block_len, MAX_STRUCTURE_BLOCK_LEN
+                    );
+                    reader.ignore_bytes(u64::from(header.block_len)).await?;
+                }
                 ref block_type => {
                     // Ensure the block length is correct for a stream information block before
                     // allocating a buffer for it.
@@ -480,6 +510,11 @@ async fn read_picture_block_from_stream(
         data: ImageData::Location { pos: data_pos, len: header.data_len },
     }))
 }
+
+/// The largest application, cuesheet, or seek table block that is read. A seek table this size
+/// holds 910 seek points, one every 10 seconds for 2.5 hours; a larger one is ignored, and seeking
+/// falls back to searching the stream.
+const MAX_STRUCTURE_BLOCK_LEN: u32 = 16 * 1024;
 
 /// Parse an in-memory metadata block.
 #[allow(clippy::too_many_arguments)]

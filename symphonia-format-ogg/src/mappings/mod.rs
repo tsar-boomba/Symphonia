@@ -99,6 +99,14 @@ pub trait Mapper: Send + Sync {
     fn is_skippable_metadata_packet(&self, _packet_prefix: &[u8]) -> bool {
         false
     }
+
+    /// If a packet starting with the provided bytes is a metadata packet holding a Vorbis Comment
+    /// header, how many bytes precede the comment header. A large packet like this is filtered as
+    /// it streams in, keeping only comments within the metadata limits, instead of being assembled
+    /// whole. The provided bytes may only be a prefix of the complete packet.
+    fn vorbis_comment_offset(&self, _packet_prefix: &[u8]) -> Option<usize> {
+        None
+    }
 }
 
 fn make_null_mapper() -> Option<Box<dyn Mapper>> {

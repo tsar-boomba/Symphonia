@@ -20,7 +20,7 @@ use log::warn;
 
 use symphonia_core::Lazy;
 use symphonia_core::errors::{Error, Result, decode_error};
-use symphonia_core::io::{BufReader, ReadBytes};
+use symphonia_core::io::{AsyncReadBytes, BufReader, ReadBytes};
 use symphonia_core::meta::well_known::METADATA_ID_VORBIS_COMMENT;
 use symphonia_core::meta::{
     Chapter, ChapterGroup, ChapterGroupItem, ImageData, MetadataBuilder, MetadataInfo,
@@ -383,83 +383,44 @@ fn parse_vorbis_comment(buf: &[u8], opts: &MetadataOptions) -> Result<Option<Par
     }
 }
 
-pub fn read_vorbis_comment<B: ReadBytes>(
-    reader: &mut B,
+/// Whether a comment of `len` bytes is within the tag or visual limit, so worth reading.
+fn comment_wanted(len: u64, opts: &MetadataOptions) -> bool {
+    opts.limit_visual_bytes.within_limit_w_default(len, DEFAULT_MAX_IMAGE_SIZE)
+        || opts.limit_tag_bytes.within_limit_w_default(len, DEFAULT_MAX_META_SIZE)
+}
+
+/// Parses one comment and adds what it yields to `builder`, or to `chapters`.
+fn add_vorbis_comment(
+    comment_data: &[u8],
     builder: &mut MetadataBuilder,
-    side_data: &mut Vec<MetadataSideData>,
+    chapters: &mut BTreeMap<u32, Vec<ChapterInfo>>,
     opts: &MetadataOptions,
-) -> Result<()> {
-    // Read the vendor string length in bytes.
-    let vendor_len = reader.read_u32()?;
-
-    // Ignore the vendor string.
-    reader.ignore_bytes(u64::from(vendor_len))?;
-
-    // Map of chapter number to a vector of chapter information.
-    let mut chapters: BTreeMap<u32, Vec<ChapterInfo>> = Default::default();
-
-    // Read the number of comments.
-    let num_comments = reader.read_u32()? as usize;
-
-    // Read each comment.
-    for _ in 0..num_comments {
-        // Read the comment string length in bytes. End-of-stream must be handled gracefully since
-        // the Ogg reader may pass in an incomplete packet when skipping large metadata (e.g.,
-        // images).
-        let comment_length = match reader.read_u32() {
-            Ok(len) => len,
-            Err(err) if err.is_eof() => break,
-            Err(err) => return Err(err.into()),
-        };
-
-        // If the comment exceeds both the tag and visual limits, ignore it.
-        let comment_length_u64 = u64::from(comment_length);
-
-        if !opts
-            .limit_visual_bytes
-            .within_limit_w_default(comment_length_u64, DEFAULT_MAX_IMAGE_SIZE)
-            && !opts
-                .limit_tag_bytes
-                .within_limit_w_default(comment_length_u64, DEFAULT_MAX_META_SIZE)
-        {
-            match reader.ignore_bytes(comment_length_u64) {
-                Ok(_) => continue,
-                Err(err) if err.is_eof() => break,
-                Err(err) => return Err(err.into()),
-            }
+) {
+    match parse_vorbis_comment(comment_data, opts) {
+        Ok(None) => {
+            // The comment was skipped because it exceeds a limit.
         }
-
-        // Read the comment string.
-        let comment_data = match reader.read_boxed_slice_exact(comment_length as usize) {
-            Ok(data) => data,
-            Err(err) if err.is_eof() => break,
-            Err(err) => return Err(err.into()),
-        };
-
-        // Parse the Vorbis comment and handle the parsed output.
-        match parse_vorbis_comment(&comment_data, opts) {
-            Ok(None) => {
-                // The comment was skipped because it exceeds a limit.
+        Ok(Some(parsed)) => match parsed {
+            ParsedComment::Tag(raw) => {
+                // Comment was a tag.
+                builder.add_mapped_tags(raw, &VORBIS_COMMENT_MAP);
             }
-            Ok(Some(parsed)) => match parsed {
-                ParsedComment::Tag(raw) => {
-                    // Comment was a tag.
-                    builder.add_mapped_tags(raw, &VORBIS_COMMENT_MAP);
-                }
-                ParsedComment::Visual(visual) => {
-                    // Comment was a picture.
-                    builder.add_visual(visual);
-                }
-                ParsedComment::ChapterInfo(info) => {
-                    // Comment was chapter information. Collect chapter information to build a
-                    // chapter group later.
-                    chapters.entry(info.key.num).or_default().push(info);
-                }
-            },
-            Err(err) => warn!("{err}"),
-        }
+            ParsedComment::Visual(visual) => {
+                // Comment was a picture.
+                builder.add_visual(visual);
+            }
+            ParsedComment::ChapterInfo(info) => {
+                // Comment was chapter information. Collect chapter information to build a
+                // chapter group later.
+                chapters.entry(info.key.num).or_default().push(info);
+            }
+        },
+        Err(err) => warn!("{err}"),
     }
+}
 
+/// Builds a chapter group from collected chapter information, if there is any.
+fn finish_chapters(chapters: BTreeMap<u32, Vec<ChapterInfo>>, side_data: &mut Vec<MetadataSideData>) {
     // If chapter information is present, try to build a chapter group.
     if !chapters.is_empty() {
         let items = chapters
@@ -515,12 +476,318 @@ pub fn read_vorbis_comment<B: ReadBytes>(
         }));
     }
 
+}
+
+/// Where a [`VorbisCommentFilter`] is in the comment header.
+#[derive(Clone, Copy, Debug)]
+enum FilterState {
+    /// Copying bytes before the comment header (a codec's signature), this many left.
+    Prefix(usize),
+    VendorLen,
+    /// Skipping the vendor string, this many bytes left.
+    Vendor(u64),
+    Count,
+    CommentLen,
+    /// Copying a kept comment, this many bytes left.
+    Copy(u64),
+    /// Skipping a comment over the limits, this many bytes left.
+    Skip(u64),
+    /// Copying whatever follows the comments, such as Vorbis's framing bit.
+    Trailer,
+}
+
+/// Filters a Vorbis Comment header as it streams in, keeping only comments within the tag or
+/// visual limits. The output is itself a valid comment header (with an empty vendor string and the
+/// comment count rewritten), so a packet too big to assemble can be filtered page by page and then
+/// parsed as usual.
+pub struct VorbisCommentFilter {
+    state: FilterState,
+    acc: [u8; 4],
+    acc_len: usize,
+    remaining: u32,
+    kept: u32,
+    /// Where the comment count was written in the output.
+    count_pos: Option<usize>,
+    opts: MetadataOptions,
+}
+
+impl VorbisCommentFilter {
+    /// A filter for a packet whose comment header starts after `prefix_len` bytes.
+    pub fn new(prefix_len: usize, opts: &MetadataOptions) -> Self {
+        VorbisCommentFilter {
+            state: if prefix_len > 0 { FilterState::Prefix(prefix_len) } else { FilterState::VendorLen },
+            acc: [0; 4],
+            acc_len: 0,
+            remaining: 0,
+            kept: 0,
+            count_pos: None,
+            opts: *opts,
+        }
+    }
+
+    /// Collects a little-endian `u32` across calls. Returns it once all four bytes are in.
+    fn take_u32(&mut self, input: &mut &[u8]) -> Option<u32> {
+        let n = (4 - self.acc_len).min(input.len());
+        self.acc[self.acc_len..self.acc_len + n].copy_from_slice(&input[..n]);
+        self.acc_len += n;
+        *input = &input[n..];
+        if self.acc_len == 4 {
+            self.acc_len = 0;
+            Some(u32::from_le_bytes(self.acc))
+        }
+        else {
+            None
+        }
+    }
+
+    fn end_comment(&mut self) {
+        self.remaining = self.remaining.saturating_sub(1);
+        self.state = if self.remaining == 0 { FilterState::Trailer } else { FilterState::CommentLen };
+    }
+
+    /// Feeds the next bytes of the packet, appending what's kept to `out`.
+    pub fn feed(&mut self, mut input: &[u8], out: &mut Vec<u8>) {
+        while !input.is_empty() {
+            match self.state {
+                FilterState::Prefix(left) => {
+                    let n = left.min(input.len());
+                    out.extend_from_slice(&input[..n]);
+                    input = &input[n..];
+                    self.state =
+                        if n == left { FilterState::VendorLen } else { FilterState::Prefix(left - n) };
+                }
+                FilterState::VendorLen => {
+                    if let Some(len) = self.take_u32(&mut input) {
+                        // The vendor string isn't kept.
+                        out.extend_from_slice(&0u32.to_le_bytes());
+                        self.state = FilterState::Vendor(u64::from(len));
+                    }
+                }
+                FilterState::Count => {
+                    if let Some(count) = self.take_u32(&mut input) {
+                        self.count_pos = Some(out.len());
+                        out.extend_from_slice(&0u32.to_le_bytes());
+                        self.remaining = count;
+                        self.state =
+                            if count == 0 { FilterState::Trailer } else { FilterState::CommentLen };
+                    }
+                }
+                FilterState::CommentLen => {
+                    if let Some(len) = self.take_u32(&mut input) {
+                        let len64 = u64::from(len);
+                        if comment_wanted(len64, &self.opts) {
+                            out.extend_from_slice(&len.to_le_bytes());
+                            self.kept += 1;
+                            self.state = FilterState::Copy(len64);
+                        }
+                        else {
+                            self.state = FilterState::Skip(len64);
+                        }
+                    }
+                }
+                FilterState::Vendor(left) | FilterState::Copy(left) | FilterState::Skip(left) => {
+                    let n = left.min(input.len() as u64) as usize;
+                    if let FilterState::Copy(_) = self.state {
+                        out.extend_from_slice(&input[..n]);
+                    }
+                    input = &input[n..];
+                    let left = left - n as u64;
+                    self.state = match self.state {
+                        FilterState::Vendor(_) => FilterState::Vendor(left),
+                        FilterState::Copy(_) => FilterState::Copy(left),
+                        _ => FilterState::Skip(left),
+                    };
+                }
+                FilterState::Trailer => {
+                    out.extend_from_slice(input);
+                    input = &[];
+                }
+            }
+            // Zero-length runs end immediately, even with no input left.
+            match self.state {
+                FilterState::Vendor(0) => self.state = FilterState::Count,
+                FilterState::Copy(0) | FilterState::Skip(0) => self.end_comment(),
+                _ => {}
+            }
+        }
+    }
+
+    /// Writes the number of comments kept into `out`, which must hold everything this filter
+    /// appended. If the packet was cut short, the last comment may be incomplete; comment parsing
+    /// stops cleanly there.
+    pub fn finish(&self, out: &mut [u8]) {
+        if let Some(pos) = self.count_pos
+            && let Some(slot) = out.get_mut(pos..pos + 4)
+        {
+            slot.copy_from_slice(&self.kept.to_le_bytes());
+        }
+    }
+}
+
+pub fn read_vorbis_comment<B: ReadBytes>(
+    reader: &mut B,
+    builder: &mut MetadataBuilder,
+    side_data: &mut Vec<MetadataSideData>,
+    opts: &MetadataOptions,
+) -> Result<()> {
+    // Read the vendor string length in bytes.
+    let vendor_len = reader.read_u32()?;
+
+    // Ignore the vendor string.
+    reader.ignore_bytes(u64::from(vendor_len))?;
+
+    // Map of chapter number to a vector of chapter information.
+    let mut chapters: BTreeMap<u32, Vec<ChapterInfo>> = Default::default();
+
+    // Read the number of comments.
+    let num_comments = reader.read_u32()? as usize;
+
+    // Read each comment.
+    for _ in 0..num_comments {
+        // Read the comment string length in bytes. End-of-stream must be handled gracefully since
+        // the Ogg reader may pass in an incomplete packet when skipping large metadata (e.g.,
+        // images).
+        let comment_length = match reader.read_u32() {
+            Ok(len) => len,
+            Err(err) if err.is_eof() => break,
+            Err(err) => return Err(err.into()),
+        };
+
+        // If the comment exceeds both the tag and visual limits, ignore it.
+        let comment_length_u64 = u64::from(comment_length);
+
+        if !comment_wanted(comment_length_u64, opts) {
+            match reader.ignore_bytes(comment_length_u64) {
+                Ok(_) => continue,
+                Err(err) if err.is_eof() => break,
+                Err(err) => return Err(err.into()),
+            }
+        }
+
+        // Read the comment string.
+        let comment_data = match reader.read_boxed_slice_exact(comment_length as usize) {
+            Ok(data) => data,
+            Err(err) if err.is_eof() => break,
+            Err(err) => return Err(err.into()),
+        };
+
+        add_vorbis_comment(&comment_data, builder, &mut chapters, opts);
+    }
+
+    finish_chapters(chapters, side_data);
+
     Ok(())
+}
+
+/// Reads a Vorbis Comment block of `block_len` bytes straight from an async stream, one comment at
+/// a time, so only comments within the limits are ever held in memory. Returns how many bytes of
+/// the block were read; the caller skips the rest. A comment that claims more than the block holds
+/// ends the read.
+pub async fn read_vorbis_comment_async<B: AsyncReadBytes>(
+    reader: &mut B,
+    block_len: u64,
+    builder: &mut MetadataBuilder,
+    side_data: &mut Vec<MetadataSideData>,
+    opts: &MetadataOptions,
+) -> Result<u64> {
+    let mut used = 0u64;
+    let mut chapters: BTreeMap<u32, Vec<ChapterInfo>> = Default::default();
+
+    'read: {
+        if block_len < 8 {
+            break 'read;
+        }
+        let vendor_len = u64::from(reader.read_u32().await?);
+        used += 4;
+        if vendor_len > block_len - used - 4 {
+            break 'read;
+        }
+        reader.ignore_bytes(vendor_len).await?;
+        let num_comments = reader.read_u32().await?;
+        used += vendor_len + 4;
+
+        for _ in 0..num_comments {
+            if block_len - used < 4 {
+                break;
+            }
+            let len = u64::from(reader.read_u32().await?);
+            used += 4;
+            if len > block_len - used {
+                break;
+            }
+            if comment_wanted(len, opts) {
+                let comment_data = reader.read_boxed_slice_exact(len as usize).await?;
+                add_vorbis_comment(&comment_data, builder, &mut chapters, opts);
+            }
+            else {
+                reader.ignore_bytes(len).await?;
+            }
+            used += len;
+        }
+    }
+
+    finish_chapters(chapters, side_data);
+
+    Ok(used)
 }
 
 #[cfg(test)]
 mod tests {
     use symphonia_core::units::Time;
+
+    #[test]
+    fn verify_comment_filter() {
+        use super::{MetadataBuilder, VorbisCommentFilter, read_vorbis_comment};
+        use alloc::vec::Vec;
+        use symphonia_core::common::Limit;
+        use symphonia_core::io::BufReader;
+        use symphonia_core::meta::MetadataOptions;
+
+        let comments: [&[u8]; 4] = [b"TITLE=Song", &[b'X'; 5000], b"ARTIST=A", b""];
+        let mut packet = b"OpusTags".to_vec();
+        packet.extend_from_slice(&6u32.to_le_bytes());
+        packet.extend_from_slice(b"vendor");
+        packet.extend_from_slice(&(comments.len() as u32).to_le_bytes());
+        for c in comments {
+            packet.extend_from_slice(&(c.len() as u32).to_le_bytes());
+            packet.extend_from_slice(c);
+        }
+        packet.push(1);
+
+        let opts = MetadataOptions::default()
+            .limit_tag_bytes(Limit::Maximum(1024))
+            .limit_visual_bytes(Limit::Maximum(0));
+
+        // Any split of the input gives the same output.
+        for chunk in [1, 3, 7, 4096, packet.len()] {
+            let mut filter = VorbisCommentFilter::new(8, &opts);
+            let mut out = Vec::new();
+            for piece in packet.chunks(chunk) {
+                filter.feed(piece, &mut out);
+            }
+            filter.finish(&mut out);
+
+            let mut expected = b"OpusTags".to_vec();
+            expected.extend_from_slice(&0u32.to_le_bytes());
+            expected.extend_from_slice(&3u32.to_le_bytes());
+            for c in [&b"TITLE=Song"[..], b"ARTIST=A", b""] {
+                expected.extend_from_slice(&(c.len() as u32).to_le_bytes());
+                expected.extend_from_slice(c);
+            }
+            expected.push(1);
+            assert_eq!(out, expected, "chunk size {chunk}");
+        }
+
+        // A packet cut off mid-comment still parses.
+        let mut filter = VorbisCommentFilter::new(8, &opts);
+        let mut out = Vec::new();
+        filter.feed(&packet[..packet.len() - 12], &mut out);
+        filter.finish(&mut out);
+        let mut builder = MetadataBuilder::new(super::VORBIS_COMMENT_METADATA_INFO);
+        let mut side_data = Vec::new();
+        read_vorbis_comment(&mut BufReader::new(&out[8..]), &mut builder, &mut side_data, &opts).unwrap();
+        assert_eq!(builder.build().media.tags.len(), 1);
+    }
 
     #[test]
     fn verify_parse_chapter_timestamp() {

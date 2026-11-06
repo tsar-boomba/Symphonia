@@ -158,6 +158,11 @@ impl Mapper for VorbisMapper {
         packet_prefix.starts_with(b"\x03vorbis")
     }
 
+    fn vorbis_comment_offset(&self, packet_prefix: &[u8]) -> Option<usize> {
+        // Packet type 3 and "vorbis", then the comment header and a framing bit.
+        packet_prefix.starts_with(b"\x03vorbis").then_some(7)
+    }
+
     fn name(&self) -> &'static str {
         "vorbis"
     }

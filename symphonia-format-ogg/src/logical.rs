@@ -15,6 +15,7 @@ use symphonia_core::formats::Track;
 use symphonia_core::meta::MetadataOptions;
 use symphonia_core::packet::{Packet, PacketBuilder};
 use symphonia_core::units::{Duration, Timestamp};
+use symphonia_metadata::embedded::vorbis::VorbisCommentFilter;
 
 use super::common::SideData;
 use super::mappings::Mapper;
@@ -60,6 +61,9 @@ pub struct LogicalStream {
     start_bound: Option<Bound>,
     end_bound: Option<Bound>,
     part_abandoned: bool,
+    /// Set while a large metadata packet is being filtered as it streams in. The partial packet
+    /// buffer then holds the filtered packet so far.
+    filter: Option<VorbisCommentFilter>,
 }
 
 impl LogicalStream {
@@ -75,12 +79,13 @@ impl LogicalStream {
             start_bound: None,
             end_bound: None,
             part_abandoned: false,
+            filter: None,
         }
     }
 
     /// Reset the logical stream after a page discontinuity.
     pub fn reset(&mut self) {
-        self.part_len = 0;
+        self.clear_partial();
         self.prev_page_info = None;
         self.packets.clear();
         self.mapper.reset();
@@ -140,14 +145,14 @@ impl LogicalStream {
         if let Some(last_ts) = &self.prev_page_info {
             if page.header.sequence < last_ts.seq {
                 warn!("detected stream page non-monotonicity");
-                self.part_len = 0;
+                self.clear_partial();
             }
             else if page.header.sequence - last_ts.seq > 1 {
                 warn!(
                     "detected stream discontinuity of {} page(s)",
                     page.header.sequence - last_ts.seq
                 );
-                self.part_len = 0;
+                self.clear_partial();
             }
         }
 
@@ -168,7 +173,7 @@ impl LogicalStream {
             warn!("expected a continuation page");
 
             // Clear partial packet data.
-            self.part_len = 0;
+            self.clear_partial();
         }
 
         let mut iter = page.packets();
@@ -640,7 +645,23 @@ impl LogicalStream {
         }
     }
 
+    /// Drops any partial packet, including one being filtered.
+    fn clear_partial(&mut self) {
+        self.part_len = 0;
+        self.filter = None;
+    }
+
     fn get_packet(&mut self, packet_buf: &[u8]) -> Box<[u8]> {
+        if let Some(mut filter) = self.filter.take() {
+            // The last piece of a filtered metadata packet.
+            self.part_buf.truncate(self.part_len);
+            filter.feed(packet_buf, &mut self.part_buf);
+            filter.finish(&mut self.part_buf);
+            let packet = Box::from(&self.part_buf[..]);
+            self.clear_partial();
+            return packet;
+        }
+
         if self.part_len == 0 {
             Box::from(packet_buf)
         }
@@ -652,7 +673,7 @@ impl LogicalStream {
 
             // Copy and consume the saved partial packet.
             vec0.copy_from_slice(&self.part_buf[..self.part_len]);
-            self.part_len = 0;
+            self.clear_partial();
 
             // Read the remainder of the partial packet from the page.
             vec1.copy_from_slice(packet_buf);
@@ -674,6 +695,31 @@ impl LogicalStream {
         // The start of the packet being assembled.
         let packet_prefix = if self.part_len > 0 { &self.part_buf[..self.part_len] } else { buf };
 
+        // A metadata packet already being filtered: filter the next piece.
+        if let Some(filter) = &mut self.filter {
+            self.part_buf.truncate(self.part_len);
+            filter.feed(buf, &mut self.part_buf);
+            self.part_len = self.part_buf.len();
+            return Ok(None);
+        }
+
+        // A large metadata packet holding a Vorbis Comment: filter it from here on, keeping only
+        // comments within the limits, so it never has to be assembled whole.
+        if new_part_len > INIT_MAX_PACKET_LEN
+            && self.mapper.is_skippable_metadata_packet(packet_prefix)
+            && let Some(offset) = self.mapper.vorbis_comment_offset(packet_prefix)
+        {
+            let mut filter = VorbisCommentFilter::new(offset, opts);
+            let mut filtered = Vec::new();
+            filter.feed(&self.part_buf[..self.part_len], &mut filtered);
+            filter.feed(buf, &mut filtered);
+            debug!("filtering a {new_part_len}+ byte metadata packet");
+            self.part_len = filtered.len();
+            self.part_buf = filtered;
+            self.filter = Some(filter);
+            return Ok(None);
+        }
+
         // If user wants to ignore all visuals, we definitely need to skip reading the whole partial
         // packet. Only metadata packets may be skipped since audio and setup packets are required.
         if opts.limit_visual_bytes == Limit::Maximum(0)
@@ -682,7 +728,7 @@ impl LogicalStream {
         {
             // Too large, discard and signal the mapper to move on
             let partial = self.get_partial_assembled(buf);
-            self.part_len = 0;
+            self.clear_partial();
             self.part_abandoned = true;
             return Ok(Some(partial));
         }
