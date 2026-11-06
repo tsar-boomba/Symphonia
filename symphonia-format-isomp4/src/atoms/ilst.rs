@@ -675,7 +675,7 @@ impl Atom for MetaTagDataAtom {
 
         // The data payload is the remainder of the atom.
         let data = {
-            // TODO: Apply the metadata limit.
+            // The tag size limit is applied by `MetaTagAtom` before this is read.
             let size = it
                 .data_left()?
                 .ok_or(Error::DecodeError("isomp4 (data): expected atom size to be known"))?;
@@ -702,7 +702,7 @@ impl Atom for MetaTagNamespaceAtom {
             .data_left()?
             .ok_or(Error::DecodeError("isomp4 (ilst): expected atom size to be known"))?;
 
-        // TODO: Apply a metadata limit.
+        // The tag size limit is applied by `MetaTagAtom` before this is read.
         let buf = it.read_boxed_slice_exact(size as usize).await?;
 
         // Do a lossy conversion because metadata should not prevent the demuxer from working.
@@ -757,13 +757,26 @@ impl Atom for MetaTagAtom {
 
         while let Some(header) = it.next_header().await? {
             match header.atom_type {
+                // Values over the tag limit are skipped by the next `next_header`, unread.
                 AtomType::MetaTagData => {
+                    // Version, flags, and locale.
+                    if it.pending_exceeds_tag_limit(8) {
+                        log::debug!("isomp4 (ilst): skipping tag value over the size limit");
+                        continue;
+                    }
                     values.push(it.read_atom::<MetaTagDataAtom>().await?);
                 }
                 AtomType::MetaTagName => {
+                    // Version and flags.
+                    if it.pending_exceeds_tag_limit(4) {
+                        continue;
+                    }
                     name = Some(it.read_atom::<MetaTagNamespaceAtom>().await?);
                 }
                 AtomType::MetaTagMeaning => {
+                    if it.pending_exceeds_tag_limit(4) {
+                        continue;
+                    }
                     mean = Some(it.read_atom::<MetaTagNamespaceAtom>().await?);
                 }
                 _ => (),

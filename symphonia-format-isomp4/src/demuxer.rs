@@ -289,7 +289,9 @@ impl<'s> IsoMp4Reader<'s> {
         let mut top_level_gapless = None;
 
         // Parse all atoms if the stream is seekable, otherwise parse all atoms up-to the mdat atom.
+        let tag_limit = opts.metadata_options.limit_tag_bytes;
         let mut it = AtomIterator::new(mss, total_len);
+        it.set_tag_limit(tag_limit);
         // Maps each track id to its cumulative duration (TimeSpan) as parsed from the segment
         // index.
         let mut sidx_timespans: HashMap<u32, TimeSpan> = HashMap::new();
@@ -376,6 +378,7 @@ impl<'s> IsoMp4Reader<'s> {
             mss.seek(SeekFrom::Start(0)).await?;
 
             it = AtomIterator::new(mss, total_len);
+            it.set_tag_limit(tag_limit);
 
             while let Some(header) = it.next_header().await? {
                 if let AtomType::MovieFragment | AtomType::MediaData = header.atom_type() {

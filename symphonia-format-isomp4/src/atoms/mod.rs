@@ -10,6 +10,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::num::NonZeroU64;
 
+use symphonia_core::common::Limit;
 use symphonia_core::io::{AsyncReadBytes, MediaSource, SeekBuffered, SeekFrom};
 
 /// Atom parsing limits.
@@ -612,13 +613,34 @@ pub struct AtomIterator<R: ReadAtom> {
     resume_pos: Option<u64>,
     /// The length of the container, if known.
     len: Option<u64>,
+    /// The limit on a metadata tag value's size, applied to `data`, `mean` and `name` atoms.
+    tag_limit: Limit,
 }
 
 impl<R: ReadAtom> AtomIterator<R> {
     /// Instantiate a new atom iterator.
     pub(crate) fn new(reader: R, len: Option<u64>) -> Self {
         let stack = Vec::with_capacity(MAX_ITERATION_DEPTH);
-        AtomIterator { reader, stack, pending: None, resume_pos: None, len }
+        AtomIterator { reader, stack, pending: None, resume_pos: None, len, tag_limit: Limit::None }
+    }
+
+    /// Set the limit on a metadata tag value's size. Values over it are skipped without being read.
+    pub(crate) fn set_tag_limit(&mut self, limit: Limit) {
+        self.tag_limit = limit;
+    }
+
+    /// Whether the pending atom's payload exceeds the tag limit, after `header_fields` bytes of
+    /// version, flags or locale fields. An atom of unknown size always does, unless there's no
+    /// limit.
+    pub(crate) fn pending_exceeds_tag_limit(&self, header_fields: u64) -> bool {
+        match self.pending.as_ref().map(|atom| atom.data_size()) {
+            Some(Some(size)) => !self.tag_limit.within_limit_w_default(
+                size.saturating_sub(header_fields),
+                symphonia_metadata::DEFAULT_MAX_META_SIZE,
+            ),
+            Some(None) => self.tag_limit != Limit::None,
+            None => false,
+        }
     }
 
     /// Consume the iterator and return the inner reader.
