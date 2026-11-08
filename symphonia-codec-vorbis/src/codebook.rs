@@ -10,7 +10,7 @@ use symphonia_core::Float;
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{
     ReadBitsRtl,
-    vlc::{BitOrder, Codebook, CodebookBuilder, Entry32x32},
+    vlc::{BitOrder, Codebook, CodebookBuilder, Entry16x16, Entry32x32},
 };
 
 use super::common::*;
@@ -211,8 +211,14 @@ fn synthesize_codewords(code_lens: &[u8]) -> Result<Vec<u32>> {
     Ok(codewords)
 }
 
+/// Most codebooks fit 16-bit entries, at half the memory.
+enum Lookup {
+    Small(Codebook<Entry16x16>),
+    Large(Codebook<Entry32x32>),
+}
+
 pub struct VorbisCodebook {
-    codebook: Codebook<Entry32x32>,
+    codebook: Lookup,
     dimensions: u16,
     vq_vec: Option<Vec<f32>>,
 }
@@ -385,21 +391,43 @@ impl VorbisCodebook {
         // Vorbis codewords run to 32 bits, so 8-bit blocks cost over a megabyte for some streams.
         builder.bits_per_read(code_lens.iter().max().copied().unwrap_or(1).clamp(1, 4));
 
-        let codebook = builder.make::<Entry32x32>(&code_words, &code_lens, &code_values)?;
+        // 16-bit entries when every value and table index fits, otherwise 32-bit.
+        let small = code_values
+            .iter()
+            .all(|&v| v <= u32::from(u16::MAX))
+            .then(|| {
+                let values: Vec<u16> = code_values.iter().map(|&v| v as u16).collect();
+                builder.make::<Entry16x16>(&code_words, &code_lens, &values).ok()
+            })
+            .flatten();
+        let codebook = match small {
+            Some(codebook) => Lookup::Small(codebook),
+            None => {
+                Lookup::Large(builder.make::<Entry32x32>(&code_words, &code_lens, &code_values)?)
+            }
+        };
 
         Ok(VorbisCodebook { codebook, dimensions: codebook_dimensions, vq_vec })
     }
 
     #[inline(always)]
+    fn read_entry<B: ReadBitsRtl>(&self, bs: &mut B) -> Result<u32> {
+        Ok(match &self.codebook {
+            Lookup::Small(codebook) => u32::from(bs.read_codebook(codebook)?.0),
+            Lookup::Large(codebook) => bs.read_codebook(codebook)?.0,
+        })
+    }
+
+    #[inline(always)]
     pub fn read_scalar<B: ReadBitsRtl>(&self, bs: &mut B) -> Result<u32> {
         // An entry in a scalar codebook is just the value.
-        Ok(bs.read_codebook(&self.codebook)?.0)
+        self.read_entry(bs)
     }
 
     #[inline(always)]
     pub fn read_vq<B: ReadBitsRtl>(&self, bs: &mut B) -> Result<&[f32]> {
         // An entry in a VQ codebook is the index of the VQ vector.
-        let entry = bs.read_codebook(&self.codebook)?.0;
+        let entry = self.read_entry(bs)?;
 
         if let Some(vq) = &self.vq_vec {
             let dim = self.dimensions as usize;
