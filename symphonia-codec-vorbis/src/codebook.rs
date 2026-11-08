@@ -381,8 +381,9 @@ impl VorbisCodebook {
         // Finally, generate the codebook with a reverse (LSb) bit order.
         let mut builder = CodebookBuilder::new(BitOrder::Reverse);
 
-        // Read in 4-8 bit-wide blocks.
-        builder.bits_per_read(code_lens.iter().max().copied().unwrap_or(0).clamp(4, 8));
+        // Read in blocks of at most 4 bits. Every block is a full table of 2^bits entries, and
+        // Vorbis codewords run to 32 bits, so 8-bit blocks cost over a megabyte for some streams.
+        builder.bits_per_read(code_lens.iter().max().copied().unwrap_or(1).clamp(1, 4));
 
         let codebook = builder.make::<Entry32x32>(&code_words, &code_lens, &code_values)?;
 
